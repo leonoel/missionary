@@ -108,7 +108,7 @@ Cancellation signal on parent task is propagated to children tasks.
 Inside an `sp` block, `?` will execute given task and park process until result is available.
 ```clojure
 (m/? (m/sp (m/? (m/sleep 1000))
-           (m/? roll-dice)))     ;; returns a random numbers between 1 and 6 after 1 second
+           (m/? roll-dice)))     ;; returns a random number between 1 and 6 after 1 second
 ```
 
 A failed task execution will propagate its error along `sp` block, following try/catch semantics.
@@ -120,15 +120,13 @@ A failed task execution will propagate its error along `sp` block, following try
 Cancelling an `sp` task will cancel the execution of the task it's currently waiting for, and all tasks subsequently executed will be immediately cancelled.
 
 ```clojure
-(m/? (m/timeout 1000
-       (m/sp (try (m/? (m/sleep 2000 :completed))
-                  (catch Exception _ :cancelled)))))     ;; returns :cancelled after 1 second
+(m/? (m/timeout 1000 (m/sp (m/? (m/sleep 2000)))))  ;; throws exception after 1 second
 ```
 
 Cancellation status of an `sp` task can be checked with the 0-arity of `?`, throwing an exception if termination has been requested, else returning nil.
 
 ```clojure
-(m/? (m/timeout 0 (m/sp (while true (m/?)))))            ;; throws exception
+(m/? (m/timeout 0 (m/sp (while true (m/?)))))       ;; throws exception
 ```
 
 
