@@ -1,7 +1,8 @@
 (ns missionary.core-test
   (:require
     [missionary.core :as m :refer [?]]
-    [missionary.impl :refer [safe nop]]
+    [missionary.misc :refer [nop]]
+    [cloroutine.impl :refer [safe]]
     [clojure.test :as t :refer [deftest is]])
   #?(:cljs (:require-macros
              [missionary.core-test :refer [deftest-async]]
@@ -40,7 +41,7 @@
                          (repeat 100)
                          (apply m/join)
                          (m/timeout 100)))]
-          (dotimes [_ 7] (? sem)) true)))
+          (do (dotimes [_ 7] (? sem)) true))))
   (is (let [rdv (m/rdv)]
         (safe [_ (? (->> (m/sp (while true (? (m/compel (m/join rdv (rdv false)))) (?)))
                          (repeat 100)
@@ -53,4 +54,4 @@
                          (apply m/join)
                          (m/timeout 100)))]
           (safe [_ (? (m/timeout 0 buf))] true))))
-  (is (let [dfv (m/dfv)] (? (m/race (m/sp (dfv true)) dfv)))))
+  (is (let [dfv (m/dfv)] (dfv true) (? dfv))))

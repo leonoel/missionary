@@ -1,0 +1,17 @@
+sudo: true
+language: java
+script: clojure -Aclj-test && clojure -Acljs-test
+install:
+  - curl -O https://download.clojure.org/install/linux-install-1.9.0.358.sh
+  - chmod +x linux-install-1.9.0.358.sh
+  - sudo ./linux-install-1.9.0.358.sh
+jdk:
+  - oraclejdk8
+cache:
+  directories:
+    - $HOME/.m2
+    - $HOME/.cljs
+    - $HOME/.gitlibs
+    - node_modules
+    - .cpcache
+    - cljs-test-runner-out

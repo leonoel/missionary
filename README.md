@@ -2,14 +2,13 @@
 
 `missionary` is an asynchronous programming toolkit for clojure and clojurescript, providing non-blocking synchronization primitives, coroutine syntax for sequential logic, parallel composition operators and timing helpers. All asynchronous operations rely on [task](https://github.com/leonoel/task) semantics.
 
+Experimental status, breaking changes should be expected.
 
-## Status
+[![clojars](https://img.shields.io/clojars/v/missionary.svg)](https://clojars.org/missionary)
 
-Maturity : alpha. Breaking changes should be expected.
+[![build](https://travis-ci.org/leonoel/missionary.svg?branch=master)](https://travis-ci.org/leonoel/missionary)
 
-Artifacts are released to [clojars](https://clojars.org/missionary).
-
-Current coordinates : `[missionary "a.1"]`
+[![license](https://img.shields.io/github/license/leonoel/missionary.svg)](LICENSE)
 
 
 ## Rationale
