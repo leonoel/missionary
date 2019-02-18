@@ -1,7 +1,7 @@
 {:deps
  {org.clojure/clojure {:mvn/version "1.9.0"}
   org.clojure/clojurescript {:mvn/version "1.10.439"}
-  cloroutine/cloroutine {:mvn/version "1"}}
+  cloroutine/cloroutine {:mvn/version "2"}}
 
  :aliases
  {:clj-test
