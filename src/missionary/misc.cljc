@@ -54,6 +54,9 @@
 (defn race-failure [errors]
   (ex-info "Race failure." {::errors errors}))
 
+(def never-cancelled
+  (ex-info "Sleep cancelled." {:task/cancelled :never}))
+
 (def sleep-cancelled
   (ex-info "Sleep cancelled." {:task/cancelled :sleep}))
 

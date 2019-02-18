@@ -122,3 +122,10 @@ Cancelling an acquiring task makes it fail immediately."}
     :doc "Acquires given semaphore and evaluates body, ensuring semaphore is released after evaluation."}
   holding [lock & body]
   `(let [l# ~lock] (? l#) (try ~@body (finally (l#)))))
+
+(def never
+  ^{:doc "A task that never succeeds. Fails immediately when cancelled."}
+  (fn [_ f!]
+    (let [tok (i/token)]
+      (i/alienate! tok #(f! m/never-cancelled))
+      #(i/consume! tok))))
