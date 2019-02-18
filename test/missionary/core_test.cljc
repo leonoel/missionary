@@ -37,19 +37,25 @@
 
 (deftest-async synchronization
   (is (let [sem (m/sem 7)]
-        (safe [_ (? (->> (m/sp (while true (m/holding sem (?))))
+        (safe [_ (? (->> (m/sp (while true
+                                 (m/holding sem (? (m/sleep 0)))))
                          (repeat 100)
                          (apply m/join)
                          (m/timeout 100)))]
           (do (dotimes [_ 7] (? sem)) true))))
   (is (let [rdv (m/rdv)]
-        (safe [_ (? (->> (m/sp (while true (? (m/compel (m/join rdv (rdv false)))) (?)))
+        (safe [_ (? (->> (m/sp (while true
+                                 (? (m/compel (m/join rdv (rdv false))))
+                                 (? (m/sleep 0))))
                          (repeat 100)
                          (apply m/join)
                          (m/timeout 100)))]
           (safe [_ (? (m/timeout 0 rdv))] true))))
   (is (let [buf (m/buf)]
-        (safe [_ (? (->> (m/sp (while true (buf false) (? (m/compel buf)) (?)))
+        (safe [_ (? (->> (m/sp (while true
+                                 (buf false)
+                                 (? (m/compel buf))
+                                 (? (m/sleep 0))))
                          (repeat 100)
                          (apply m/join)
                          (m/timeout 100)))]
