@@ -208,7 +208,7 @@
     ([]
      (let [f @fiber]
        (when (nil? f) (throw threading-unsupported))
-       (if (nil? (aget f 2)) ((aget f 4) nil) ((aget f 5) m/process-cancelled)) f))
+       (if (some? (aget f 2)) ((aget f 4) nil) ((aget f 5) m/process-cancelled)) f))
     ([t]
      (let [f @fiber]
        (when (nil? f) (throw threading-unsupported))

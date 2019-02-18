@@ -14,7 +14,7 @@
   (AtomicReference. m/nop))
 
 (defn valid? [^AtomicReference token]
-  (nil? (.get token)))
+  (some? (.get token)))
 
 (defn consume! [^AtomicReference token]
   (loop []
