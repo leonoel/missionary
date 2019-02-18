@@ -38,10 +38,10 @@
     (fn
       ([t]
        (let [x (.get state)]
-         (when (set? x)
+         (if (set? x)
            (if (.compareAndSet state x (reduced t))
-             (do (reduce m/send-rf t x) nil)
-             (recur t)))))
+             (do (reduce m/send-rf t x) t)
+             (recur t)) @x)))
       ([s! f!]
        (let [x (.get state)]
          (if (set? x)

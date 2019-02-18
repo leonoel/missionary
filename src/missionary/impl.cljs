@@ -35,7 +35,7 @@
       (set! bound true)
       (set! value t)
       (reduce m/send-rf t (persistent! watch))
-      (set! watch nil)))
+      (set! watch nil)) value)
   (-invoke [_ s! f!]
     (if bound
       (do (s! value) m/nop)
