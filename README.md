@@ -41,5 +41,5 @@ Imperative-style concurrent programming comes along with serious pitfalls. Uncon
 2. [Hello flow](https://cljdoc.org/d/missionary/missionary/CURRENT/doc/readme/tutorials/hello-flow)
 
 ### Guides
-1. [Retry with backoff](https://cljdoc.org/d/missionary/missionary/CURRENT/doc/readme/guides/retry-backoff)
+1. [Retry with backoff](https://cljdoc.org/d/missionary/missionary/CURRENT/doc/readme/guides/retry-with-backoff)
 2. [Happy eyeballs](https://cljdoc.org/d/missionary/missionary/CURRENT/doc/readme/guides/happy-eyeballs)
