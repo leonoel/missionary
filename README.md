@@ -22,7 +22,7 @@ Imperative-style concurrent programming comes along with serious pitfalls. Uncon
 
 ## Guidelines
 
-* Simple, REPL-friendly, dependency-free underlying protocols : task ([specification]()) & flow (specification coming soon), respectively single and multiple value producers.
+* Simple, REPL-friendly, dependency-free underlying protocols : task ([specification](https://github.com/leonoel/task)) & flow (specification coming soon), respectively single and multiple value producers.
 * Strict supervision providing transparent propagation of cancellation and failure, with strong resource cleanup guarantees.
 * Unified representation of multiple-value producers supporting backpressure propagation of discrete events and lazy sampling of continuous values.
 * [Reactive Streams](http://www.reactive-streams.org/) compliant
