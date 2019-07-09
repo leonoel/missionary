@@ -1,10 +1,16 @@
 {:deps
- {org.clojure/clojure {:mvn/version "1.9.0"}
-  org.clojure/clojurescript {:mvn/version "1.10.439"}
-  cloroutine/cloroutine {:mvn/version "2"}}
+ {org.clojure/clojure {:mvn/version "1.10.1"}
+  org.clojure/clojurescript {:mvn/version "1.10.520"}
+  org.reactivestreams/reactive-streams {:mvn/version "1.0.2"}
+  cloroutine/cloroutine {:mvn/version "4"}}
+
+ :paths ["src" "target/classes"]
 
  :aliases
- {:clj-test
+ {:tck
+  {:extra-deps {org.reactivestreams/reactive-streams-tck {:mvn/version "1.0.2"}}}
+
+  :clj-test
   {:extra-deps  {com.cognitect/test-runner
                  {:git/url "https://github.com/cognitect-labs/test-runner.git"
                   :sha     "028a6d41ac9ac5d5c405dfc38e4da6b4cc1255d5"}}
@@ -13,6 +19,6 @@
 
   :cljs-test
   {:extra-deps  {olical/cljs-test-runner
-                 {:mvn/version "3.2.0"}}
-   :extra-paths ["test"]
+                 {:mvn/version "3.6.0"}}
+   :extra-paths ["test" "cljs-test-runner-out/gen"]
    :main-opts   ["-m" "cljs-test-runner.main"]}}}
