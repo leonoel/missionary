@@ -37,9 +37,9 @@ Imperative-style concurrent programming comes along with serious pitfalls. Uncon
 [`missionary.core`](https://cljdoc.org/d/missionary/missionary/CURRENT/api/missionary.core)
 
 ### Tutorials
-1. [Hello task](https://cljdoc.org/d/missionary/missionary/CURRENT/doc/tutorials/hello-task)
-2. [Hello flow](https://cljdoc.org/d/missionary/missionary/CURRENT/doc/tutorials/hello-flow)
+1. [Hello task](https://cljdoc.org/d/missionary/missionary/CURRENT/doc/readme/tutorials/hello-task)
+2. [Hello flow](https://cljdoc.org/d/missionary/missionary/CURRENT/doc/readme/tutorials/hello-flow)
 
 ### Guides
-1. [Retry with backoff](https://cljdoc.org/d/missionary/missionary/CURRENT/doc/guides/retry-backoff)
-2. [Happy eyeballs](https://cljdoc.org/d/missionary/missionary/CURRENT/doc/guides/happy-eyeballs)
+1. [Retry with backoff](https://cljdoc.org/d/missionary/missionary/CURRENT/doc/readme/guides/retry-backoff)
+2. [Happy eyeballs](https://cljdoc.org/d/missionary/missionary/CURRENT/doc/readme/guides/happy-eyeballs)

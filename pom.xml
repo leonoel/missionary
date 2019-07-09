@@ -16,7 +16,7 @@
   <scm>
     <connection>scm:git:git://github.com/leonoel/missionary.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/leonoel/missionary.git</developerConnection>
-    <tag>334e3c31b4e864dad9e3e0910e001c61fa337bae</tag>
+    <tag>22c524618ffcc8faecaa55e2dda345c60149b9b8</tag>
     <url>https://github.com/leonoel/missionary</url>
   </scm>
   <distributionManagement>
