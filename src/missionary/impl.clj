@@ -3,7 +3,8 @@
            (org.reactivestreams Publisher)
            (missionary.impl
              Enumerate Aggregate RaceJoin Sleep Never Ambiguous Fiber Thunk Dataflow Mailbox Rendezvous Semaphore
-             Watch Observe Transform Integrate Pub Sub Relieve Buffer Latest Sample Zip Sequential Ambiguous$Process)))
+             Watch Observe Transform Integrate Pub Sub Relieve Buffer Latest Sample Zip Sequential Ambiguous$Process
+             Reactor Reactor$Dag Reactor$Pub)))
 
 (defn nop [])
 
@@ -93,3 +94,9 @@
 (defmethod print-method Sub [o w] (print-object o w))
 (defn subscribe [pub n t] (Sub. pub n t))
 (defn publisher [f] (reify Publisher (subscribe [_ s] (Pub. f s))))
+
+(defmethod print-method Reactor$Dag [o w] (print-object o w))
+(defn dag [i s f] (Reactor/dag i s f))
+
+(defmethod print-method Reactor$Pub [o w] (print-object o w))
+(defn pub [f d] (Reactor/pub f d))

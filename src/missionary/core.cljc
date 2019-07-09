@@ -634,3 +634,40 @@ Example :
 #_=> [[1 :a] [2 :b] [3 :c]]
 ```
 "} zip [c f & fs] (fn [n t] (i/zip c (cons f fs) n t)))
+
+
+(defn
+  ^{:static true
+    :arglists '([boot])
+    :doc "
+Returns a task running given zero-argument function in a fresh reactor context.
+
+A reactor collects events from different sources, dispatches events to subscribers.
+
+The reactor terminates when its last node terminates. The task succeeds with the result of the boot function if all nodes completed successfully, otherwise the first encountered failure is propagated. When the task is cancelled, or when a node fails, each remaining node and subsequently spawned ones are cancelled.
+"} reactor-call [i] (fn [s f] (i/dag i s f)))
+
+
+(defmacro
+  ^{:arglists '([& body])
+    :doc "
+Calls `broker-call` with a function evaluating given `body` in an implicit `do`.
+"} reactor [& body] `(reactor-call (fn [] ~@body)))
+
+
+(defn
+  ^{:static true
+    :arglists '([flow])
+    :doc "
+Must be run in a broker context.
+Spawns a discrete node from given flow.
+"} stream! [f] (i/pub f true))
+
+
+(defn
+  ^{:static true
+    :arglists '([flow])
+    :doc "
+Must be run in a broker context.
+Spawns a continuous node from given flow.
+"} signal! [f] (i/pub f false))

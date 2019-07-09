@@ -1140,3 +1140,238 @@
                        ((.-terminator s))
                        (when-not (.-sampled-busy s)
                          (sample-flush s))))))) s))
+
+
+;;;;;;;;;;;;;
+;; REACTOR ;;
+;;;;;;;;;;;;;
+
+(def ^:const PENDING 0)
+(def ^:const READY 1)
+(def ^:const DONE 2)
+
+(declare dag-cancel)
+(deftype Dag [^number reentrancy success failure result ^boolean failed ^boolean cancelled ^number tier
+              current emitter today tomorrow head tail]
+  IFn (-invoke [_] (dag-cancel _)))
+
+(declare pub-cancel)
+(declare pub-sub)
+(deftype Pub [^Dag dag ^boolean discrete id iterator value ^boolean cancelled ^boolean scheduled
+              ^number tier ^number state ^number pressure prev next head tail child sibling]
+  IFn
+  (-invoke [_] (pub-cancel _))
+  (-invoke [_ n t] (pub-sub _ n t)))
+
+(declare sub-cancel)
+(declare sub-deref)
+(deftype Sub [^Pub up ^Pub down notifier terminator ^number state ^Sub prev ^Sub next]
+  IFn
+  (-invoke [_] (sub-cancel _))
+  IDeref
+  (-deref [_] (sub-deref _)))
+
+(def dag-current)
+
+(defn lt [x y]
+  (let [xl (alength x)
+        yl (alength y)
+        ml (min xl yl)]
+    (loop [i 0]
+      (if (< i ml)
+        (let [xi (aget x i)
+              yi (aget y i)]
+          (if (== xi yi)
+            (recur (inc i))
+            (< xi yi)))
+        (< xl yl)))))
+
+(defn pub-link [^Pub x ^Pub y]
+  (if (lt (.-id x) (.-id y))
+    (do (set! (.-sibling y) (.-child x))
+        (set! (.-child x) y) x)
+    (do (set! (.-sibling x) (.-child y))
+        (set! (.-child y) x) y)))
+
+(defn pub-schedule [^Pub p]
+  (let [^Dag dag (.-dag p)]
+    (when-not (.-scheduled p)
+      (set! (.-scheduled p) true)
+      (if (when-some [^Pub e (.-emitter dag)] (lt (.-id e) (.-id p)))
+        (set! (.-today dag) (if-some [t (.-today dag)] (pub-link p t) p))
+        (set! (.-tomorrow dag) (if-some [t (.-tomorrow dag)] (pub-link p t) p))))))
+
+(defn pub-more [^Pub pub]
+  (let [^Dag dag (.-dag pub)
+        ^Pub prv (.-current dag)]
+    (set! (.-current dag) pub)
+    (set! (.-state pub) PENDING)
+    (set! (.-value pub)
+          (try @(.-iterator pub)
+               (catch :default e
+                 (when-not (.-failed dag)
+                   (set! (.-failed dag) true)
+                   (set! (.-result dag) e)
+                   (dag)) nop)))
+    (set! (.-current dag) prv)))
+
+(defn sub-push [^Sub sub]
+  (set! (.-state sub) READY)
+  (set! (.-pressure (.-up sub)) (inc (.-pressure (.-up sub))))
+  ((.-notifier sub)))
+
+(defn sub-pull [^Sub sub]
+  (set! (.-state sub) PENDING)
+  (set! (.-pressure (.-up sub)) (dec (.-pressure (.-up sub))))
+  (pub-schedule (.-up sub)))
+
+(defn dag-acquire [^Dag dag]
+  (set! (.-reentrancy dag) (inc (.-reentrancy dag)))
+  (let [prv dag-current] (set! dag-current dag) prv))
+
+(defn dag-release [^Dag dag ^Dag prv]
+  (when (== 1 (.-reentrancy dag))
+    (while (some? (set! (.-emitter dag) (.-tomorrow dag)))
+      (set! (.-tomorrow dag) nil)
+      (while
+        (let [emit (.-emitter dag)]
+          (set! (.-today dag)
+                (loop [heap nil
+                       prev nil
+                       head (.-child emit)]
+                  (if (nil? head)
+                    (if (nil? prev) heap (if (nil? heap) prev (pub-link heap prev)))
+                    (let [next (.-sibling head)]
+                      (set! (.-sibling head) nil)
+                      (if (nil? prev)
+                        (recur heap head next)
+                        (let [head (pub-link prev head)]
+                          (recur (if (nil? heap) head (pub-link heap head)) nil next)))))))
+          (set! (.-child emit) nil)
+          (set! (.-scheduled emit) false)
+          (when (.-discrete emit) (set! (.-value emit) nop))
+          (when-not (== (.-state emit) PENDING)
+            (when-not (and (.-discrete emit) (pos? (.-pressure emit)))
+              (if (== (.-state emit) READY)
+                (do (if (or (.-discrete emit) (.-cancelled emit))
+                      (do (pub-more emit) (pub-schedule emit))
+                      (set! (.-value emit) nil))
+                    (loop [^Sub sub (.-head emit)]
+                      (when (some? sub)
+                        (when (== (.-state sub) PENDING)
+                          (let [pub (.-current dag)]
+                            (set! (.-current dag) (.-down sub))
+                            (sub-push sub)
+                            (set! (.-current dag) pub)
+                            (recur (.-next sub)))))))
+                (do (loop [^Sub sub (.-head emit)]
+                      (when (some? sub) (sub) (recur (.-next sub))))
+                    (if (nil? (.-prev emit))
+                      (set! (.-head dag) (.-next emit))
+                      (set! (.-next (.-prev emit)) (.-next emit)))
+                    (if (nil? (.-next emit))
+                      (set! (.-tail dag) (.-prev emit))
+                      (set! (.-prev (.-next emit)) (.-prev emit)))))))
+          (some? (set! (.-emitter dag) (.-today dag))))))
+    (when (nil? (.-head dag)) ((if (.-failed dag) (.-failure dag) (.-success dag)) (.-result dag))))
+  (set! dag-current prv)
+  (set! (.-reentrancy dag) (dec (.-reentrancy dag))))
+
+(defn dag-cancel [^Dag dag]
+  (let [p (dag-acquire dag)]
+    (when-not (.-cancelled dag)
+      (set! (.-cancelled dag) true)
+      (loop [^Pub pub (.-head dag)]
+        (when (some? pub)
+          (pub) (recur (.-next pub)))))
+    (dag-release dag p)))
+
+(defn pub-cancel [^Pub pub]
+  (let [p (dag-acquire (.-dag pub))]
+    (when-not (.-cancelled pub)
+      (set! (.-cancelled pub) true)
+      (pub-schedule pub)
+      ((.-iterator pub)))
+    (dag-release (.-dag pub) p)))
+
+(defn pub-sub [^Pub up n t]
+  (let [^Dag dag (.-dag up)
+        ^Dag prv (dag-acquire dag)
+        ^Pub down (.-current dag)]
+    (assert (some? down))
+    (assert (lt (.-id up) (.-id down)))
+    (let [sub (->Sub up down n t PENDING nil nil)]
+      (if (== (.-state up) DONE)
+        (t) (do (set! (.-prev sub) (.-tail up))
+                (set! (.-tail up) sub)
+                (if-some [s (.-prev sub)]
+                  (set! (.-next s) sub)
+                  (set! (.-head up) sub))
+                (when-not (identical? nop (.-value up))
+                  (when-not (and (.-scheduled up) (lt (.-id (.-emitter dag)) (.-id up)))
+                    (sub-push sub)))))
+      (dag-release dag prv) sub)))
+
+(defn sub-cancel [^Sub sub]
+  (let [^Pub u (.-up sub)
+        ^Dag dag (.-dag u)
+        ^Dag prv (dag-acquire dag)]
+    (when-not (== (.-state sub) DONE)
+      (if (== (.-state sub) READY)
+        (sub-pull sub) ((.-terminator sub)))
+      (set! (.-state sub) DONE)
+      (if-some [p (.-prev sub)]
+        (set! (.-next p) (.-next sub))
+        (set! (.-head u) (.-next sub)))
+      (if-some [n (.-next sub)]
+        (set! (.-prev n) (.-prev sub))
+        (set! (.-tail u) (.-prev sub))))
+    (dag-release dag prv)))
+
+(defn sub-deref [^Sub sub]
+  (let [^Pub u (.-up sub)
+        ^Dag dag (.-dag u)
+        ^Dag prv (dag-acquire dag)]
+    (when (== (.-state u) READY) (pub-more u))
+    (let [x (.-value u)]
+      (if (== (.-state sub) DONE)
+        ((.-terminator sub)) (sub-pull sub))
+      (dag-release dag prv)
+      (when (identical? x nop) (throw (js/Error. "No such element.")))
+      x)))
+
+(defn dag [i s f]
+  (let [^Dag dag (->Dag 0 s f nil false false 0 nil nil nil nil nil nil)
+        ^Dag prv (dag-acquire dag)]
+    (set! (.-result dag)
+          (try (i) (catch :default e
+                     (set! (.-failed dag) true)
+                     (dag) e)))
+    (dag-release dag prv) dag))
+
+(defn pub [f d]
+  (let [^Dag dag (doto dag-current (assert "Unable to publish : not in reactor."))
+        ^Pub pub (->Pub dag d (if-some [^Pub cur (.-current dag)]
+                                (let [n (alength (.-id cur))
+                                      a (make-array (inc n))]
+                                  (dotimes [i n] (aset a i (aget (.-id cur) i)))
+                                  (doto a (aset n (doto (.-tier cur) (->> (inc) (set! (.-tier cur)))))))
+                                (doto (make-array 1) (aset 0 (doto (.-tier dag) (->> (inc) (set! (.-tier dag)))))))
+                        nil nop false false 0 0 0 (.-tail dag) nil nil nil nil nil)]
+    (set! (.-tail dag) pub)
+    (if-some [^Pub prv (.-prev pub)]
+      (set! (.-next prv) pub)
+      (set! (.-head dag) pub))
+    (let [prv (.-current dag)]
+      (set! (.-current dag) pub)
+      (set! (.-iterator pub)
+            (f #(let [prv (dag-acquire dag)]
+                  (set! (.-state pub) READY)
+                  (pub-schedule pub)
+                  (dag-release dag prv))
+               #(let [prv (dag-acquire dag)]
+                  (set! (.-state pub) DONE)
+                  (pub-schedule pub)
+                  (dag-release dag prv))))
+      (when (.-cancelled dag) (pub))
+      (set! (.-current dag) prv) pub)))
