@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>missionary</groupId>
+  <artifactId>missionary</artifactId>
+  <version>b.1</version>
+  <name>missionary</name>
+  <description>A functional effect and streaming system for clojure and clojurescript.</description>
+  <url>https://github.com/leonoel/missionary</url>
+  <licenses>
+    <license>
+      <name>Eclipse Public License</name>
+      <url>https://www.eclipse.org/org/documents/epl-2.0/EPL-2.0.html</url>
+    </license>
+  </licenses>
+  <scm>
+    <connection>scm:git:git://github.com/leonoel/missionary.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/leonoel/missionary.git</developerConnection>
+    <tag>334e3c31b4e864dad9e3e0910e001c61fa337bae</tag>
+    <url>https://github.com/leonoel/missionary</url>
+  </scm>
+  <distributionManagement>
+    <repository>
+      <id>clojars</id>
+      <name>Clojars repository</name>
+      <url>https://clojars.org/repo</url>
+    </repository>
+  </distributionManagement>
+  <build>
+    <sourceDirectory>java</sourceDirectory>
+    <resources>
+      <resource>
+        <directory>src</directory>
+      </resource>
+    </resources>
+    <directory>target</directory>
+    <outputDirectory>target/classes</outputDirectory>
+    <plugins>
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <configuration>
+                <source>8</source>
+                <target>8</target>
+            </configuration>
+        </plugin>
+    </plugins>
+  </build>
+  <repositories>
+    <repository>
+      <id>clojars</id>
+      <url>https://repo.clojars.org/</url>
+    </repository>
+  </repositories>
+  <dependencies>
+    <dependency>
+      <groupId>org.clojure</groupId>
+      <artifactId>clojure</artifactId>
+      <version>1.10.1</version>
+    </dependency>
+    <dependency>
+      <groupId>org.clojure</groupId>
+      <artifactId>clojurescript</artifactId>
+      <version>1.10.520</version>
+    </dependency>
+    <dependency>
+      <groupId>org.reactivestreams</groupId>
+      <artifactId>reactive-streams</artifactId>
+      <version>1.0.2</version>
+    </dependency>
+    <dependency>
+      <groupId>cloroutine</groupId>
+      <artifactId>cloroutine</artifactId>
+      <version>4</version>
+    </dependency>
+  </dependencies>
+</project>
