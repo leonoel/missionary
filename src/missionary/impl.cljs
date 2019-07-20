@@ -1,4 +1,4 @@
-(ns missionary.impl)
+(ns ^:no-doc missionary.impl)
 
 (defn nop [])
 
