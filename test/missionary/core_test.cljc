@@ -111,7 +111,8 @@
                               (m/aggregate conj)))))
   (assert (failing? (m/? (->> (m/zip vector
                                      (m/ap (throw (ex-info "this is fine." {})))
-                                     (m/enumerate [1 2 3])))))))
+                                     (m/enumerate [1 2 3]))
+                              (m/aggregate conj))))))
 
 (deftest* relieve
   (letfn [(delay-each [delay input]

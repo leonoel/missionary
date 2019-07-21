@@ -355,7 +355,7 @@
     (when-not (.-ambiguous f) (throw (js/Error. "Can't run flow : process is not ambiguous.")))
     (let [c (->Choice (.-choice f) (.-coroutine f) nil preemptive false nop true)
           n #(if (set! (.-busy c) (not (.-busy c)))
-               (fiber-pull f) ((.-token c)))
+               (fiber-pull f) (when (.-preemptive c) ((.-token c))))
           t #(do (set! (.-done c) true)
                  (when (set! (.-busy c) (not (.-busy c)))
                    (fiber-pull f)))]
@@ -723,48 +723,52 @@
 (defn buffer-more [^Buffer b]
   (loop []
     (let [p (.-push b)
+          q (.-pull b)
           c (alength (.-buffer b))]
       (if (.-done b)
         (if (== c (.-pull b))
           ((.-terminator b))
           (aset (.-buffer b) p nop))
         (if (neg? (.-failed b))
-          (let [n (mod (inc p) c)]
+          (let [n (mod (inc p) c)
+                r (if (== q c) (set! (.-pull b) p) q)]
             (aset (.-buffer b) p
                   (try @(.-iterator b)
                        (catch :default e
                          (buffer-cancel b)
                          (set! (.-failed b) p) e)))
-            (if (== n (.-pull b))
-              (set! (.-push b) c)
-              (do (set! (.-push b) n)
-                  (when (== (.-pull b) c) ((.-notifier b)))
-                  (when (set! (.-busy b) (not (.-busy b))) (recur)))))
+            (set! (.-push b) (if (== n r) c n))
+            (when (== q c) ((.-notifier b)))
+            (when-not (== n r)
+              (when (set! (.-busy b) (not (.-busy b))) (recur))))
           (do (try @(.-iterator b) (catch :default _))
               (when (set! (.-busy b) (not (.-busy b))) (recur))))))))
 
 (defn buffer-deref [^Buffer b]
   (let [p (.-pull b)
+        q (.-push b)
         c (alength (.-buffer b))
         n (mod (inc p) c)
-        x (aget (.-buffer b) p)]
+        x (aget (.-buffer b) p)
+        r (if (== q c) (set! (.-push b) n) q)]
     (aset (.-buffer b) p nil)
-    (set! (.-pull b) n)
-    (if (== n (.-push b))
-      (if (identical? nop (aget (.-buffer b) (.-push b)))
-        ((.-terminator b))
-        (set! (.-pull b) c))
-      (if (== (.-push b) c)
-        (do (set! (.-push b) p)
-            (when (set! (.-busy b) (not (.-busy b)))
-              (buffer-more b)))
+    (if (== n r)
+      (do
+        (set! (.-pull b) c)
+        (when (identical? nop (aget (.-buffer b) q))
+          ((.-terminator b))))
+      (do
+        (set! (.-pull b) n)
         ((.-notifier b))))
+    (when (== q c)
+      (when (set! (.-busy b) (not (.-busy b)))
+        (buffer-more b)))
     (if (== (.-failed b) p) (throw x) x)))
 
 (defn buffer [c f n t]
-  (let [b (->Buffer n t nil (object-array c) 0 -1 c true false)
+  (let [b (->Buffer n t nil (object-array c) 0 c -1 true false)
         n #(when (set! (.-busy b) (not (.-busy b))) (buffer-more b))]
-    (set! (.-iterator b) (f n #(do (.-done b) (n))))
+    (set! (.-iterator b) (f n #(do (set! (.-done b) true) (n))))
     (n) b))
 
 
@@ -857,17 +861,17 @@
 (defn gather-deref [^Gather g]
   (let [c (alength (.-ready g))
         p (.-pull g)
-        n (mod (inc p) c)]
+        n (mod (inc p) c)
+        e (== n (.-push g))]
+    (set! (.-pull g) (if e c n))
+    (when (== c (.-push g)) (set! (.-push g) p))
     (try @(aget (.-iterators g) (aget (.-ready g) p))
          (catch :default e
            (set! (.-notifier g) #(try (gather-deref g) (catch :default _)))
            (gather-cancel g)
            (throw e))
          (finally
-           (set! (.-pull g) (if (== n (.-push g)) c n))
-           (when (== c (.-push g))
-             (set! (.-push g) p)
-             ((.-notifier g)))))))
+           (when-not e ((.-notifier g)))))))
 
 (defn gather [fs n t]
   (let [c (count fs)
@@ -914,21 +918,23 @@
 (defn zip-deref [^Zip z]
   (let [its (.-iterators z)
         res (.-results z)]
-    (try (dotimes [i (alength its)]
-           (aset res i @(aget its i))
-           (set! (.-pending z) (inc (.-pending z))))
+    (try (set! (.-pending z) (dec (.-pending z)))
+         (dotimes [i (alength its)]
+           (set! (.-pending z) (inc (.-pending z)))
+           (aset res i @(aget its i)))
          (.apply (.-combinator z) nil res)
          (catch :default e
            (set! (.-notifier z) (.-flusher z))
            (throw e))
          (finally
+           (set! (.-pending z) (inc (.-pending z)))
            (when (zero? (.-pending z)) ((.-notifier z)))
            (when (identical? (.-notifier z) (.-flusher z)) (zip-cancel z))))))
 
 (defn zip [f fs n t]
   (let [c (count fs)
         i (iter fs)
-        z (->Zip f n nil (object-array c) (object-array c) 0)]
+        z (->Zip f n nil (object-array c) (object-array c) c)]
     (set! (.-flusher z)
           #(let [its (.-iterators z)
                  cnt (alength its)]
@@ -945,17 +951,18 @@
                    (t) (when (zero? (set! (.-pending z) (+ (.-pending z) flushed)))
                          (recur)))))))
     (loop [index 0]
-      (aset (.-iterators z) i
-            ((.next fs)
-              #(when (zero? (set! (.-pending z) (dec (.-pending z))))
-                 ((.-notifier z)))
+      (aset (.-iterators z) index
+            ((.next i)
+              #(let [p (dec (.-pending z))]
+                 (set! (.-pending z) p)
+                 (when (zero? p) ((.-notifier z))))
               #(do (aset (.-iterators z) index nil)
                    (set! (.-notifier z) (.-flusher z))
                    (let [p (set! (.-pending z) (dec (.-pending z)))]
                      (when-not (neg? p)
                        (zip-cancel z)
                        (when (zero? p) ((.-notifier z))))))))
-      (when (.hasNext fs) (recur (inc index))))
+      (when (.hasNext i) (recur (inc index))))
     (when (zero? (set! (.-pending z) (+ (.-pending z) c)))
       ((.-notifier z))) z))
 
