@@ -646,10 +646,11 @@
   (let [o (->Observe n t nil nop)]
     (set! (.-unsub o)
           (s (fn [x]
-               (when-not (identical? nop (.-current o))
-                 (throw (ex-info "Unable to process event : consumer is not ready." {})))
-               (set! (.-current o) x)
-               ((.-notifier o))))) o))
+               (when-some [n (.-notifier o)]
+                 (when-not (identical? nop (.-current o))
+                   (throw (ex-info "Unable to process event : consumer is not ready." {})))
+                 (set! (.-current o) x)
+                 (n))))) o))
 
 
 ;;;;;;;;;;;;;

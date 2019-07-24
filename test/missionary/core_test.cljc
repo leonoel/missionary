@@ -153,7 +153,12 @@
                                   (event! i))))
                             (->> (m/observe (fn [!] (e !) #()))
                                  (m/transform (take 5))
-                                 (m/aggregate conj))))))))
+                                 (m/aggregate conj)))))))
+  (let [e (m/dfv)]
+    (m/? (->> (m/observe (fn [!] (! nil) #(e !)))
+              (m/transform (take 1))
+              (m/aggregate conj)))
+    ((m/? e) nil)))
 
 (deftest* watch
   (assert (= [0 1 2 3 4]
