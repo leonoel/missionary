@@ -142,6 +142,19 @@
                               (m/buffer 20)
                               (m/aggregate conj))))))
 
+(deftest* observe
+  (assert (= [0 1 2 3 4]
+             (let [e (m/dfv)]
+               (m/? (m/join {}
+                            (m/sp
+                              (let [event! (m/? e)]
+                                (dotimes [i 5]
+                                  (m/? (m/sleep 10))
+                                  (event! i))))
+                            (->> (m/observe (fn [!] (e !) #()))
+                                 (m/transform (take 5))
+                                 (m/aggregate conj))))))))
+
 (deftest* watch
   (assert (= [0 1 2 3 4]
              (let [a (atom 0)]
