@@ -623,34 +623,54 @@
 (declare observe-cancel)
 (declare observe-deref)
 (deftype Observe
-  [notifier terminator unsub current]
+  [notifier terminator
+   unsub current
+   ^boolean failed
+   ^boolean cancelled]
   IFn
   (-invoke [o] (observe-cancel o))
   IDeref
   (-deref [o] (observe-deref o)))
 
+(defn observe-unsub [^Observe o]
+  (try ((.-unsub o))
+       ((.-terminator o))
+       (catch :default e
+         (set! (.-failed o) true)
+         (set! (.-current o) e)
+         ((.-notifier o)))))
+
 (defn observe-cancel [^Observe o]
-  (when (some? (.-notifier o))
-    (set! (.-notifier o) nil)
-    ((.-unsub o))
+  (when-not (.-cancelled o)
+    (set! (.-cancelled o) true)
     (when (identical? nop (.-current o))
-      ((.-terminator o)))))
+      (observe-unsub o))))
 
 (defn observe-deref [^Observe o]
   (let [x (.-current o)]
     (set! (.-current o) nop)
-    (when (nil? (.-notifier o))
-      ((.-terminator o))) x))
+    (when (.-cancelled o)
+      (when (.-failed o)
+        ((.-terminator o))
+        (throw x))
+      (observe-unsub o)) x))
 
 (defn observe [s n t]
-  (let [o (->Observe n t nil nop)]
-    (set! (.-unsub o)
-          (s (fn [x]
-               (when-some [n (.-notifier o)]
-                 (when-not (identical? nop (.-current o))
-                   (throw (ex-info "Unable to process event : consumer is not ready." {})))
-                 (set! (.-current o) x)
-                 (n))))) o))
+  (let [o (->Observe n t nil nop false false)]
+    (try (set! (.-unsub o)
+               (s (fn [x]
+                    (when-not (.-cancelled o)
+                      (when-not (identical? nop (.-current o))
+                        (throw (ex-info "Unable to process event : consumer is not ready." {})))
+                      (set! (.-current o) x)
+                      ((.-notifier o))))))
+         (catch :default e
+           (set! (.-cancelled o) true)
+           (set! (.-failed o) true)
+           (let [x (.-current o)]
+             (set! (.-current o) e)
+             (when (identical? nop x)
+               (n))))) o))
 
 
 ;;;;;;;;;;;;;

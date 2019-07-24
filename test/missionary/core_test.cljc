@@ -158,7 +158,12 @@
     (m/? (->> (m/observe (fn [!] (! nil) #(e !)))
               (m/transform (take 1))
               (m/aggregate conj)))
-    ((m/? e) nil)))
+    ((m/? e) nil))
+  (assert (failing? (m/? (->> (m/observe (fn [_] (assert nil)))
+                              (m/aggregate conj)))))
+  (assert (= [nil] (m/? (->> (m/observe (fn [!] (! nil) #(assert nil)))
+                             (m/transform (take 1))
+                             (m/aggregate conj))))))
 
 (deftest* watch
   (assert (= [0 1 2 3 4]
