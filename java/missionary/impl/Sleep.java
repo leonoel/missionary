@@ -41,9 +41,14 @@ public final class Sleep extends AFn {
                 IPersistentMap p = pending;
                 Object item = p.valAt(s.time);
                 if (item == null) break;
-                if (PENDING.compareAndSet(this, p, item instanceof Sleep ?
-                        p.without(s.time) :
-                        p.assoc(s.time, ((IPersistentSet) item).disjoin(s)))) {
+                IPersistentMap n;
+                if (item instanceof Sleep) {
+                    if (item == s) n = p.without(s.time); else break;
+                } else {
+                    IPersistentSet ss = ((IPersistentSet) item).disjoin(s);
+                    if (ss.equals(item)) break; else n = p.assoc(s.time, ss);
+                }
+                if (PENDING.compareAndSet(this, p, n)) {
                     s.failure.invoke(new ExceptionInfo("Sleep cancelled.", RT.map(
                             Keyword.intern(null, "cancelled"),
                             Keyword.intern("missionary", "sleep"))));
