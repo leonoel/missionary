@@ -1,6 +1,6 @@
 (ns missionary.core
   (:require #?(:cljs [missionary.impl :as i])
-            [cloroutine.core #?(:clj :refer :cljs :refer-macros) [cr]])
+            [cloroutine.core :refer [cr] :include-macros true])
   #?(:clj (:import (missionary.impl
                      Thunk Sleep RaceJoin Never Aggregate Enumerate Watch Observe Transform Pub Sub Relieve
                      Buffer Latest Sample Gather Fiber Zip Dataflow Mailbox Rendezvous Semaphore Integrate)

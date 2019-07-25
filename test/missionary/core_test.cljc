@@ -1,7 +1,7 @@
 (ns missionary.core-test
   (:require
-    [missionary.core :as m]
-    [missionary.helpers #?(:clj :refer :cljs :refer-macros) [deftest* failing?]]))
+    [missionary.core :as m :include-macros true]
+    [missionary.helpers :refer [deftest* failing?] :include-macros true]))
 
 (deftest* timing
   (assert (= nil (m/? (m/sleep 0))))
