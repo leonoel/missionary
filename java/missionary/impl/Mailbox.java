@@ -42,7 +42,7 @@ public final class Mailbox extends AFn implements Event.Emitter {
                 int n = v.count();
                 if (STATE.compareAndSet(this, s, n == 1 ? null :
                         new APersistentVector.SubVector(null, v, 1, n))) {
-                    ((IFn) success).invoke(null);
+                    ((IFn) success).invoke(v.nth(0));
                     return NOP;
                 }
             } else {
