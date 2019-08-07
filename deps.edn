@@ -2,7 +2,7 @@
  {org.clojure/clojure {:mvn/version "1.10.1"}
   org.clojure/clojurescript {:mvn/version "1.10.520"}
   org.reactivestreams/reactive-streams {:mvn/version "1.0.2"}
-  cloroutine/cloroutine {:mvn/version "5"}}
+  cloroutine/cloroutine {:mvn/version "6"}}
 
  :paths ["src" "target/classes"]
 
