@@ -47,6 +47,8 @@ public final class Transform extends AFn implements IDeref {
                 terminator.invoke();
                 return;
             } else {
+                offset = 0;
+                length = 0;
                 try {
                     reducer.invoke(this);
                 } catch (Throwable e) {

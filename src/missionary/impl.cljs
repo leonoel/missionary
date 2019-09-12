@@ -530,7 +530,9 @@
   (loop []
     (if (.-done t)
       (if-some [rf (.-reducer t)]
-        (do (try (rf t)
+        (do (set! (.-offset t) 0)
+            (set! (.-length t) 0)
+            (try (rf t)
                  (catch :default e
                    (set! (.-error t) (.-length t))
                    (transform-feed t e)))

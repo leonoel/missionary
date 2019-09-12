@@ -75,6 +75,10 @@
                               (m/aggregate conj))))))
 
 (deftest* transform
+  (assert (= (range 10)
+             (m/? (->> (m/enumerate (range 10))
+                       (m/transform identity)
+                       (m/aggregate conj)))))
   (assert (= [[0 0 1 2] [0 1 2 3] [4 0 1 2] [3 4 5 6] [0 1 2 3] [4 5 6 7] [8]]
              (m/? (->> (m/enumerate (range 10))
                        (m/transform (comp (filter odd?) (mapcat range) (partition-all 4)))
