@@ -608,14 +608,26 @@ Returns a continuous flow running given continuous `flows` in parallel and combi
   ^{:static true
     :arglists '([f sampled sampler])
     :doc "
-Returns a discrete flow running given `sampler` discrete flow and `sampled` continuous flow in parallel, emitting (synchronously with `sampler`) the result of function `f` called with current values of `sampled` and `sampler`.
+Returns a discrete flow running given `sampler` discrete flow and `sampled` continuous flow in parallel. For each `sampler` value, emits the result of function `f` called with current values of `sampled` and `sampler`.
 
-Cancellation propagates to both flows. When `sampler` terminates, `sampled` is cancelled.
+Cancellation propagates to both flows. When `sampler` terminates, `sampled` is cancelled. A failure in any of both flows, or `f` throwing an exception, or trying to pull a value before first value of `sampled` will cancel the flow and propagate the error.
 
 Example :
 ```clojure
+(defn sleep-emit [delays]
+  (ap (let [n (?? (enumerate delays))]
+        (? (sleep n n)))))
 
+(defn delay-each [delay input]
+  (ap (? (sleep delay (?? input)))))
 
+(? (->> (sample vector
+                (sleep-emit [24 79 67 34])
+                (sleep-emit [86 12 37 93]))
+        (delay-each 50)
+        (aggregate conj)))
+
+#_=> [[24 86] [24 12] [79 37] [67 93]]
 ```
 "} sample [f sd sr]
   (fn [n t]

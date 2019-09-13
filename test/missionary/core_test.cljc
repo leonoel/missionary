@@ -195,5 +195,28 @@
                          (m/aggregate conj)))))))
 
 (deftest* sample
-  (comment TODO)
-  )
+  (assert (= [] (m/? (->> (m/sample {} (m/ap) m/none)
+                          (m/aggregate conj)))))
+  (assert (failing? (m/? (->> (m/sample {} m/none (m/enumerate (range)))
+                              (m/aggregate conj)))))
+  (assert (= (map vector (range 10) (range 10))
+             (m/? (->> (m/sample vector (m/enumerate (range 10)) (m/enumerate (range 10)))
+                       (m/aggregate conj)))))
+  (assert (= (map vector (concat (range 5) (repeat 4)) (range 10))
+             (m/? (->> (m/sample vector (m/enumerate (range 5)) (m/enumerate (range 10)))
+                       (m/aggregate conj)))))
+  (assert (= (map vector (range 5) (range 5))
+             (m/? (->> (m/sample vector (m/enumerate (range 10)) (m/enumerate (range 5)))
+                       (m/aggregate conj)))))
+  (letfn [(sleep-emit [delays]
+            (m/ap (let [n (m/?? (m/enumerate delays))]
+                    (m/? (m/sleep n n)))))
+          (delay-each [delay input]
+            (m/ap (m/? (m/sleep delay (m/?? input)))))]
+    (assert (= [[24 86] [24 12] [79 37] [67 93]]
+               (m/? (->> (m/sample vector
+                                   (sleep-emit [24 79 67 34])
+                                   (sleep-emit [86 12 37 93]))
+                         (delay-each 50)
+                         (m/aggregate conj)))))))
+

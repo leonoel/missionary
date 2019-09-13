@@ -1014,45 +1014,50 @@
 (defn sample-flush [^Sample s]
   (loop []
     (try @(.-sampled-it s) (catch :default _))
-    (when (set! (.-sampled-busy s) (not (.-sampled-busy s)))
-      (recur))))
+    (let [b (.-sampled-busy s)]
+      (set! (.-sampled-busy s) (not b))
+      (when b (recur)))))
 
 (defn sample-deref [^Sample s]
-  (let [dirty (.-sampled-busy s)]
-    (try ((.-combinator s) (if dirty
-                             (set! (.-latest s) @(.-sampled-it s))
-                             (.-latest s)) @(.-sampler-it s))
+  (let [d (not (.-sampled-busy s))]
+    (try (when d (set! (.-latest s) @(.-sampled-it s)))
+         (let [x @(.-sampler-it s)]
+           (when (identical? nop (.-latest s))
+             (throw (js/Error. "Unable to sample : flow is not ready.")))
+           ((.-combinator s) (.-latest s) x))
          (catch :default e
+           (set! (.-latest s) nil)
+           (set! (.-combinator s) {})
            (set! (.-notifier s) #(try (sample-deref s) (catch :default _)))
            (sample-cancel s)
            (throw e))
          (finally
-           (when dirty (set! (.-sampled-busy s) (not (.-sampled-busy s))))
+           (when d (set! (.-sampled-busy s) (not (.-sampled-busy s))))
            (if (set! (.-sampler-busy s) (not (.-sampler-busy s)))
-             ((.-notifier s))
              (when (.-sampler-done s)
                (if (.-sampled-done s)
                  ((.-terminator s))
-                 (when (.-sampled-busy s)
-                   (sample-flush s)))))))))
+                 (when-not (.-sampled-busy s)
+                   (sample-flush s))))
+             ((.-notifier s)))))))
 
 (defn sample [f sd sr n t]
   (let [s (->Sample f n t nil nil nop true true false false)]
     (set! (.-sampled-it s)
-          (sd #(if (identical? nop (.-latest s))
-                 (do (set! (.-latest s) nil)
-                     (set! (.-sampler-busy s) (not (.-sampler-busy s)))
-                     (when (.-sampler-busy s) ((.-notifier s))))
-                 (do (set! (.-sampled-busy s) (not (.-sampled-busy s)))
-                     (when (and (not (.-sampled-busy s)) (.-sampler-done s) (not (.-sampler-busy s)))
-                       (sample-flush s))))
+          (sd #(do (set! (.-sampled-busy s) (not (.-sampled-busy s)))
+                   (when (and (.-sampled-busy s) (.-sampler-done s) (.-sampler-busy s))
+                     (sample-flush s)))
               #(do (set! (.-sampled-done s) true)
-                   (when (and (.-sampler-done s) (not (.-sampled-busy s)))
+                   (when (and (.-sampler-done s) (.-sampler-busy s))
                      ((.-terminator s))))))
     (set! (.-sampler-it s)
-          (sr #(when (set! (.-sampler-busy s) (not (.-sampler-busy s)))
-                 ((.-notifier s)))
+          (sr #(let [b (.-sampler-busy s)]
+                 (set! (.-sampler-busy s) (not b))
+                 (when b ((.-notifier s))))
               #(do ((.-sampled-it s))
                    (set! (.-sampler-done s) true)
-                   (when (and (not (.-sampler-busy s)) (.-sampled-done s) (not (.-sampled-busy s)))
-                     ((.-terminator s)))))) s))
+                   (when (.-sampler-busy s)
+                     (if (.-sampled-done s)
+                       ((.-terminator s))
+                       (when-not (.-sampled-busy s)
+                         (sample-flush s))))))) s))

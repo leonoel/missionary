@@ -1,8 +1,10 @@
 package missionary.impl;
 
+
 import clojure.lang.AFn;
 import clojure.lang.IDeref;
 import clojure.lang.IFn;
+import clojure.lang.PersistentHashMap;
 
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
@@ -16,9 +18,14 @@ public final class Sample extends AFn implements IDeref {
     static final int SAMPLED_DONE = 1 << 2;
     static final int SAMPLER_DONE = 1 << 3;
 
+    static boolean is(int s, int m) {
+        return (s & m) == m;
+    }
+
     IFn combinator;
     IFn notifier;
     IFn terminator;
+
     Object sampledIterator;
     Object samplerIterator;
     Object latest = STATE;
@@ -30,8 +37,8 @@ public final class Sample extends AFn implements IDeref {
         do {
             try {((IDeref) sampledIterator).deref();}
             catch (Throwable _) {}
-            while (STATE.compareAndSet(this, s = state, s ^ SAMPLED_BUSY));
-        } while ((s & SAMPLED_BUSY) == 0);
+            while (!STATE.compareAndSet(this, s = state, s ^ SAMPLED_BUSY));
+        } while (is(s, SAMPLED_BUSY));
     }
 
     public Sample(IFn c, IFn sd, IFn sr, IFn n, IFn t) {
@@ -42,15 +49,8 @@ public final class Sample extends AFn implements IDeref {
             @Override
             public Object invoke() {
                 int s;
-                if (latest == STATE) {
-                    latest = null;
-                    while (!STATE.compareAndSet(Sample.this, s = state, s ^ SAMPLER_BUSY));
-                    if ((s & SAMPLER_BUSY) == 0) notifier.invoke();
-                } else {
-                    while (!STATE.compareAndSet(Sample.this, s = state, s ^ SAMPLED_BUSY));
-                    if ((s & SAMPLED_BUSY) == 0 && (s & SAMPLER_DONE) != 0 && (s & SAMPLER_BUSY) == 0)
-                        flush();
-                }
+                while (!STATE.compareAndSet(Sample.this, s = state, s ^ SAMPLED_BUSY));
+                if (is(s, SAMPLED_BUSY | SAMPLER_DONE | SAMPLER_BUSY)) flush();
                 return null;
             }
         }, new AFn() {
@@ -58,7 +58,7 @@ public final class Sample extends AFn implements IDeref {
             public Object invoke() {
                 int s;
                 while (!STATE.compareAndSet(Sample.this, s = state, s | SAMPLED_DONE));
-                if ((s & SAMPLER_DONE) != 0 && (s & SAMPLED_BUSY) == 0) terminator.invoke();
+                if (is(s,    SAMPLER_DONE | SAMPLER_BUSY)) terminator.invoke();
                 return null;
             }
         });
@@ -67,7 +67,7 @@ public final class Sample extends AFn implements IDeref {
             public Object invoke() {
                 int s;
                 while (!STATE.compareAndSet(Sample.this, s = state, s ^ SAMPLER_BUSY));
-                if ((s & SAMPLER_BUSY) == 0) notifier.invoke();
+                if (is(s, SAMPLER_BUSY)) notifier.invoke();
                 return null;
             }
         }, new AFn() {
@@ -76,8 +76,10 @@ public final class Sample extends AFn implements IDeref {
                 ((IFn) sampledIterator).invoke();
                 int s;
                 while (!STATE.compareAndSet(Sample.this, s = state, s | SAMPLER_DONE));
-                if ((s & SAMPLER_BUSY) == 0 && (s & SAMPLED_DONE) != 0 && (s & SAMPLED_BUSY) == 0)
-                    terminator.invoke();
+                if (is(s, SAMPLER_BUSY)) {
+                    if (is(s, SAMPLED_DONE)) terminator.invoke();
+                    else if (!is(s, SAMPLED_BUSY)) flush();
+                }
                 return null;
             }
         });
@@ -93,14 +95,18 @@ public final class Sample extends AFn implements IDeref {
     @Override
     public Object deref() {
         int s = state;
-        int flip = SAMPLER_BUSY;
+        int m = SAMPLER_BUSY;
         try {
-            if ((s & SAMPLED_BUSY) != 0) {
-                flip |= SAMPLED_BUSY;
+            if (!is(s, SAMPLED_BUSY)) {
+                m |= SAMPLED_BUSY;
                 latest = ((IDeref) sampledIterator).deref();
             }
-            return combinator.invoke(latest, ((IDeref) samplerIterator).deref());
+            Object x = ((IDeref) samplerIterator).deref();
+            if (latest == STATE) throw new IllegalStateException("Unable to sample : flow is not ready.");
+            return combinator.invoke(latest, x);
         } catch (Throwable e) {
+            latest = null;
+            combinator = PersistentHashMap.EMPTY;
             notifier = new AFn() {
                 @Override
                 public Object invoke() {
@@ -111,12 +117,13 @@ public final class Sample extends AFn implements IDeref {
             invoke();
             throw e;
         } finally {
-            while (!STATE.compareAndSet(this, s, s ^ flip)) s = state;
-            if ((s & SAMPLER_BUSY) == 0) notifier.invoke();
-            else if ((s & SAMPLER_DONE) != 0) {
-                if ((s & SAMPLED_DONE) != 0) terminator.invoke();
-                else if ((s & SAMPLED_BUSY) != 0) flush();
-            }
+            while (!STATE.compareAndSet(this, s, s ^= m)) s = state;
+            if (is(s, SAMPLER_BUSY)) {
+                if (is(s, SAMPLER_DONE)) {
+                    if (is(s, SAMPLED_DONE)) terminator.invoke();
+                    else if (!is(s, SAMPLED_BUSY)) flush();
+                }
+            } else notifier.invoke();
         }
     }
 }
