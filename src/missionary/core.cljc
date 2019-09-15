@@ -1,20 +1,19 @@
 (ns missionary.core
-  (:require #?(:cljs [missionary.impl :as i])
-            [cloroutine.core :refer [cr] :include-macros true])
-  #?(:clj (:import (missionary.impl
-                     Thunk Sleep RaceJoin Never Aggregate Enumerate Watch Observe Transform Pub Sub Relieve
-                     Buffer Latest Sample Gather Fiber Zip Dataflow Mailbox Rendezvous Semaphore Integrate)
-                   (org.reactivestreams Publisher))))
+  (:require [missionary.impl :as i]
+            [cloroutine.core :refer [cr] :include-macros true]))
+
 
 (def
   ^{:static true
     :doc "A `java.util.concurrent.Executor` optimized for blocking evaluation."}
-  blk #?(:clj Thunk/blk))
+  blk i/blk)
+
 
 (def
   ^{:static true
     :doc "A `java.util.concurrent.Executor` optimized for non-blocking evaluation."}
-  cpu #?(:clj Thunk/cpu))
+  cpu i/cpu)
+
 
 (defn
   ^{:static true
@@ -28,10 +27,8 @@ Not supported on clojurescript.
 (? (via-call blk read-line))
 ;; reads a line from stdin and returns it
 ```
-"} via-call [e t]
-  (fn [s f]
-    #?(:clj (Thunk. e t s f)
-       :cljs (throw (js/Error. "Unsupported operation.")))))
+"} via-call [e t] (fn [s f] (i/thunk e t s f)))
+
 
 (defmacro
   ^{:arglists '([executor & body])
@@ -46,8 +43,8 @@ Example :
 ```clojure
 
 ```
-"} via [exec & body]
-  `(via-call ~exec #(do ~@body)))
+"} via [exec & body] `(via-call ~exec #(do ~@body)))
+
 
 (defn
   ^{:static true
@@ -64,12 +61,8 @@ Example :
 ```
 "} sleep
   ([d] (sleep d nil))
-  ([d x]
-   (fn [s f]
-     #?(:clj  (Sleep. d x s f)
-        :cljs (i/sleep d x s f)))))
+  ([d x] (fn [s f] (i/sleep d x s f))))
 
-(defn ^{:static true :no-doc true} nop [])
 
 (defn
   ^{:static true
@@ -89,14 +82,13 @@ Example :
 #_=> [1 2]            ;; 1 second later
 ```
 "} join
-  ([c] (fn [s _] (s (c)) nop))
-  ([c & ts]
-   (fn [s f]
-     #?(:clj  (RaceJoin. false c ts s f)
-        :cljs (i/race-join false c ts s f)))))
+  ([c] (fn [s _] (s (c)) i/nop))
+  ([c & ts] (fn [s f] (i/race-join false c ts s f))))
+
 
 (defn ^{:static true :no-doc true} race-failure [& errors]
   (ex-info "Race failure." {::errors errors}))
+
 
 (defn
   ^{:static true
@@ -116,11 +108,9 @@ Example :
 #_=> 1                 ;; 1 second later
 ```
 "} race
-  ([] (fn [_ f] (f (race-failure)) nop))
-  ([& ts]
-   (fn [s f]
-     #?(:clj  (RaceJoin. true race-failure ts s f)
-        :cljs (i/race-join true race-failure ts s f)))))
+  ([] (fn [_ f] (f (race-failure)) i/nop))
+  ([& ts] (fn [s f] (i/race-join true race-failure ts s f))))
+
 
 (defn
   ^{:static true
@@ -130,14 +120,15 @@ Returns a task always succeeding with result of given `task` wrapped in a zero-a
 "} attempt [task]
   (fn [s _] (task (fn [x] (s #(-> x))) (fn [e] (s #(throw e))))))
 
+
 (defn
   ^{:static true
     :arglists '([task])
     :doc "
 Returns a task running given `task` completing with a zero-argument function and completing with the result of this function call.
-"}
-  absolve [task]
-  (fn [s f] (task (fn [t] (try (s (t)) (catch #?(:clj Throwable :cljs :default) e (f e)))) f)))
+"} absolve [task]
+  (fn [s f] (task (i/absolver s f) f)))
+
 
 (defn
   ^{:static true
@@ -155,6 +146,7 @@ Returns a task running given `task` and cancelling it if not completed within gi
        (race (sleep delay #(throw (ex-info "Task timed out." {::delay delay, ::task task}))))
        (absolve)))
 
+
 (defn
   ^{:static true
     :arglists '([])
@@ -164,9 +156,8 @@ Throws an exception if current computation is required to terminate, otherwise r
 Inside a process block, checks process cancellation status.
 
 Outside of process blocks, fallbacks to thread interruption status if host platform supports it.
-"} ! []
-  #?(:clj  (Fiber/poll)
-     :cljs (i/fiber-poll)))
+"} ! [] (i/fiber-poll))
+
 
 (defn
   ^{:arglists '([task])
@@ -176,9 +167,8 @@ Runs given task, waits for completion and returns result (or throws, if task fai
 Inside a process block, parks the process.
 
 Outside of process blocks, fallbacks to thread blocking if host platform supports it.
-"} ? [t]
-  #?(:clj  (Fiber/task t)
-     :cljs (i/fiber-task t)))
+"} ? [t] (i/fiber-task t))
+
 
 (defn
   ^{:arglists '([flow])
@@ -190,9 +180,8 @@ Example :
 (? (aggregate conj (ap (inc (?? (enumerate [1 2 3]))))))
 #_=> [2 3 4]
 ```
-"} ?? [f]
-  #?(:clj  (Fiber/flow f false)
-     :cljs (i/fiber-flow f false)))
+"} ?? [f] (i/fiber-flow f false))
+
 
 (defn
   ^{:arglists '([flow])
@@ -212,17 +201,8 @@ Example :
         (aggregate conj)))
 ```
 #_=> [24 79 9 37]
-"} ?! [f]
-  #?(:clj  (Fiber/flow f true)
-     :cljs (i/fiber-flow f true)))
+"} ?! [f] (i/fiber-flow f true))
 
-(defn ^:no-doc ^:static fiber [a c n t]
-  #?(:clj  (Fiber. a c n t)
-     :cljs (i/fiber a c n t)))
-
-(defn ^:no-doc unpark []
-  #?(:clj  (Fiber/unpark)
-     :cljs (i/fiber-unpark)))
 
 (defmacro
   ^{:arglists '([& body])
@@ -232,9 +212,10 @@ Returns a task evaluating `body` (in an implicit `do`). Body evaluation can be p
 Cancelling an `sp` task triggers cancellation of the task it's currently running, along with all tasks subsequently run.
 "} sp [& body]
   `(fn [s# f#]
-     (fiber false
-            (cr {? unpark}
-              ~@body) s# f#)))
+     (i/fiber false
+              (cr {? i/fiber-unpark}
+                ~@body) s# f#)))
+
 
 (defmacro
   ^{:arglists '([& body])
@@ -242,23 +223,22 @@ Cancelling an `sp` task triggers cancellation of the task it's currently running
 Returns a flow evaluating `body` (in an implicit `do`) and producing values of each subsequent fork. Body evaluation can be parked with `?` and forked with `??` and `?!`.
 
 Cancelling an `ap` flow triggers cancellation of the task/flow it's currently running, along with all tasks/flows subsequently run.
-"}
-  ap [& body]
+"} ap [& body]
   `(fn [n# t#]
-     (fiber true
-            (cr {?  unpark
-                 ?? unpark
-                 ?! unpark}
-              ~@body) n# t#)))
+     (i/fiber true
+              (cr {?  i/fiber-unpark
+                   ?? i/fiber-unpark
+                   ?! i/fiber-unpark}
+                ~@body) n# t#)))
+
 
 (defn
   ^{:static true
     :arglists '([task])
     :doc "
 Inhibits cancellation signal of given `task`.
-"}
-  compel [task]
-  (fn [s f] (task s f) nop))
+"} compel [task]
+  (fn [s f] (task s f) i/nop))
 
 
 (defn
@@ -271,9 +251,8 @@ A dataflow variable is a function implementing `assign` on 1-arity and `deref` o
 
 Cancelling a `deref` task makes it fail immediately.
 ```
-"} dfv []
-  #?(:clj  (Dataflow.)
-     :cljs (i/dataflow)))
+"} dfv [] (i/dataflow))
+
 
 (defn
   ^{:static true
@@ -312,9 +291,7 @@ Example : an actor is a mailbox associated with a process consuming messages.
 (counter prn)                                             ;; prints 1
 (counter prn)                                             ;; prints 2
 ```
-"} mbx []
-  #?(:clj  (Mailbox.)
-     :cljs (i/mailbox)))
+"} mbx [] (i/mailbox))
 
 
 (defn
@@ -348,9 +325,8 @@ Example : producer / consumer stream communication
 
 (? (join {} (iterator stream (range 100)) (reducer + 0 stream)))      ;; returns 4950
 ```
-"} rdv []
-  #?(:clj  (Rendezvous.)
-     :cljs (i/rendezvous)))
+"} rdv [] (i/rendezvous))
+
 
 (defn
   ^{:static true
@@ -386,9 +362,8 @@ Example : dining philosophers
 ```
 "} sem
   ([] (sem 1))
-  ([n]
-   #?(:clj  (Semaphore. n)
-      :cljs (i/semaphore n))))
+  ([n] (i/semaphore n)))
+
 
 (defmacro
   ^{:arglists '([semaphore & body])
@@ -397,13 +372,13 @@ Example : dining philosophers
 "} holding [lock & body]
   `(let [l# ~lock] (? l#) (try ~@body (finally (l#)))))
 
+
 (def never
   ^{:static true
     :doc "
 A task never succeeding. Cancelling makes it fail immediately."}
-  (fn [_ f]
-    #?(:clj  (Never. f)
-       :cljs (i/never f))))
+  (fn [_ f] (i/never f)))
+
 
 (def
   ^{:static true
@@ -415,7 +390,8 @@ Example :
 (? (aggregate conj none))
 #_=> []
 ```
-"} none (fn [_ t] (t) nop))
+"} none (fn [_ t] (t) i/nop))
+
 
 (defn
   ^{:static true
@@ -423,9 +399,8 @@ Example :
     :doc "
 Returns a discrete flow producing values from given `collection`. Cancelling before having reached the end makes the flow fail immediately.
 "} enumerate [coll]
-  (fn [n t]
-    #?(:clj  (Enumerate. coll n t)
-       :cljs (i/enumerate coll n t))))
+  (fn [n t] (i/enumerate coll n t)))
+
 
 (defn
   ^{:static true
@@ -440,26 +415,18 @@ Example :
 (? (aggregate + (enumerate (range 10))))
 #_=> 45
 ```
-"}
-  aggregate
-  ([rf flow]
-   (fn [s f]
-     #?(:clj  (Aggregate. rf (rf) flow s f)
-        :cljs (i/aggregate rf (rf) flow s f))))
-  ([rf i flow]
-   (fn [s f]
-     #?(:clj  (Aggregate. rf i flow s f)
-        :cljs (i/aggregate rf i flow s f)))))
+"} aggregate
+  ([rf flow] (fn [s f] (i/aggregate rf (rf) flow s f)))
+  ([rf i flow] (fn [s f] (i/aggregate rf i flow s f))))
+
 
 (defn
   ^{:static true
     :arglists '([reference])
     :doc "
 Returns a continuous flow producing successive values of given `reference` until cancelled. Given reference must support `add-watch`, `remove-watch` and `deref`. Oldest values are discarded on overflow.
-"} watch [r]
-  (fn [n t]
-    #?(:clj  (Watch. r n t)
-       :cljs (i/watch r n t))))
+"} watch [r] (fn [n t] (i/watch r n t)))
+
 
 (defn
   ^{:static true
@@ -468,10 +435,8 @@ Returns a continuous flow producing successive values of given `reference` until
 Returns a discrete flow observing values produced by a non-backpressured subject until cancelled. `subject` must be a function taking a 1-arity `event` function and returning a 0-arity `cleanup` function.
 
 `subject` function is called on initialization. `cleanup` function is called on cancellation. `event` function may be called at any time, it throws an exception on overflow and becomes a no-op after cancellation.
-"} observe [s]
-  (fn [n t]
-    #?(:clj  (Observe. s n t)
-       :cljs (i/observe s n t))))
+"} observe [s] (fn [n t] (i/observe s n t)))
+
 
 (defn
   ^{:static true
@@ -488,10 +453,8 @@ Example :
         (aggregate conj)))
 #_=> [[0 0 1 2] [0 1 2 3] [4 0 1 2] [3 4 5 6] [0 1 2 3] [4 5 6 7] [8]]
 ```
-"} transform [x f]
-  (fn [n t]
-    #?(:clj  (Transform. x f n t)
-       :cljs (i/transform x f n t))))
+"} transform [x f] (fn [n t] (i/transform x f n t)))
+
 
 (defn
   ^{:static true
@@ -510,33 +473,25 @@ Example :
 #_=> [0 1 3 6 10 15]
 ```
 "} integrate
-  ([rf f]
-   (fn [n t]
-     #?(:clj  (Integrate. rf (rf) f n t)
-        :cljs (i/integrate rf (rf) f n t))))
-  ([rf i f]
-   (fn [n t]
-     #?(:clj  (Integrate. rf i f n t)
-        :cljs (i/integrate rf i f n t)))))
+  ([rf f] (fn [n t] (i/integrate rf (rf) f n t)))
+  ([rf i f] (fn [n t] (i/integrate rf i f n t))))
+
 
 (defn
   ^{:static true
     :arglists '([flow])
     :doc "
 Returns a `org.reactivestreams.Publisher` running given discrete `flow` on each subscription.
-"} publisher [flow]
-  #?(:clj  (reify Publisher (subscribe [_ s] (Pub. flow s)))
-     :cljs (throw (js/Error. "Unsupported operation."))))
+"} publisher [flow] (i/publisher flow))
+
 
 (defn
   ^{:static true
     :arglists '([pub])
     :doc "
 Returns a discrete flow subscribing to given `org.reactivestreams.Publisher`.
-"} subscribe [pub]
-  (fn [n t]
-    #?(:clj  (Sub. pub n t)
-       :cljs (throw (js/Error. "Unsupported operation.")))))
+"} subscribe [pub] (fn [n t] (i/subscribe pub n t)))
+
 
 (defn
   ^{:static true
@@ -559,10 +514,8 @@ Example :
         (aggregate conj)))
 #_=> [24 79 67 61 99 37]
 ```
-"} relieve [rf f]
-  (fn [n t]
-    #?(:clj  (Relieve. rf f n t)
-       :cljs (i/relieve rf f n t))))
+"} relieve [rf f] (fn [n t] (i/relieve rf f n t)))
+
 
 (defn
   ^{:static true
@@ -571,9 +524,8 @@ Example :
 Returns a discrete flow producing values emitted by given discrete `flow`, accumulating upstream overflow up to `capacity` items.
 "} buffer [c f]
   (assert (pos? c) "Non-positive buffer capacity.")
-  (fn [n t]
-    #?(:clj  (Buffer. c f n t)
-       :cljs (i/buffer c f n t))))
+  (fn [n t] (i/buffer c f n t)))
+
 
 (defn
   ^{:static true
@@ -599,10 +551,8 @@ Returns a continuous flow running given continuous `flows` in parallel and combi
 ```
 "} latest
   ([f] (ap (f)))
-  ([f & fs]
-   (fn [n t]
-     #?(:clj  (Latest. f fs n t)
-        :cljs (i/latest f fs n t)))))
+  ([f & fs] (fn [n t] (i/latest f fs n t))))
+
 
 (defn
   ^{:static true
@@ -629,10 +579,8 @@ Example :
 
 #_=> [[24 86] [24 12] [79 37] [67 93]]
 ```
-"} sample [f sd sr]
-  (fn [n t]
-    #?(:clj  (Sample. f sd sr n t)
-       :cljs (i/sample f sd sr n t))))
+"} sample [f sd sr] (fn [n t] (i/sample f sd sr n t)))
+
 
 (defn
   ^{:static true
@@ -652,10 +600,8 @@ Example :
 "} gather
   ([] none)
   ([f] f)
-  ([f & fs]
-   (fn [n t]
-     #?(:clj  (Gather.  (cons f fs) n t)
-        :cljs (i/gather (cons f fs) n t)))))
+  ([f & fs] (fn [n t] (i/gather (cons f fs) n t))))
+
 
 (defn
   ^{:static true
@@ -673,8 +619,4 @@ Example :
           (m/aggregate conj)))
 #_=> [[1 :a] [2 :b] [3 :c]]
 ```
-"}
-  zip [c f & fs]
-  (fn [n t]
-    #?(:clj  (Zip. c (cons f fs) n t)
-       :cljs (i/zip c (cons f fs) n t))))
+"} zip [c f & fs] (fn [n t] (i/zip c (cons f fs) n t)))

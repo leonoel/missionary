@@ -2,6 +2,21 @@
 
 (defn nop [])
 
+(def blk)
+(def cpu)
+
+(defn absolver [s f]
+  (fn [t] (try (s (t)) (catch :default e (f e)))))
+
+(defn thunk [e t s f]
+  (throw (js/Error. "Unsupported operation.")))
+
+(defn publisher [f]
+  (throw (js/Error. "Unsupported operation.")))
+
+(defn subscribe [pub n t]
+  (throw (js/Error. "Unsupported operation.")))
+
 ;;;;;;;;;;;;;;
 ;; DATAFLOW ;;
 ;;;;;;;;;;;;;;
