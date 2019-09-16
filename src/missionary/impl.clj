@@ -17,7 +17,7 @@
   (.write w "#object[")
   (.write w (.getName (class o)))
   (.write w " ")
-  (.write w (format "0x%x " (System/identityHashCode o)))
+  (.write w (format "0x%x" (System/identityHashCode o)))
   (.write w "]"))
 
 (defmethod print-method Never [o w] (print-object o w))
