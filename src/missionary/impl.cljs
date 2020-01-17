@@ -234,159 +234,280 @@
 ;; FIBERS ;;
 ;;;;;;;;;;;;
 
-(declare choice-cancel)
-(deftype Choice
-  [^Choice parent
-   backtrack
-   iterator
-   ^boolean preemptive
-   ^boolean done
-   token
-   ^boolean busy]
+(defprotocol Fiber
+  (poll [_])
+  (task [_ t])
+  (flow-concat [_ f])
+  (flow-switch [_ f])
+  (flow-gather [_ f])
+  (unpark [_]))
+
+(def fiber-current)
+
+(defn fiber-poll        []  (poll fiber-current))
+(defn fiber-task        [t] (task fiber-current t))
+(defn fiber-flow-concat [f] (flow-concat fiber-current f))
+(defn fiber-flow-switch [f] (flow-switch fiber-current f))
+(defn fiber-flow-gather [f] (flow-gather fiber-current f))
+(defn fiber-unpark      []  (unpark fiber-current))
+
+(deftype Sequential [coroutine success failure resume rethrow token ^boolean busy ^boolean failed current]
   IFn
-  (-invoke [c] (choice-cancel c)))
+  (-invoke [_]
+    (when-some [t token]
+      (set! (.-token _) nil)
+      (t)))
+  Fiber
+  (poll [_]
+    (when (nil? token)
+      (throw (ex-info "Process cancelled." {:cancelled :missionary/sp}))))
+  (task [_ t]
+    (let [c (t resume rethrow)]
+      (if (nil? token)
+        (c) (set! (.-token _) c)) nop))
+  (flow-concat [_ f]
+    (throw (js/Error. "Unsupported operation.")))
+  (flow-switch [_ f]
+    (throw (js/Error. "Unsupported operation.")))
+  (flow-gather [_ f]
+    (throw (js/Error. "Unsupported operation.")))
+  (unpark [_]
+    (let [e failed
+          x current]
+      (set! (.-failed _) false)
+      (set! (.-current _) nil)
+      (if e (throw x) x))))
 
-(declare fiber-cancel)
-(declare fiber-deref)
-(deftype Fiber
-  [^boolean ambiguous
-   coroutine
-   cb1 cb2
-   ^Choice choice
-   ^boolean failed
-   result
-   token
-   ^boolean busy
-   success failure]
-  IFn
-  (-invoke [f] (fiber-cancel f))
-  IDeref
-  (-deref [f] (fiber-deref f)))
-
-(def fiber-current nil)
-
-(defn fiber-run [^Fiber f]
-  (let [p fiber-current]
-    (set! fiber-current f)
+(defn sp-step [^Sequential sp]
+  (let [pf fiber-current]
+    (set! fiber-current sp)
     (loop []
       (try
-        (let [x ((.-coroutine f))]
+        (let [x ((.-coroutine sp))]
           (when-not (identical? x nop)
-            (if (.-ambiguous f)
-              (do (set! (.-result f) x)
-                  ((.-cb1 f)))
-              ((.-cb1 f) x))))
+            ((.-success sp) x)))
         (catch :default e
-          (if (.-ambiguous f)
-            (do (set! (.-failed f) true)
-                (set! (.-result f) e)
-                ((.-cb1 f)))
-            ((.-cb2 f) e))))
-      (when (set! (.-busy f) (not (.-busy f)))
+          ((.-failure sp) e)))
+      (when (set! (.-busy sp) (not (.-busy sp)))
         (recur)))
-    (set! fiber-current p)))
+    (set! fiber-current pf)))
 
-(defn fiber-fork [c ^Fiber f x]
-  (set! (.-coroutine f) c)
-  ((.-success f) x))
-
-(defn fiber-pull [^Fiber f]
-  (loop []
-    (let [c (.-choice f)]
-      (if (.-done c)
-        (if-some [c (set! (.-choice f) (.-parent c))]
-          (when (set! (.-busy c) (not (.-busy c)))
-            (recur)) ((.-cb2 f)))
-        (if (.-failed f)
-          (do (try @(.-iterator c) (catch :default _))
-              (when (set! (.-busy c) (not (.-busy c))) (recur)))
-          (try ((.-backtrack c) fiber-fork f @(.-iterator c))
-               (catch :default e
-                 (set! (.-coroutine f) (.-backtrack c))
-                 (set! (.-failed f) true)
-                 (set! (.-result f) e)
-                 (when (set! (.-busy f) (not (.-busy f))) (fiber-run f)))))))))
-
-(defn fiber [ambiguous coroutine cb1 cb2]
-  (let [f (->Fiber ambiguous coroutine cb1 cb2 nil false nil nop true nil nil)]
-    (set! (.-success f)
+(defn sp [c s f]
+  (let [sp (->Sequential c s f nil nil nil true false nil)]
+    (set! (.-resume sp)
           (fn [x]
-            (set! (.-result f) x)
-            (when (set! (.-busy f) (not (.-busy f)))
-              (fiber-run f))))
-    (set! (.-failure f)
+            (set! (.-result sp) x)
+            (when (set! (.-busy sp) (not (.-busy sp)))
+              (sp-step sp))))
+    (set! (.-failure sp)
           (fn [e]
-            (set! (.-failed f) true)
-            ((.-success f) e)))
-    (fiber-run f) f))
+            (set! (.-failed sp) true)
+            ((.-success sp) e)))
+    (sp-step sp) sp))
 
-(defn fiber-cancel [^Fiber f]
-  (when-some [t (.-token f)]
-    (set! (.-token f) nil)
-    (t)))
 
-(defn fiber-deref [^Fiber f]
-  (let [e (.-failed f)
-        x (.-result f)]
-    (set! (.-result f) nil)
-    (if-some [^Choice c (.-choice f)]
-      (when (set! (.-busy c) (not (.-busy c)))
-        (fiber-pull f)) ((.-cb2 f)))
-    (if e (throw x) x)))
 
-(defn fiber-swap [^Fiber f cancel]
-  (if-some [c (.-choice f)]
-    (if (or (nil? (.-token c))
-            (and (.-preemptive c)
-                 (not (.-busy c))
-                 (not (.-done c))))
-      (cancel) (set! (.-token c) cancel))
-    (if (nil? (.-token f))
-      (cancel) (set! (.-token f) cancel))))
+(def ^:const CONCAT 0)
+(def ^:const SWITCH 1)
+(def ^:const GATHER 2)
 
-(defn choice-cancel [^Choice c]
-  (when-some [t (.-token c)]
-    (set! (.-token c) nil)
-    ((.-iterator c)) (t)))
+(deftype Choice [^Choice parent backtrack iterator ^number type ^boolean done token ready]
+  IFn
+  (-invoke [_]
+    (when-some [t token]
+      (set! (.-token _) nil)
+      (iterator) (t))))
 
-(defn fiber-poll []
-  (when-some [^Fiber f fiber-current]
-    (when (if-some [c (.-choice f)]
+(declare ap-swap)
+(declare ap-choice)
+(deftype Gather [process coroutine ^boolean failed current ^Choice choice ^Gather next resume rethrow token ^boolean busy]
+  Fiber
+  (poll [_]
+    (when (if-some [c choice]
             (or (nil? (.-token c))
-                (and (.-preemptive c)
-                     (not (.-busy c))))
-            (nil? (.-token f)))
-      (throw (ex-info "Process cancelled." {:cancelled (if (.-ambiguous f) :missionary/ap :missionary/sp)})))))
-
-(defn fiber-task [task]
-  (let [^Fiber f fiber-current]
-    (assert f "Can't run task : not in process.")
-    (fiber-swap f (task (.-success f) (.-failure f)))
-    nop))
-
-(defn fiber-flow [flow preemptive]
-  (let [^Fiber f fiber-current]
-    (when (nil? f) (throw (js/Error. "Can't run flow : not in process.")))
-    (when-not (.-ambiguous f) (throw (js/Error. "Can't run flow : process is not ambiguous.")))
-    (let [c (->Choice (.-choice f) (.-coroutine f) nil preemptive false nop true)
-          n #(if (set! (.-busy c) (not (.-busy c)))
-               (fiber-pull f) (when (.-preemptive c) ((.-token c))))
-          t #(do (set! (.-done c) true)
-                 (when (set! (.-busy c) (not (.-busy c)))
-                   (fiber-pull f)))]
-      (set! (.-iterator c) (flow n t))
-      (fiber-swap f c)
-      (set! (.-choice f) c)
-      (n) nop)))
-
-(defn fiber-unpark []
-  (let [^Fiber f fiber-current]
-    (when (nil? f) (throw (js/Error. "Can't unpark : not in process.")))
-    (let [e (.-failed f)
-          x (.-result f)]
-      (set! (.-failed f) false)
-      (set! (.-result f) nil)
+                (and (== SWITCH (.-type c))
+                     (nil? (.-ready c))
+                     (not (.-done c))))
+            (nil? token))
+      (throw (ex-info "Process cancelled." {:cancelled :missionary/ap}))))
+  (task [_ t]
+    (ap-swap _ (t resume rethrow)) nop)
+  (flow-concat [_ f]
+    (ap-choice _ f CONCAT) nop)
+  (flow-switch [_ f]
+    (ap-choice _ f SWITCH) nop)
+  (flow-gather [_ f]
+    (ap-choice _ f GATHER) nop)
+  (unpark [_]
+    (let [e failed
+          x current]
+      (set! (.-failed _) false)
+      (set! (.-current _) nil)
       (if e (throw x) x))))
+
+(declare ap-cancel)
+(declare ap-emitter)
+(declare ap-terminate)
+(declare ap-more)
+(declare ap-ready)
+(declare ap-reverse)
+(deftype Ambiguous [notifier terminator ^Gather head queue alive]
+  IFn
+  (-invoke [_]
+    (when-not (number? alive)
+      (reduce (fn [_ g] (ap-cancel g)) nil alive)
+      (set! (.-alive _) (count alive)) nil))
+  IDeref
+  (-deref [_]
+    (try (unpark head)
+         (catch :default e
+           (set! (.-notifier _) #(try @_ (catch :default _)))
+           (_) (throw e))
+         (finally
+           (let [next (ap-emitter (.-next head))]
+             (if-some [c (.-choice head)]
+               (when (nil? (ap-ready c))
+                 (ap-more head))
+               (ap-terminate head))
+             (when-some [next (if (nil? next)
+                                (loop []
+                                  (if-some [prev queue]
+                                    (do (set! (.-queue _) nil)
+                                        (or (-> prev ap-reverse ap-emitter) (recur)))
+                                    (do (set! (.-queue _) nop) nil))) next)]
+               (set! (.-head _) next)
+               (notifier)))))))
+
+(defn ap-swap [^Gather g t]
+  (if-some [c (.-choice g)]
+    (if (or (nil? (.-token c))
+            (and (== SWITCH (.-type c))
+                 (nil? (.-ready c))
+                 (not (.-done c))))
+      (t) (set! (.-token c) t))
+    (if (nil? (.-token g))
+      (t) (set! (.-token g) t))))
+
+(defn ap-choice [^Gather g f t]
+  (let [c (->Choice (.-choice g) (.-coroutine g) nil t false nop nop)
+        n #(if-some [t (ap-ready c)]
+             (t) (ap-more g))
+        t #(do (set! (.-done c) true)
+               (when (nil? (ap-ready c))
+                 (ap-more g)))]
+    (set! (.-iterator c) (f n t))
+    (ap-swap g c)
+    (set! (.-choice g) c)
+    (when (nil? (ap-ready c)) (ap-more g))))
+
+(defn ap-emitter [^Gather g]
+  (loop [g g]
+    (when (some? g)
+      (if-some [c (.-choice g)]
+        (if (== GATHER (.-type c))
+          (let [h (.-next g)]
+            (when (nil? (ap-ready (.-choice g)))
+              (ap-more g))
+            (recur h)) g) g))))
+
+(defn ap-terminate [^Gather g]
+  (let [^Ambiguous p (.-process g)
+        a (.-alive p)]
+    (when (zero? (if (number? a)
+                   (set! (.-alive p) (dec a))
+                   (count (set! (.-alive p) (disj a g)))))
+      ((.-terminator p)))))
+
+(defn ap-run [c ^Gather g x]
+  (set! (.-coroutine g) c)
+  ((.-resume g) x))
+
+(defn ap-emit [^Gather g x]
+  (set! (.-current g) x)
+  (let [^Ambiguous p (.-process g)]
+    (if (identical? nop (.-queue p))
+      (do (set! (.-queue p) nil)
+          (set! (.-next g) nil)
+          (set! (.-head p) g)
+          ((.-notifier p)))
+      (do (set! (.-next g) (.-queue p))
+          (set! (.-queue p) g)))))
+
+(defn ap-step [^Gather g]
+  (let [pf fiber-current]
+    (set! fiber-current g)
+    (loop []
+      (try
+        (let [x ((.-coroutine g))]
+          (when-not (identical? x nop)
+            (ap-emit g x)))
+        (catch :default e
+          (set! (.-failed g) true)
+          (ap-emit g e)))
+      (when (set! (.-busy g) (not (.-busy g)))
+        (recur)))
+    (set! fiber-current pf)))
+
+(defn ap-cancel [^Gather g]
+  (when-some [t (.-token g)]
+    (set! (.-token g) nil) (t)))
+
+(defn ap-gather [^Ambiguous p]
+  (let [g (->Gather p nil false nil nil nil nil nil nop false)]
+    (set! (.-resume g)
+          (fn [x]
+            (set! (.-current g) x)
+            (when (set! (.-busy g) (not (.-busy g)))
+              (ap-step g))))
+    (set! (.-rethrow g)
+          (fn [e]
+            (set! (.-failed g) true)
+            ((.-resume g) e)))
+    (let [a (.-alive p)]
+      (set! (.-alive p) (if (number? a) (inc a) (conj a g)))
+      (when (number? a) (ap-cancel g))) g))
+
+(defn ap-more [^Gather g]
+  (let [^Ambiguous p (.-process g)]
+    (while
+      (let [c (.-choice g)]
+        (and
+          (if (.-done c)
+            (if (nil? (set! (.-choice g) (.-parent c)))
+              (do (ap-terminate g) false) true)
+            (if (.-failed g)
+              (do (try @(.-iterator c) (catch :default _)) true)
+              (try (let [x @(.-iterator c)
+                         r (if (== GATHER (.-type c))
+                             (if (identical? nop (.-queue p))
+                               true (do (set! (.-next g) (.-queue p))
+                                        (set! (.-queue p) g) false))
+                             false)]
+                     ((.-backtrack c) ap-run (if (== GATHER (.-type c)) (ap-gather p) g) x) r)
+                   (catch :default e
+                     (set! (.-coroutine g) (.-backtrack c))
+                     (set! (.-failed g) true)
+                     (set! (.-current g) e)
+                     (when (set! (.-busy g) (not (.-busy g))) (ap-step g))
+                     false))))
+          (nil? (ap-ready c)))))))
+
+(defn ap-ready [^Choice c]
+  (let [r (.-ready c)]
+    (set! (.-ready c) (when (nil? r) nop)) r))
+
+(defn ap-reverse [^Gather g]
+  (loop [prev g
+         next nil]
+    (if (nil? prev)
+      next (let [swap (.-next prev)]
+             (set! (.-next prev) next)
+             (recur swap prev)))))
+
+(defn ap [c n t]
+  (let [p (->Ambiguous n t nil nop #{})]
+    (ap-run c (ap-gather p) nil) p))
+
 
 ;;;;;;;;;;;;;;;
 ;; ENUMERATE ;;
@@ -873,64 +994,6 @@
                      (set! (.-state l) index)
                      (when (== c s) ((.-notifier l))))) t))
         (recur (inc index)))) l))
-
-
-;;;;;;;;;;;;
-;; GATHER ;;
-;;;;;;;;;;;;
-(declare gather-cancel)
-(declare gather-deref)
-(deftype Gather
-  [notifier terminator
-   iterators ready
-   ^number push
-   ^number pull
-   ^number alive]
-  IFn
-  (-invoke [g] (gather-cancel g))
-  IDeref
-  (-deref [g] (gather-deref g)))
-
-(defn gather-cancel [^Gather g]
-  (let [its (.-iterators g)]
-    (dotimes [i (alength its)]
-      ((aget its i)))))
-
-(defn gather-deref [^Gather g]
-  (let [c (alength (.-ready g))
-        p (.-pull g)
-        n (mod (inc p) c)
-        e (== n (.-push g))]
-    (set! (.-pull g) (if e c n))
-    (when (== c (.-push g)) (set! (.-push g) p))
-    (try @(aget (.-iterators g) (aget (.-ready g) p))
-         (catch :default e
-           (set! (.-notifier g) #(try (gather-deref g) (catch :default _)))
-           (gather-cancel g)
-           (throw e))
-         (finally
-           (when-not e ((.-notifier g)))))))
-
-(defn gather [fs n t]
-  (let [c (count fs)
-        i (iter fs)
-        g (->Gather n t (object-array c) (object-array c) 0 c c)
-        t #(let [d (dec (.-alive g))]
-             (set! (.-alive g) d)
-             (when (zero? d)
-               ((.-terminator g))))]
-    (loop [index 0]
-      (when (.hasNext i)
-        (aset (.-iterators g) index
-              ((.next i)
-                #(let [p (.-push g)
-                       n (mod (inc p) c)]
-                   (aset (.-ready g) p index)
-                   (set! (.-push g) (if (== n (.-pull g)) c n))
-                   (when (== c (.-pull g))
-                     (set! (.-pull g) p)
-                     ((.-notifier g)))) t))
-        (recur (inc index)))) g))
 
 
 ;;;;;;;;;

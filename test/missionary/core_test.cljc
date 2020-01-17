@@ -50,6 +50,11 @@
                (m/? (->> (m/ap (let [n (m/?? (m/enumerate [24 79 67 34 18 9 99 37]))]
                                  (m/? (m/sleep n n))))
                          (debounce 50)
+                         (m/aggregate conj)))))
+    (assert (= [6 19 28 57 87]
+               (m/? (->> (m/ap
+                           (let [x (m/?= (m/enumerate [19 57 28 6 87]))]
+                             (m/? (m/sleep x x))))
                          (m/aggregate conj)))))))
 
 (deftest* aggregate

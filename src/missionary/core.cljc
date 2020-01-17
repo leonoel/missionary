@@ -180,7 +180,7 @@ Example :
 (? (aggregate conj (ap (inc (?? (enumerate [1 2 3]))))))
 #_=> [2 3 4]
 ```
-"} ?? [f] (i/fiber-flow f false))
+"} ?? [f] (i/fiber-flow-concat f))
 
 
 (defn
@@ -201,7 +201,24 @@ Example :
         (aggregate conj)))
 ```
 #_=> [24 79 9 37]
-"} ?! [f] (i/fiber-flow f true))
+"} ?! [f] (i/fiber-flow-switch f))
+
+
+(defn
+  ^{:arglists '([flow])
+    :doc "
+In an ambiguous process block, runs given `flow` and concurrently forks current process for each value produced by the flow. Values emitted by forked processes are gathered and emitted as soon as available.
+
+Example :
+```clojure
+(? (->> (m/ap
+          (let [x (m/?= (m/enumerate [19 57 28 6 87]))]
+            (m/? (m/sleep x x))))
+        (aggregate conj)))
+
+#_=> [6 19 28 57 87]
+```
+"} ?= [f] (i/fiber-flow-gather f))
 
 
 (defmacro
@@ -211,10 +228,7 @@ Returns a task evaluating `body` (in an implicit `do`). Body evaluation can be p
 
 Cancelling an `sp` task triggers cancellation of the task it's currently running, along with all tasks subsequently run.
 "} sp [& body]
-  `(fn [s# f#]
-     (i/fiber false
-              (cr {? i/fiber-unpark}
-                ~@body) s# f#)))
+  `(partial (cr {? i/fiber-unpark} ~@body) i/sp))
 
 
 (defmacro
@@ -224,12 +238,11 @@ Returns a flow evaluating `body` (in an implicit `do`) and producing values of e
 
 Cancelling an `ap` flow triggers cancellation of the task/flow it's currently running, along with all tasks/flows subsequently run.
 "} ap [& body]
-  `(fn [n# t#]
-     (i/fiber true
-              (cr {?  i/fiber-unpark
-                   ?? i/fiber-unpark
-                   ?! i/fiber-unpark}
-                ~@body) n# t#)))
+  `(partial (cr {?  i/fiber-unpark
+                 ?? i/fiber-unpark
+                 ?! i/fiber-unpark
+                 ?= i/fiber-unpark}
+              ~@body) i/ap))
 
 
 (defn
@@ -600,7 +613,7 @@ Example :
 "} gather
   ([] none)
   ([f] f)
-  ([f & fs] (fn [n t] (i/gather (cons f fs) n t))))
+  ([f & fs] (ap (?? (?= (enumerate (cons f fs)))))))
 
 
 (defn

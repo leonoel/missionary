@@ -2,8 +2,8 @@
   (:import (java.io Writer)
            (org.reactivestreams Publisher)
            (missionary.impl
-             Enumerate Aggregate RaceJoin Sleep Never Fiber Thunk Dataflow Mailbox Rendezvous Semaphore
-             Watch Observe Transform Integrate Pub Sub Relieve Buffer Latest Sample Gather Zip)))
+             Enumerate Aggregate RaceJoin Sleep Never Ambiguous Fiber Thunk Dataflow Mailbox Rendezvous Semaphore
+             Watch Observe Transform Integrate Pub Sub Relieve Buffer Latest Sample Zip Sequential Ambiguous$Process)))
 
 (defn nop [])
 
@@ -26,12 +26,18 @@
 (defmethod print-method Thunk [o w] (print-object o w))
 (defn thunk [e t s f] (Thunk. e t s f))
 
-(defmethod print-method Fiber [o w] (print-object o w))
-(defn fiber [a c n t] (Fiber. a c n t))
-(defn fiber-unpark [] (Fiber/unpark))
-(defn fiber-poll [] (Fiber/poll))
-(defn fiber-task [t] (Fiber/task t))
-(defn fiber-flow [f p] (Fiber/flow f p))
+(defmethod print-method Sequential [o w] (print-object o w))
+(defn sp [c s f] (Sequential. c s f))
+
+(defmethod print-method Ambiguous$Process [o w] (print-object o w))
+(defn ap [c n t] (Ambiguous/process c n t))
+
+(defn fiber-unpark      []  (.unpark     ^Fiber (.get Fiber/CURRENT)))
+(defn fiber-poll        []  (.poll       ^Fiber (.get Fiber/CURRENT)))
+(defn fiber-task        [t] (.task       ^Fiber (.get Fiber/CURRENT) t))
+(defn fiber-flow-concat [f] (.flowConcat ^Fiber (.get Fiber/CURRENT) f))
+(defn fiber-flow-switch [f] (.flowSwitch ^Fiber (.get Fiber/CURRENT) f))
+(defn fiber-flow-gather [f] (.flowGather ^Fiber (.get Fiber/CURRENT) f))
 
 (defmethod print-method RaceJoin [o w] (print-object o w))
 (defn race-join [r c ts s f] (RaceJoin. r c ts s f))
@@ -80,9 +86,6 @@
 
 (defmethod print-method Sample [o w] (print-object o w))
 (defn sample [f sd sr n t] (Sample. f sd sr n t))
-
-(defmethod print-method Gather [o w] (print-object o w))
-(defn gather [fs n t] (Gather. fs n t))
 
 (defmethod print-method Zip [o w] (print-object o w))
 (defn zip [c fs n t] (Zip. c fs n t))
