@@ -71,7 +71,7 @@
     <dependency>
       <groupId>cloroutine</groupId>
       <artifactId>cloroutine</artifactId>
-      <version>6</version>
+      <version>10</version>
     </dependency>
   </dependencies>
 </project>
