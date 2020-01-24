@@ -61,7 +61,7 @@
     <dependency>
       <groupId>org.clojure</groupId>
       <artifactId>clojurescript</artifactId>
-      <version>1.10.520</version>
+      <version>1.10.597</version>
     </dependency>
     <dependency>
       <groupId>org.reactivestreams</groupId>
