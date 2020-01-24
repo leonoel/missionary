@@ -1,6 +1,7 @@
 (ns missionary.core
   (:require [missionary.impl :as i]
-            [cloroutine.core :refer [cr] :include-macros true]))
+            [cloroutine.core :refer [cr]])
+  #?(:cljs (:require-macros [missionary.core :refer [sp ap]])))
 
 
 (def
