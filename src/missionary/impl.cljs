@@ -470,8 +470,8 @@
 (defn ap-more [^Gather g]
   (let [^Ambiguous p (.-process g)]
     (while
-      (let [c (.-choice g)]
-        (and
+      (and
+        (let [c (.-choice g)]
           (if (.-done c)
             (if (nil? (set! (.-choice g) (.-parent c)))
               (do (ap-terminate g) false) true)
@@ -489,8 +489,8 @@
                      (set! (.-failed g) true)
                      (set! (.-current g) e)
                      (when (set! (.-busy g) (not (.-busy g))) (ap-step g))
-                     false))))
-          (nil? (ap-ready c)))))))
+                     false)))))
+        (nil? (ap-ready (.-choice g)))))))
 
 (defn ap-ready [^Choice c]
   (let [r (.-ready c)]
