@@ -1035,7 +1035,7 @@
 (defn zip [f fs n t]
   (let [c (count fs)
         i (iter fs)
-        z (->Zip f n nil (object-array c) (object-array c) c)]
+        z (->Zip f n nil (object-array c) (object-array c) 0)]
     (set! (.-flusher z)
           #(let [its (.-iterators z)
                  cnt (alength its)]
