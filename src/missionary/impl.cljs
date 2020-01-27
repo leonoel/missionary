@@ -380,11 +380,12 @@
 
 (defn ap-swap [^Gather g t]
   (if-some [c (.-choice g)]
-    (if (or (nil? (.-token c))
-            (and (== SWITCH (.-type c))
-                 (nil? (.-ready c))
-                 (not (.-done c))))
-      (t) (set! (.-token c) t))
+    (do (if (nil? (.-token c))
+          (t) (set! (.-token c) t))
+        (when (== SWITCH (.-type c))
+          (if (nil? (.-ready c))
+            (when-not (.-done c) (t))
+            (set! (.-ready c) t))))
     (if (nil? (.-token g))
       (t) (set! (.-token g) t))))
 
