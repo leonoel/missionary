@@ -354,9 +354,10 @@
 (deftype Ambiguous [notifier terminator ^Gather head queue alive]
   IFn
   (-invoke [_]
-    (when-not (number? alive)
-      (reduce (fn [_ g] (ap-cancel g)) nil alive)
-      (set! (.-alive _) (count alive)) nil))
+    (let [a alive]
+      (when-not (number? a)
+        (set! (.-alive _) (count a))
+        (reduce (fn [_ g] (ap-cancel g)) nil a))))
   IDeref
   (-deref [_]
     (try (unpark head)
