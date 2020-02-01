@@ -293,16 +293,16 @@
     (set! fiber-current pf)))
 
 (defn sp [c s f]
-  (let [sp (->Sequential c s f nil nil nil true false nil)]
+  (let [sp (->Sequential c s f nil nil nop true false nil)]
     (set! (.-resume sp)
           (fn [x]
-            (set! (.-result sp) x)
+            (set! (.-current sp) x)
             (when (set! (.-busy sp) (not (.-busy sp)))
               (sp-step sp))))
-    (set! (.-failure sp)
+    (set! (.-rethrow sp)
           (fn [e]
             (set! (.-failed sp) true)
-            ((.-success sp) e)))
+            ((.-resume sp) e)))
     (sp-step sp) sp))
 
 
