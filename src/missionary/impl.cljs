@@ -1263,8 +1263,8 @@
                           (let [pub (.-current dag)]
                             (set! (.-current dag) (.-down sub))
                             (sub-push sub)
-                            (set! (.-current dag) pub)
-                            (recur (.-next sub)))))))
+                            (set! (.-current dag) pub)))
+                        (recur (.-next sub)))))
                 (do (loop [^Sub sub (.-head emit)]
                       (when (some? sub) (sub) (recur (.-next sub))))
                     (if (nil? (.-prev emit))
