@@ -1,8 +1,9 @@
 {:cljdoc.doc/tree
  [["Readme" {:file "README.md"}
-    ["Tutorials" {}
-      ["Hello task" {:file "doc/tutorials/hello_task.md"}]
-      ["Hello flow" {:file "doc/tutorials/hello_flow.md"}]]
-    ["Guides" {}
-      ["Retry with backoff" {:file "doc/guides/retry_backoff.md"}]
-      ["Happy eyeballs" {:file "doc/guides/happy_eyeballs.md"}]]]]}
+   ["Tutorials" {}
+    ["Hello task" {:file "doc/tutorials/hello_task.md"}]
+    ["Hello flow" {:file "doc/tutorials/hello_flow.md"}]]
+   ["Guides" {}
+    ["Retry with backoff" {:file "doc/guides/retry_backoff.md"}]
+    ["Happy eyeballs" {:file "doc/guides/happy_eyeballs.md"}]
+    ["Iterative queries" {:file "doc/guides/iterative_queries.md"}]]]]}
