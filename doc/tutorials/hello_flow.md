@@ -44,12 +44,12 @@ World
 #_=> [nil nil nil]              
 ```
 
-The `??` operator pulled the first enumerated value, forked evaluation and moved on until end of body, producing result `nil`, then *backtracked* evaluation to the fork point, pulled another value, forked evaluation again, and so on until enumeration was exhausted. Meanwhile, `aggregate` consolidated each result into a vector. In an `ap` block, expressions have more than one possible value, that's why they're called *ambiguous process*.
+The `??` operator pulls the first enumerated value, forks evaluation and moves on until end of body, producing result `nil`, then *backtracks* evaluation to the fork point, pulls another value, forks evaluation again, and so on until enumeration is exhausted. Meanwhile, `aggregate` consolidates each result into a vector. In an `ap` block, expressions have more than one possible value, that's why they're called *ambiguous process*.
 
 
 ## Preemptive forking
 
-In the previous example, pulling a value from the flow passed to `??` transferred evaluation control to forked process, and waited evaluation to be completed before pulling another value from the flow. In some cases though, we want the flow to keep priority over the forked process, so it can be shutdowned when more values become available. That kind of forking is implemented by `?!`.
+In the previous example, pulling a value from the flow passed to `??` transfers evaluation control to the forked process, and waited evaluation to be completed before pulling another value from the flow. In some cases though, we want the flow to keep priority over the forked process, so it can be shutdowned when more values become available. That kind of forking is implemented by `?!`.
 
 We can use it to implement debounce operators. A debounced flow is a flow emitting only values that are not followed by another one within a given delay.
 ```clojure
