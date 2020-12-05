@@ -651,7 +651,7 @@ The reactor terminates when its last node terminates. The task succeeds with the
 (defmacro
   ^{:arglists '([& body])
     :doc "
-Calls `broker-call` with a function evaluating given `body` in an implicit `do`.
+Calls `reactor-call` with a function evaluating given `body` in an implicit `do`.
 "} reactor [& body] `(reactor-call (fn [] ~@body)))
 
 
@@ -659,7 +659,7 @@ Calls `broker-call` with a function evaluating given `body` in an implicit `do`.
   ^{:static true
     :arglists '([flow])
     :doc "
-Must be run in a broker context.
+Must be run in a reactor context.
 Spawns a discrete node from given flow.
 "} stream! [f] (i/pub f true))
 
@@ -668,6 +668,6 @@ Spawns a discrete node from given flow.
   ^{:static true
     :arglists '([flow])
     :doc "
-Must be run in a broker context.
+Must be run in a reactor context.
 Spawns a continuous node from given flow.
 "} signal! [f] (i/pub f false))
