@@ -732,16 +732,17 @@
   IDeref
   (-deref [w] (watch-deref w)))
 
-(defn watch-cb [^Watch w _ _ c]
+(defn watch-cb [^Watch w _ _ _]
   (when (.-sync w)
     (set! (.-sync w) false)
     ((.-notifier w))))
 
 (defn watch-cancel [^Watch w]
-  (when-some [n (.-notifier w)]
+  (when (some? (.-notifier w))
     (set! (.-notifier w) nil)
     (remove-watch (.-reference w) w)
     (when (.-sync w)
+      (set! (.-sync w) false)
       ((.-terminator w)))))
 
 (defn watch-deref [^Watch w]
