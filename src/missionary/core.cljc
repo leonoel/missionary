@@ -235,7 +235,7 @@ Cancelling an `sp` task triggers cancellation of the task it's currently running
 (defmacro
   ^{:arglists '([& body])
     :doc "
-Returns a flow evaluating `body` (in an implicit `do`) and producing values of each subsequent fork. Body evaluation can be parked with `?` and forked with `??` and `?!`.
+Returns a flow evaluating `body` (in an implicit `do`) and producing values of each subsequent fork. Body evaluation can be parked with `?` and forked with `??`, `?!` and `?=`.
 
 Cancelling an `ap` flow triggers cancellation of the task/flow it's currently running, along with all tasks/flows subsequently run.
 "} ap [& body]
