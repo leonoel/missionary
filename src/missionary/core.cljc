@@ -640,11 +640,37 @@ Example :
   ^{:static true
     :arglists '([boot])
     :doc "
-Returns a task running given zero-argument function in a fresh reactor context.
+Returns a task spawning a reactor context with given boot function, called without argument. A reactor context manages
+the lifecycle of running flows and serializes their emissions in propagation turns. Flows running in a reactor context
+are called publishers, they can be spawned in the boot function or in reaction to any subsequent emission with `stream!`
+or `signal!`, respectively for discrete and continuous flows. Publishers of a given reactor context are totally ordered
+by the union of two partial orders :
+* if a publisher was created by another one, the parent is inferior to the child.
+* if two publishers are siblings, the older is inferior to the younger.
 
-A reactor collects events from different sources, dispatches events to subscribers.
+A publisher can subscribe to the feed of an inferior publisher from the same reactor context. Using a publisher as a
+flow spawns a subscription to this publisher. Publisher emissions are grouped in propagation turns, where successive
+publishers of a given turn are strictly increasing. When a publisher becomes able to emit, it is compared to the
+publisher currently emitting to figure out whether the emission must happen on the current turn or on the next one.
+Cyclic reactions are possible and no attempt is made to prevent them, so care must be taken to ensure the propagation
+eventually stops. The dispatching mechanism depends on the nature of the publisher, discrete or continuous.
+* a stream is able to emit when its flow is ready to transfer and the backpressure of the previous emission has been
+collected from all of its subscriptions. On emission, a value is transferred from the flow and subscriptions are
+notified of the availability of this value. Until the end of the propagation turn, each new subscription to this stream
+will be immediately notified.
+* a signal always has a current value, thus each new subscription is immediately notified. It is able to emit when its
+flow is ready to transfer. On emission, its current value is marked as stale and its subscriptions are notified if not
+already. From this point, a sampling request from any of its subscriptions will trigger the transfer from the flow to
+refresh the current value. Subsequent sampling requests will reuse this memoized value until next emission.
 
-The reactor terminates when its last node terminates. The task succeeds with the result of the boot function if all nodes completed successfully, otherwise the first encountered failure is propagated. When the task is cancelled, or when a node fails, each remaining node and subsequently spawned ones are cancelled.
+A subscription terminates when it's cancelled or when the underlying publisher terminates. A publisher can be cancelled,
+as long as its flow is not terminated, by calling it as a zero-argument function. A cancelled publisher cancels its
+flow, transfers and discards all of its remaining values without backpressure, and all of its current and future
+subscriptions fail immediately. Cancelling a reactor cancels all of its publishers, and any subsequent publisher
+spawning will fail. If any publisher flow fails, or if the boot function throws an exception, the reactor is cancelled.
+A reactor terminates at the end of the first turn where every publisher flow is terminated, meaning no emission can
+ever happen anymore. It succeeds with the result of the boot function if no publisher failed, otherwise it fails with
+the first error encountered.
 "} reactor-call [i] (fn [s f] (i/dag i s f)))
 
 
@@ -659,8 +685,7 @@ Calls `reactor-call` with a function evaluating given `body` in an implicit `do`
   ^{:static true
     :arglists '([flow])
     :doc "
-Must be run in a reactor context.
-Spawns a discrete node from given flow.
+Spawns a discrete publisher from given flow, see `reactor-call`.
 "} stream! [f] (i/pub f true))
 
 
@@ -668,6 +693,5 @@ Spawns a discrete node from given flow.
   ^{:static true
     :arglists '([flow])
     :doc "
-Must be run in a reactor context.
-Spawns a continuous node from given flow.
+Spawns a continuous publisher from given flow, see `reactor-call`.
 "} signal! [f] (i/pub f false))
