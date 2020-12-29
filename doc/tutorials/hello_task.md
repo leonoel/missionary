@@ -123,3 +123,33 @@ Hello
 !
 ;; throws after 500 ms
 ```
+
+## The blocking world (java only)
+
+What happens if we have a service outside of our control that blocks our thread?
+
+```clojure
+(defn blocking-hello-world []
+  (println "Hello")
+  (Thread/sleep 500)
+  (println "World"))
+(time (m/? (m/join vector (m/sp (blocking-hello-world)) (m/sp (blocking-hello-world)))))
+Hello
+World
+Hello
+World
+"Elapsed time: 1006.127854 msecs"
+[nil nil]
+```
+
+Since `blocking-hello-world` is blocking the whole thread we're stuck. For these purposes missionary allows offloading a task on a different `java.util.concurrent.Executor` via the `m/via` macro. Missionary ships with 2 predefedined executors, `m/cpu` for CPU bound tasks and `m/blk` for IO bound (BLocKing) tasks. With this new insight we can fix our previous example:
+
+```clojure
+(time (m/? (m/join vector (m/via m/blk (blocking-hello-world)) (m/via m/blk (blocking-hello-world)))))
+HelloHello
+
+World
+World
+"Elapsed time: 501.968621 msecs"
+[nil nil]
+```
