@@ -4,7 +4,7 @@
            (missionary.impl
              Enumerate Aggregate RaceJoin Sleep Never Ambiguous Fiber Thunk Dataflow Mailbox Rendezvous Semaphore
              Watch Observe Transform Integrate Pub Sub Relieve Buffer Latest Sample Zip Sequential Ambiguous$Process
-             Reactor Reactor$Dag Reactor$Pub)))
+             Reactor Reactor$Context Reactor$Publisher)))
 
 (defn nop [])
 
@@ -95,8 +95,8 @@
 (defn subscribe [pub n t] (Sub. pub n t))
 (defn publisher [f] (reify Publisher (subscribe [_ s] (Pub. f s))))
 
-(defmethod print-method Reactor$Dag [o w] (print-object o w))
-(defn dag [i s f] (Reactor/dag i s f))
+(defmethod print-method Reactor$Context [o w] (print-object o w))
+(defn context [i s f] (Reactor/context i s f))
 
-(defmethod print-method Reactor$Pub [o w] (print-object o w))
-(defn pub [f d] (Reactor/pub f d))
+(defmethod print-method Reactor$Publisher [o w] (print-object o w))
+(defn publish [f d] (Reactor/publish f d))

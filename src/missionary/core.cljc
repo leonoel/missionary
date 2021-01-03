@@ -671,7 +671,7 @@ spawning will fail. If any publisher flow fails, or if the boot function throws 
 A reactor terminates at the end of the first turn where every publisher flow is terminated, meaning no emission can
 ever happen anymore. It succeeds with the result of the boot function if no publisher failed, otherwise it fails with
 the first error encountered.
-"} reactor-call [i] (fn [s f] (i/dag i s f)))
+"} reactor-call [i] (fn [s f] (i/context i s f)))
 
 
 (defmacro
@@ -686,7 +686,7 @@ Calls `reactor-call` with a function evaluating given `body` in an implicit `do`
     :arglists '([flow])
     :doc "
 Spawns a discrete publisher from given flow, see `reactor-call`.
-"} stream! [f] (i/pub f true))
+"} stream! [f] (i/publish f true))
 
 
 (defn
@@ -694,4 +694,4 @@ Spawns a discrete publisher from given flow, see `reactor-call`.
     :arglists '([flow])
     :doc "
 Spawns a continuous publisher from given flow, see `reactor-call`.
-"} signal! [f] (i/pub f false))
+"} signal! [f] (i/publish f false))

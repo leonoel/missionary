@@ -4,6 +4,8 @@
     [missionary.tck :refer [if-try deftask defflow] :include-macros true]))
 
 (def =? (partial partial =))
+(def fine! #(throw (ex-info "this is fine." {:fine true})))
+(def fine? (comp :fine ex-data))
 
 (deftask sleep-success
   {:timeout 10
@@ -90,12 +92,12 @@
   (m/aggregate (fn [_ _] (reduced true)) nil (m/enumerate [1 2 3])))
 
 (deftask aggregate-failure
-  {:failure (comp :failed ex-data)}
-  (m/aggregate (fn [_ _] (throw (ex-info "this is fine." {:failed true}))) nil (m/ap)))
+  {:failure fine?}
+  (m/aggregate (fn [_ _] (fine!)) nil (m/ap)))
 
 (deftask aggregate-input-failure
-  {:failure (comp :failed ex-data)}
-  (m/aggregate conj (m/ap (throw (ex-info "this is fine." {:failed true})))))
+  {:failure fine?}
+  (m/aggregate conj (m/ap (fine!))))
 
 (defflow integrate
   {:results (map =? [[] [1] [1 2] [1 2 3]])}
@@ -107,13 +109,13 @@
 
 (defflow integrate-failure
   {:results [(=? nil)]
-   :failure (comp :failed ex-data)}
-  (m/integrate (fn [_ _] (throw (ex-info "this is fine." {:failed true}))) nil (m/enumerate [1 2 3])))
+   :failure fine?}
+  (m/integrate (fn [_ _] (fine!)) nil (m/enumerate [1 2 3])))
 
 (defflow integrate-input-failure
   {:results [(=? [])]
-   :failure (comp :failed ex-data)}
-  (m/integrate conj (m/ap (throw (ex-info "this is fine." {:failed true})))))
+   :failure fine?}
+  (m/integrate conj (m/ap (fine!))))
 
 (defflow transform
   {:results (map =? (range 10))}
@@ -128,33 +130,33 @@
   (m/transform (comp (filter odd?) (mapcat range) (take 9)) (m/enumerate (range 10))))
 
 (defflow transform-failure
-  {:failure (comp :failed ex-data)}
-  (m/transform (map (fn [_] (throw (ex-info "this is fine." {:failed true})))) (m/ap)))
+  {:failure fine?}
+  (m/transform (map (fn [_] (fine!))) (m/ap)))
 
 (defflow transform-input-failure
-  {:failure (comp :failed ex-data)}
-  (m/transform identity (m/ap (throw (ex-info "this is fine." {:failed true})))))
+  {:failure fine?}
+  (m/transform identity (m/ap (fine!))))
 
 (defflow gather
   {:results (map =? [1 :a 2 :b 3 :c])}
   (m/gather (m/enumerate [1 2 3]) (m/enumerate [:a :b :c])))
 
 (defflow gather-input-failure
-  {:failure (comp :failed ex-data)}
-  (m/gather (m/ap (throw (ex-info "this is fine." {:failed true}))) (m/enumerate [1 2 3])))
+  {:failure fine?}
+  (m/gather (m/ap (fine!)) (m/enumerate [1 2 3])))
 
 (defflow zip
   {:results (map =? [[1 :a] [2 :b] [3 :c]])}
   (m/zip vector (m/enumerate [1 2 3]) (m/enumerate [:a :b :c])))
 
 (defflow zip-failure
-  {:failure (comp :failed ex-data)}
-  (m/zip (fn [_ _] (throw (ex-info "this is fine." {:failed true})))
+  {:failure fine?}
+  (m/zip (fn [_ _] (fine!))
          (m/enumerate [1 2 3]) (m/enumerate [:a :b :c])))
 
 (defflow zip-input-failure
-  {:failure (comp :failed ex-data)}
-  (m/zip vector (m/ap (throw (ex-info "this is fine." {:failed true}))) (m/enumerate [1 2 3])))
+  {:failure fine?}
+  (m/zip vector (m/ap (fine!)) (m/enumerate [1 2 3])))
 
 (defn delay-each [delay input]
   (m/ap (m/? (m/sleep delay (m/?? input)))))
@@ -168,8 +170,8 @@
        (delay-each 80)))
 
 (defflow relieve-input-failure
-  {:failure (comp :failed ex-data)}
-  (->> (m/ap (throw (ex-info "this is fine." {:failed true})))
+  {:failure fine?}
+  (->> (m/ap (fine!))
        (m/relieve +)
        (delay-each 80)))
 
@@ -182,8 +184,8 @@
   (m/buffer 20 (m/enumerate (range 10))))
 
 (defflow buffer-input-failure
-  {:failure (comp :failed ex-data)}
-  (m/buffer 20 (m/ap (throw (ex-info "this is fine." {:failed true})))))
+  {:failure fine?}
+  (m/buffer 20 (m/ap (fine!))))
 
 (deftask observe
   {:success (=? (range 5))
@@ -209,12 +211,12 @@
       ((m/? e) nil))))
 
 (defflow observe-sub-failure
-  {:failure (comp :failed ex-data)}
-  (m/observe (fn [_] (throw (ex-info "this is fine." {:failed true})))))
+  {:failure fine?}
+  (m/observe (fn [_] (fine!))))
 
 (defflow observe-unsub-failure
   {:results [(=? nil)]}
-  (m/transform (take 1) (m/observe (fn [!] (! nil) #(throw (ex-info "this is fine." {}))))))
+  (m/transform (take 1) (m/observe (fn [!] (! nil) fine!))))
 
 (deftask watch
   {:success (=? (range 5))
@@ -263,3 +265,53 @@
 (defflow sample-exhausted-sampler
   {:results (map (comp =? vector) (range 5) (range 5))}
   (m/sample vector (m/enumerate (range 10)) (m/enumerate (range 5))))
+
+(deftask reactor-no-publisher
+  {:success nil?}
+  (m/reactor))
+
+(deftask reactor-self-termination
+  {:success any?}
+  (m/reactor (m/stream! (m/ap))))
+
+(deftask reactor-cancelled
+  {:success any?
+   :cancel 0}
+  (m/reactor (m/signal! (m/ap))))
+
+(deftask reactor-boot-crash
+  {:failure fine?}
+  (m/reactor-call fine!))
+
+(deftask reactor-stream-crash
+  {:failure fine?}
+  (m/reactor (m/stream! (m/ap (fine!)))))
+
+(deftask reactor-signal-crash
+  {:failure fine?}
+  (m/reactor (m/stream! (m/signal! (m/ap (fine!))))))
+
+(deftask reactor-stream-cancel
+  {:success nil?}
+  (m/reactor ((m/stream! (m/ap)))))
+
+(deftask reactor-signal-cancel
+  {:success nil?}
+  (m/reactor ((m/signal! (m/ap)))))
+
+(deftask reactor-double-sub
+  {:success (comp (=? [1]) deref)
+   :cancel  0}
+  (m/reactor
+    (let [r (atom [])
+          i (m/signal! (m/watch (atom 1)))]
+      (m/stream! (m/ap (m/?? i) (swap! r conj (m/?? i)))) r)))
+
+(deftask reactor-delayed
+  {:success (comp (=? [1 2]) deref)
+   :timeout 10}
+  (m/reactor
+    (let [r  (atom [])
+          i1 (m/stream! (m/ap (m/? (m/sleep 2 1))))
+          i2 (m/stream! (m/ap (m/? (m/sleep 1 2))))]
+      (m/stream! (m/zip (partial swap! r conj) i1 i2)) r)))

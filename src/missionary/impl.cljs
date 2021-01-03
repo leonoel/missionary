@@ -1144,38 +1144,79 @@
                          (sample-flush s))))))) s))
 
 
+
+;;;;;;;;;;;;
+;; FAILER ;;
+;;;;;;;;;;;;
+
+(deftype Failer [t e]
+  IFn
+  (-invoke [_])
+  IDeref
+  (-deref [_]
+    (t) (throw e)))
+
+(defn failer [n t e]
+  (n) (->Failer t e))
+
+
 ;;;;;;;;;;;;;
 ;; REACTOR ;;
 ;;;;;;;;;;;;;
 
-(def ^:const PENDING 0)
-(def ^:const READY 1)
-(def ^:const DONE 2)
+(def ^{:doc "
+# Events
+A reactor context handles 7 kinds of events :
+1. context boot
+2. context cancellation
+3. publisher notification
+4. publisher termination
+5. publisher cancellation
+6. subscription transfer
+7. subscription cancellation
 
-(declare dag-cancel)
-(deftype Dag [^number reentrancy success failure result ^boolean failed ^boolean cancelled ^number tier
-              current emitter today tomorrow head tail]
-  IFn (-invoke [_] (dag-cancel _)))
+Each event is processed immediately. The processing of non-reentrant events is followed by a succession of propagation
+turns until no more publishers are ready to emit, then a check for termination.
 
-(declare pub-cancel)
-(declare pub-sub)
-(deftype Pub [^Dag dag ^boolean discrete id iterator value ^boolean cancelled ^boolean scheduled
-              ^number tier ^number state ^number pressure prev next head tail child sibling]
-  IFn
-  (-invoke [_] (pub-cancel _))
-  (-invoke [_ n t] (pub-sub _ n t)))
+# Ordering
+Publisher ordering is derived from the lexicographical ordering of their ranks, where the `rank` of a publisher is the
+sequence of birth ranks of its successive parents (root first), stored in an array. The birth rank is computed by
+incrementing the field `children` of the parent on each publisher spawning.
 
-(declare sub-cancel)
-(declare sub-deref)
-(deftype Sub [^Pub up ^Pub down notifier terminator ^number state ^Sub prev ^Sub next]
-  IFn
-  (-invoke [_] (sub-cancel _))
-  IDeref
-  (-deref [_] (sub-deref _)))
+# Backpressure
+Stream backpressure is tracked with the publisher field `pending` holding the number of subscriptions notified but not
+yet transferred, +1 if active this turn. It is incremented on emission and for each subscription notification, and
+decremented on end of active turn and for each subscription transfer. It is negative for signals (no backpressure).
 
-(def dag-current)
+# Priority queues
+A context schedules publishers ready to emit in two disjoint priority queues, for the current turn and the next one.
+Both queues are represented as the root of a [pairing heap](https://www.cs.cmu.edu/~sleator/papers/pairing-heaps.pdf),
+or `null` if the queue is empty, respectively in `today` and `tomorrow`. Each publisher stores its first child in
+`child` and its next older sibling in `sibling`. When a publisher is removed from the heap, `child` is assigned to
+itself in order to efficiently check scheduling state.
 
-(defn lt [x y]
+# Sets
+Sets are needed for 3 purposes :
+1. As long as a reactor is not cancelled, it maintains a set of cancellable publishers.
+2. Between two successive emissions, a publisher maintains a set of notifiable subscriptions.
+3. The set of emitting streams is maintained in order to deactivate them at the end of propagation turn.
+
+1 & 2 represent the set as a doubly-linked list. The set manager keeps references to the first and last item in `head`
+and `tail` (both `null` if the set is empty), and the set items keep references to their predecessor and successor in
+`prev` and `next` (`null` respectively for the first and last items). When an item is removed, `prev` is assigned to
+itself in order to efficiently check set membership.
+
+3 represents the set as a singly-linked list. The head of the list is stored in a local variable and the successor is
+stored in field `active`. When an item is inactive, `active` is assigned to itself.
+"} reactor-current nil)
+
+(def reactor-err-pub-orphan (js/Error. "Publication failure : not in reactor context."))
+(def reactor-err-pub-cancel (js/Error. "Publication failure : reactor cancelled."))
+(def reactor-err-sub-orphan (js/Error. "Subscription failure : not in publisher context."))
+(def reactor-err-sub-cancel (js/Error. "Subscription failure : publisher cancelled."))
+(def reactor-err-sub-cyclic (js/Error. "Subscription failure : cyclic dependency."))
+
+(defn reactor-lt [x y]
   (let [xl (alength x)
         yl (alength y)
         ml (min xl yl)]
@@ -1188,192 +1229,266 @@
             (< xi yi)))
         (< xl yl)))))
 
-(defn pub-link [^Pub x ^Pub y]
-  (if (lt (.-id x) (.-id y))
+(defn reactor-link [x y]
+  (if (reactor-lt (.-ranks x) (.-ranks y))
     (do (set! (.-sibling y) (.-child x))
         (set! (.-child x) y) x)
     (do (set! (.-sibling x) (.-child y))
         (set! (.-child y) x) y)))
 
-(defn pub-schedule [^Pub p]
-  (let [^Dag dag (.-dag p)]
-    (when-not (.-scheduled p)
-      (set! (.-scheduled p) true)
-      (if (when-some [^Pub e (.-emitter dag)] (lt (.-id e) (.-id p)))
-        (set! (.-today dag) (if-some [t (.-today dag)] (pub-link p t) p))
-        (set! (.-tomorrow dag) (if-some [t (.-tomorrow dag)] (pub-link p t) p))))))
+(defn reactor-insert [r p]
+  (if (nil? r) p (reactor-link p r)))
 
-(defn pub-more [^Pub pub]
-  (let [^Dag dag (.-dag pub)
-        ^Pub prv (.-current dag)]
-    (set! (.-current dag) pub)
-    (set! (.-state pub) PENDING)
-    (set! (.-value pub)
-          (try @(.-iterator pub)
-               (catch :default e
-                 (when-not (.-failed dag)
-                   (set! (.-failed dag) true)
-                   (set! (.-result dag) e)
-                   (dag)) nop)))
-    (set! (.-current dag) prv)))
+(defn reactor-remove [r]
+  (loop [heap nil
+         prev nil
+         head (let [h (.-child r)] (set! (.-child r) r) h)]
+    (if (nil? head)
+      (if (nil? prev) heap (if (nil? heap) prev (reactor-link heap prev)))
+      (let [next (.-sibling head)]
+        (set! (.-sibling head) nil)
+        (if (nil? prev)
+          (recur heap head next)
+          (let [head (reactor-link prev head)]
+            (recur (if (nil? heap) head (reactor-link heap head)) nil next)))))))
 
-(defn sub-push [^Sub sub]
-  (set! (.-state sub) READY)
-  (set! (.-pressure (.-up sub)) (inc (.-pressure (.-up sub))))
-  ((.-notifier sub)))
+(defn reactor-schedule [p]
+  (let [ctx (.-context p)]
+    (if (when-some [e (.-emitter ctx)] (reactor-lt (.-ranks e) (.-ranks p)))
+      (set! (.-today    ctx) (reactor-insert (.-today    ctx) p))
+      (set! (.-tomorrow ctx) (reactor-insert (.-tomorrow ctx) p)))))
 
-(defn sub-pull [^Sub sub]
-  (set! (.-state sub) PENDING)
-  (set! (.-pressure (.-up sub)) (dec (.-pressure (.-up sub))))
-  (pub-schedule (.-up sub)))
+(defn reactor-attach [sub]
+  (let [pub (.-subscribed sub)
+        prv (.-tail pub)]
+    (set! (.-tail pub) sub)
+    (set! (.-prev sub) prv)
+    (if (nil? prv) (set! (.-head pub) sub) (set! (.-next prv) sub))))
 
-(defn dag-acquire [^Dag dag]
-  (set! (.-reentrancy dag) (inc (.-reentrancy dag)))
-  (let [prv dag-current] (set! dag-current dag) prv))
+(defn reactor-detach [pub]
+  (let [ctx (.-context pub)
+        prv (.-prev ctx)
+        nxt (.-next ctx)]
+    (if (nil? prv) (set! (.-head ctx) nxt) (set! (.-next prv) nxt))
+    (if (nil? nxt) (set! (.-tail ctx) prv) (set! (.-prev nxt) prv))
+    (set! (.-prev pub) pub)
+    (set! (.-next pub) nil)))
 
-(defn dag-release [^Dag dag ^Dag prv]
-  (when (== 1 (.-reentrancy dag))
-    (while (some? (set! (.-emitter dag) (.-tomorrow dag)))
-      (set! (.-tomorrow dag) nil)
-      (while
-        (let [emit (.-emitter dag)]
-          (set! (.-today dag)
-                (loop [heap nil
-                       prev nil
-                       head (.-child emit)]
-                  (if (nil? head)
-                    (if (nil? prev) heap (if (nil? heap) prev (pub-link heap prev)))
-                    (let [next (.-sibling head)]
-                      (set! (.-sibling head) nil)
-                      (if (nil? prev)
-                        (recur heap head next)
-                        (let [head (pub-link prev head)]
-                          (recur (if (nil? heap) head (pub-link heap head)) nil next)))))))
-          (set! (.-child emit) nil)
-          (set! (.-scheduled emit) false)
-          (when (.-discrete emit) (set! (.-value emit) nop))
-          (when-not (== (.-state emit) PENDING)
-            (when-not (and (.-discrete emit) (pos? (.-pressure emit)))
-              (if (== (.-state emit) READY)
-                (do (if (or (.-discrete emit) (.-cancelled emit))
-                      (do (pub-more emit) (pub-schedule emit))
-                      (set! (.-value emit) nil))
-                    (loop [^Sub sub (.-head emit)]
-                      (when (some? sub)
-                        (when (== (.-state sub) PENDING)
-                          (let [pub (.-current dag)]
-                            (set! (.-current dag) (.-down sub))
-                            (sub-push sub)
-                            (set! (.-current dag) pub)))
-                        (recur (.-next sub)))))
-                (do (loop [^Sub sub (.-head emit)]
-                      (when (some? sub) (sub) (recur (.-next sub))))
-                    (if (nil? (.-prev emit))
-                      (set! (.-head dag) (.-next emit))
-                      (set! (.-next (.-prev emit)) (.-next emit)))
-                    (if (nil? (.-next emit))
-                      (set! (.-tail dag) (.-prev emit))
-                      (set! (.-prev (.-next emit)) (.-prev emit)))))))
-          (some? (set! (.-emitter dag) (.-today dag))))))
-    (when (nil? (.-head dag)) ((if (.-failed dag) (.-failure dag) (.-success dag)) (.-result dag))))
-  (set! dag-current prv)
-  (set! (.-reentrancy dag) (dec (.-reentrancy dag))))
+(defn reactor-signal [pub f]
+  (let [ctx (.-context pub)
+        cur (.-current ctx)]
+    (set! (.-current ctx) pub)
+    (f)
+    (set! (.-current ctx) cur)))
 
-(defn dag-cancel [^Dag dag]
-  (let [p (dag-acquire dag)]
-    (when-not (.-cancelled dag)
-      (set! (.-cancelled dag) true)
-      (loop [^Pub pub (.-head dag)]
-        (when (some? pub)
-          (pub) (recur (.-next pub)))))
-    (dag-release dag p)))
+(defn reactor-cancel-ctx [ctx]
+  (set! (.-cancelled ctx) nil)
+  (while (some? (.-head ctx))
+    ((.-head ctx))))
 
-(defn pub-cancel [^Pub pub]
-  (let [p (dag-acquire (.-dag pub))]
-    (when-not (.-cancelled pub)
-      (set! (.-cancelled pub) true)
-      (pub-schedule pub)
-      ((.-iterator pub)))
-    (dag-release (.-dag pub) p)))
+(defn reactor-cancel-pub [pub]
+  (reactor-detach pub)
+  (reactor-signal pub (.-iterator pub))
+  (if (identical? (.-child pub) pub)
+    (do (set! (.-child pub) nil)
+        (when (< (.-pending pub) 1)
+          (reactor-schedule pub)))
+    (try @(.-iterator pub)
+         (catch :default _)))
+  (when (zero? (.-pending pub))
+    (set! (.-pending pub) -1)))
 
-(defn pub-sub [^Pub up n t]
-  (let [^Dag dag (.-dag up)
-        ^Dag prv (dag-acquire dag)
-        ^Pub down (.-current dag)]
-    (assert (some? down))
-    (assert (lt (.-id up) (.-id down)))
-    (let [sub (->Sub up down n t PENDING nil nil)]
-      (if (== (.-state up) DONE)
-        (t) (do (set! (.-prev sub) (.-tail up))
-                (set! (.-tail up) sub)
-                (if-some [s (.-prev sub)]
-                  (set! (.-next s) sub)
-                  (set! (.-head up) sub))
-                (when-not (identical? nop (.-value up))
-                  (when-not (and (.-scheduled up) (lt (.-id (.-emitter dag)) (.-id up)))
-                    (sub-push sub)))))
-      (dag-release dag prv) sub)))
+(defn reactor-cancel-sub [sub]
+  (let [pub (.-subscribed sub)
+        prv (.-prev sub)
+        nxt (.-next sub)]
+    (if (nil? prv) (set! (.-head pub) nxt) (set! (.-next prv) nxt))
+    (if (nil? nxt) (set! (.-tail pub) prv) (set! (.-prev nxt) prv))
+    (set! (.-prev sub) sub)
+    (set! (.-next sub) nil)
+    (reactor-signal (.-subscriber sub) (.-terminator sub))))
 
-(defn sub-cancel [^Sub sub]
-  (let [^Pub u (.-up sub)
-        ^Dag dag (.-dag u)
-        ^Dag prv (dag-acquire dag)]
-    (when-not (== (.-state sub) DONE)
-      (if (== (.-state sub) READY)
-        (sub-pull sub) ((.-terminator sub)))
-      (set! (.-state sub) DONE)
-      (if-some [p (.-prev sub)]
-        (set! (.-next p) (.-next sub))
-        (set! (.-head u) (.-next sub)))
-      (if-some [n (.-next sub)]
-        (set! (.-prev n) (.-prev sub))
-        (set! (.-tail u) (.-prev sub))))
-    (dag-release dag prv)))
+(defn reactor-transfer [pub]
+  (let [ctx (.-context pub)
+        cur (.-current ctx)]
+    (set! (.-current ctx) pub)
+    (let [val (try @(.-iterator pub)
+                   (catch :default e
+                     (when-not (identical? pub (.-prev pub))
+                       (reactor-cancel-pub pub))
+                     (when-some [c (.-cancelled ctx)]
+                       (set! (.-result ctx) e)
+                       (set! (.-completed ctx) c)
+                       (reactor-cancel-ctx ctx)) nop))]
+      (set! (.-current ctx) cur)
+      (set! (.-value pub) val))))
 
-(defn sub-deref [^Sub sub]
-  (let [^Pub u (.-up sub)
-        ^Dag dag (.-dag u)
-        ^Dag prv (dag-acquire dag)]
-    (when (== (.-state u) READY) (pub-more u))
-    (let [x (.-value u)]
-      (if (== (.-state sub) DONE)
-        ((.-terminator sub)) (sub-pull sub))
-      (dag-release dag prv)
-      (when (identical? x nop) (throw (js/Error. "No such element.")))
-      x)))
+(defn reactor-ack [pub]
+  (when (zero? (set! (.-pending pub) (dec (.-pending pub))))
+    (set! (.-value pub) nil)
+    (when (identical? (.-prev pub) pub)
+      (set! (.-pending pub) -1))
+    (when (nil? (.-child pub))
+      (reactor-schedule pub))))
 
-(defn dag [i s f]
-  (let [^Dag dag (->Dag 0 s f nil false false 0 nil nil nil nil nil nil)
-        ^Dag prv (dag-acquire dag)]
-    (set! (.-result dag)
-          (try (i) (catch :default e
-                     (set! (.-failed dag) true)
-                     (dag) e)))
-    (dag-release dag prv) dag))
+(defn reactor-enter [ctx]
+  (doto reactor-current (-> (identical? ctx) (when-not (set! reactor-current ctx)))))
 
-(defn pub [f d]
-  (let [^Dag dag (doto dag-current (assert "Unable to publish : not in reactor."))
-        ^Pub pub (->Pub dag d (if-some [^Pub cur (.-current dag)]
-                                (let [n (alength (.-id cur))
-                                      a (make-array (inc n))]
-                                  (dotimes [i n] (aset a i (aget (.-id cur) i)))
-                                  (doto a (aset n (doto (.-tier cur) (->> (inc) (set! (.-tier cur)))))))
-                                (doto (make-array 1) (aset 0 (doto (.-tier dag) (->> (inc) (set! (.-tier dag)))))))
-                        nil nop false false 0 0 0 (.-tail dag) nil nil nil nil nil)]
-    (set! (.-tail dag) pub)
-    (if-some [^Pub prv (.-prev pub)]
-      (set! (.-next prv) pub)
-      (set! (.-head dag) pub))
-    (let [prv (.-current dag)]
-      (set! (.-current dag) pub)
-      (set! (.-iterator pub)
-            (f #(let [prv (dag-acquire dag)]
-                  (set! (.-state pub) READY)
-                  (pub-schedule pub)
-                  (dag-release dag prv))
-               #(let [prv (dag-acquire dag)]
-                  (set! (.-state pub) DONE)
-                  (pub-schedule pub)
-                  (dag-release dag prv))))
-      (when (.-cancelled dag) (pub))
-      (set! (.-current dag) prv) pub)))
+(defn reactor-leave [ctx prv]
+  (when-not (identical? ctx prv)
+    (while (some? (set! (.-emitter ctx) (.-tomorrow ctx)))
+      (set! (.-tomorrow ctx) nil)
+      (loop [active nil]
+        (let [pub (.-emitter ctx)
+              head (.-head pub)]
+          (set! (.-head pub) nil)
+          (set! (.-tail pub) nil)
+          (set! (.-today ctx) (reactor-remove pub))
+          (let [active
+                (loop [s head p 1]
+                  (if (nil? s)
+                    (if (zero? (.-pending pub))
+                      (do (set! (.-pending pub) p)
+                          (if (identical? (reactor-transfer pub) nop)
+                            (do (set! (.-child   pub) pub)
+                                (set! (.-pending pub) -1)
+                                (set! (.-active  pub) nil)
+                                active)
+                            (do (set! (.-active  pub) active)
+                                pub)))
+                      (do (set! (.-value   pub) nop)
+                          (set! (.-active  pub) nil)
+                          active))
+                    (recur (.-next (set! (.-prev s) s)) (inc p))))]
+            (loop [s head]
+              (when-not (nil? s)
+                (let [n (.-next s)]
+                  (set! (.-next s) nil)
+                  (reactor-signal (.-subscriber s) (.-notifier s))
+                  (recur n))))
+            (if (nil? (set! (.-emitter ctx) (.-today ctx)))
+              (loop [p active]
+                (when-not (nil? p)
+                  (let [n (.-active p)]
+                    (set! (.-active p) p)
+                    (reactor-ack p)
+                    (recur n))))
+              (recur active))))))
+    (when (zero? (.-running ctx))
+      (set! (.-cancelled ctx) nil)
+      ((.-completed ctx) (.-result ctx)))
+    (set! reactor-current prv) nil))
+
+(deftype Subscription
+  [notifier terminator subscriber subscribed prev next]
+  IFn
+  (-invoke [this]
+    (if (identical? prev this)
+      (set! (.-notifier this) nil)
+      (let [ctx (.-context subscriber)
+            cur (reactor-enter ctx)]
+        (reactor-cancel-sub this)
+        (reactor-leave ctx cur))))
+  IDeref
+  (-deref [this]
+    (let [pub subscribed
+          val (.-value pub)
+          ctx (.-context pub)
+          cur (reactor-enter ctx)]
+      (when (pos? (.-pending pub)) (reactor-ack pub))
+      (let [val (if (and (identical? val nop)
+                         (not (identical? (.-prev pub) pub)))
+                  (reactor-transfer pub) val)]
+        (if (or (nil? notifier)
+                (and (identical? (.-prev pub) pub)
+                     (identical? (.-child pub) pub)))
+          (reactor-signal subscriber terminator)
+          (reactor-attach this))
+        (reactor-leave ctx cur)
+        (doto val
+          (-> (identical? nop)
+              (when (throw reactor-err-sub-cancel))))))))
+
+(deftype Publisher
+  [context ranks iterator value ^number children ^number pending prev next child sibling active head tail]
+  IFn
+  (-invoke [this]
+    (when-not (identical? prev this)
+      (let [ctx context
+            cur (reactor-enter ctx)]
+        (when-not (and (identical? value nop)
+                       (or (identical? (reactor-transfer this) nop)
+                           (identical? prev this)))
+          (reactor-cancel-pub this))
+        (reactor-leave ctx cur))))
+  (-invoke [this n t]
+    (let [ctx context
+          cur (.-current ctx)]
+      (if (and (identical? ctx reactor-current) (some? cur))
+        (if (and (not (identical? this cur)) (reactor-lt ranks (.-ranks cur)))
+          (let [sub (->Subscription n t cur this nil nil)]
+            (set! (.-prev sub) sub)
+            (if (identical? active this)
+              (if (identical? prev this) (t) (reactor-attach sub))
+              (do (when (pos? pending) (set! (.-pending this) (inc pending))) (n))))
+          (failer n t reactor-err-sub-cyclic))
+        (failer n t reactor-err-sub-orphan)))))
+
+(deftype Context
+  [completed cancelled result ^number children ^number running current emitter today tomorrow head tail]
+  IFn
+  (-invoke [this]
+    (when-not (nil? cancelled)
+      (let [cur (reactor-enter this)]
+        (reactor-cancel-ctx this)
+        (reactor-leave this cur)))))
+
+(defn context [b s f]
+  (let [ctx (->Context s f nil 0 0 nil nil nil nil nil nil)
+        cur (reactor-enter ctx)]
+    (try (set! (.-result ctx) (b))
+         (catch :default e
+           (when-some [c (.-cancelled ctx)]
+             (set! (.-result ctx) e)
+             (set! (.-completed ctx) c)
+             (reactor-cancel-ctx ctx))))
+    (reactor-leave ctx cur) ctx))
+
+(defn publish [f d]
+  (let [ctx (doto reactor-current
+              (-> (nil?) (when (throw reactor-err-pub-orphan)))
+              (-> (.-cancelled) (nil?) (when (throw reactor-err-pub-cancel))))
+        prv (.-tail ctx)
+        par (.-current ctx)
+        pub (->Publisher
+              ctx (if (nil? par)
+                    (doto (make-array 1) (aset 0 (doto (.-children ctx) (->> (inc) (set! (.-children ctx))))))
+                    (let [n (alength (.-ranks par))
+                          a (make-array (inc n))]
+                      (dotimes [i n] (aset a i (aget (.-ranks par) i)))
+                      (doto a (aset n (doto (.-children par) (->> (inc) (set! (.-children par))))))))
+              nil nil 0 (if d 0 -1) prv nil nil nil nil nil nil)]
+    (set! (.-active pub) pub)
+    (set! (.-child pub) pub)
+    (set! (.-tail ctx) pub)
+    (if (nil? prv) (set! (.-head ctx) pub) (set! (.-next prv) pub))
+    (set! (.-running ctx) (inc (.-running ctx)))
+    (set! (.-current ctx) pub)
+    (set! (.-iterator pub)
+          (f #(let [ctx (.-context pub)
+                    cur (reactor-enter ctx)]
+                (if (identical? (.-prev pub) pub)
+                  (try @(.-iterator pub)
+                       (catch :default _))
+                  (do (set! (.-child pub) nil)
+                      (when (< (.-pending pub) 1)
+                        (reactor-schedule pub))))
+                (reactor-leave ctx cur))
+             #(let [ctx (.-context pub)
+                    cur (reactor-enter ctx)]
+                (when-not (identical? (.-prev pub) pub)
+                  (reactor-detach pub)
+                  (while (some? (.-head pub))
+                    (reactor-cancel-sub (.-head pub))))
+                (reactor-leave ctx cur))))
+    (set! (.-current ctx) par) pub))
