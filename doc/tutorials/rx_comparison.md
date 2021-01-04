@@ -4,7 +4,7 @@
 
 [RxJava](https://github.com/ReactiveX/RxJava) is a popular library providing a reactive streams implementation. We're going to walk through some examples from an [infoq guide](http://web.archive.org/web/20200807102627/https://www.infoq.com/articles/rxjava-by-example/) to compare an RxJava `Observable` to a missionary flow. To follow along grab the latest version of missionary and
 
-```clojure
+```clj
 (require '[missionary.core :as m])
 ```
 
@@ -26,7 +26,7 @@ This builds a stream of 2 statically defined values and the subscribe call regis
 
 While an `Observable` is [full of methods](https://javadoc.io/doc/io.reactivex.rxjava3/rxjava/latest/io/reactivex/rxjava3/core/Observable.html), a missionary flow has only a few [primitive operators](https://cljdoc.org/d/missionary/missionary/b.17/api/missionary.core) that can fulfill the same demands (note that the core namespace includes the whole missionary API, not just flows, so the actual number of functions/macros is lower than you see in the namespace). The most basic one is the fork named `??`:
 
-```clojure
+```clj
 (m/? (m/aggregate (constantly nil) (m/ap (println (m/?? (m/enumerate ["Hello" "World"]))))))
 ```
 
@@ -81,7 +81,7 @@ The new methods are `from`, `zipWith` and `range`.
 
 Missionary has a `zip` function as well. No other new functions are needed:
 
-```clojure
+```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
   (drain (m/ap (println (m/?? (m/zip (partial format "%2d. %s")
                                      (m/enumerate (range 1 100))
@@ -125,7 +125,7 @@ The only new method is `flatMap`.
 
 No new methods are needed for the missionary implementation, we just fork some more:
 
-```clojure
+```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
   (drain (m/ap (println (m/?? (m/zip (partial format "%2d. %s")
                                      (m/enumerate (range 1 100))
@@ -134,7 +134,7 @@ No new methods are needed for the missionary implementation, we just fork some m
 
 *Note*: the nested `ap` call is necessary to not fork the whole block. If we had written
 
-```clojure
+```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
   (drain (m/ap (println (m/?? (m/zip (partial format "%2d. %s")
                                      (m/enumerate (range 1 100))
@@ -162,7 +162,7 @@ we would get
 
 *Note*: typically a clojure programmer would sooner write
 
-```clojure
+```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
   (drain (m/ap (println (m/?? (m/zip (partial format "%2d. %s")
                                      (m/enumerate (range 1 100))
@@ -219,7 +219,7 @@ One new method, `distinct`, is introduced here.
 
 We will introduce a new function in missionary as well, a much more general one though, `transform`. It takes a transducer and returns a new flow, transforming the values along the way. We don't need to reimplement disticnt for flows but can reuse a generic transducer:
 
-```clojure
+```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
   (drain (m/ap (println (m/?? (m/zip (partial format "%2d. %s")
                                      (m/enumerate (range 1 100))
@@ -263,12 +263,114 @@ This outputs:
 
 There is no sort function in missionary and there isn't a transducer available either since sorting requires consuming the whole collecition. No new functions are needed though, we just need to `aggregate` the flow and `enumerate`it:
 
-```clojure
+```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
   (drain (m/ap (println (m/?? (m/zip (partial format "%2d. %s")
                                      (m/enumerate (range 1 100))
                                      (->> (m/ap (m/?? (m/enumerate (m/?? (m/enumerate words)))))
                                           (m/aggregate conj (sorted-set)) m/? m/enumerate)))))))
+```
+
+### f) Merge
+
+The next example merges 2 `Observable`s into 1:
+
+```java
+private static long start = System.currentTimeMillis();
+public static Boolean isSlowTickTime() {
+   return (System.currentTimeMillis() - start) % 30_000 >= 15_000;
+}
+Observable<Long> fast = Observable.interval(1, TimeUnit.SECONDS);
+Observable<Long> slow = Observable.interval(3, TimeUnit.SECONDS);
+Observable<Long> clock = Observable.merge(
+       slow.filter(tick-> isSlowTickTime()),
+       fast.filter(tick-> !isSlowTickTime())
+);
+clock.subscribe(tick-> System.out.println(new Date()));
+Thread.sleep(60_000);
+```
+
+The `clock` `Observable` should emit a value every second for 15 seconds, then every 3 seconds for 15 seconds, in a loop. The example output is
+
+```text
+Fri Sep 16 03:08:18 BST 2016
+Fri Sep 16 03:08:19 BST 2016
+Fri Sep 16 03:08:20 BST 2016
+Fri Sep 16 03:08:21 BST 2016
+Fri Sep 16 03:08:22 BST 2016
+Fri Sep 16 03:08:23 BST 2016
+Fri Sep 16 03:08:24 BST 2016
+Fri Sep 16 03:08:25 BST 2016
+Fri Sep 16 03:08:26 BST 2016
+Fri Sep 16 03:08:27 BST 2016
+Fri Sep 16 03:08:28 BST 2016
+Fri Sep 16 03:08:29 BST 2016
+Fri Sep 16 03:08:30 BST 2016
+Fri Sep 16 03:08:31 BST 2016
+Fri Sep 16 03:08:32 BST 2016
+Fri Sep 16 03:08:35 BST 2016
+Fri Sep 16 03:08:38 BST 2016
+Fri Sep 16 03:08:41 BST 2016
+Fri Sep 16 03:08:44 BST 2016
+```
+
+The new methods are `interval`, `filter` and `merge`.
+
+Missionary has another fork operator, the concurrent fork `?=`. It forks the execution for all values coming in from the flow concurrently. With this new operator, the `sleep` task that sleeps for the given amount of milliseconds and what we learned so far we can build everything we need:
+
+```clj
+(let [start (System/currentTimeMillis)]
+  (defn is-slow-tick-time [] (-> (System/currentTimeMillis) (- start) (mod 30000) (>= 15000))))
+(defn interval [ms] (m/ap (loop [] (if (m/?? (m/enumerate [true false])) :emit (do (m/? (m/sleep ms)) (recur))))))
+(def fast (interval 1000))
+(def slow (interval 3000))
+(def clock (m/ap (m/?? (m/?= (m/enumerate [(m/transform (filter (fn [_] (is-slow-tick-time))) slow)
+                                           (m/transform (filter (fn [_] (not (is-slow-tick-time)))) fast)])))))
+(m/? (m/aggregate (fn [_ _] (println (java.util.Date.))) nil (m/transform (take 20) clock)))
+```
+
+### g) Plug in
+
+The InfoQ example using an `AsyncEmitter` to turn a listener into a cold `Observable` is out of date (not present in RxJava 3). For completeness we will copy it here though. If anyone knows a RxJava3 solution feel free to submit a PR!
+
+```java
+SomeFeed<PriceTick> feed = new SomeFeed<>(); 
+Observable<PriceTick> obs = 
+  Observable.fromEmitter((AsyncEmitter<PriceTick> emitter) -> 
+  { 
+    SomeListener listener = new SomeListener() { 
+      @Override 
+      public void priceTick(PriceTick event) { 
+        emitter.onNext(event); 
+        if (event.isLast()) { 
+          emitter.onCompleted(); 
+        } 
+      } 
+
+      @Override 
+      public void error(Throwable e) { 
+        emitter.onError(e); 
+      } 
+    }; 
+    feed.register(listener); 
+  }, AsyncEmitter.BackpressureMode.BUFFER); 
+```
+
+The example shows a `SomeFeed` that can `register` a new `SomeListener` which receives `priceTick` and `error` events and can ask if a `PriceTick` event was the last one via `isLast`. This listener is then converted to an `Observable`.
+
+A flow doesn't provide callbacks that we could use to emit values or signal error/completion. We can achieve something similar by using a queue. We will use a missionary `mbx` (short for mailbox). `(mbx)` returns a mailbox that can be used as a 1-arity function to send a value and as a task to wait for a value.
+
+```clj
+(defn feed->flow [feed]
+  (let [mbx (m/mbx)]
+    (.register feed (reify SomeListener
+                      (priceTick [event] (mbx [:val event]) (when (.isLast event) (mbx [:done])))
+                      (error [e] (mbx [:err e]))))
+    (m/ap (loop [[t v] (m/? mbx)]
+            (case t
+              :val (if (m/?? (m/enumerate [true false])) v (recur (m/? mbx)))
+              :err (throw e)
+              :done (m/?? m/none))))))
 ```
 
 ## 2. Diverging
@@ -277,7 +379,7 @@ An interesting style is to think more in terms of functional `transform`ations o
 
 In `1b` we don't strictly need to zip two flows, we're just interested in indexing the entries. This can be more easily achieved with the `map-indexed` transducer:
 
-```clojure
+```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
   (drain (m/ap (println (m/?? (->> (m/enumerate words)
                                    (m/transform (map-indexed #(format "%2d. %s" (inc %1) %2)))))))))
