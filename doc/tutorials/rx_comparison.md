@@ -1,8 +1,8 @@
-# Comparison to RxJava
+# Comparison to RxJava (InfoQ guide)
 
 *Note*: Please read the guides for tasks and flows before reading this one.
 
-[RxJava](https://github.com/ReactiveX/RxJava) is a popular library providing a reactive streams implementation. We're going to walk through some examples from an [infoq guide](http://web.archive.org/web/20200807102627/https://www.infoq.com/articles/rxjava-by-example/) to compare an RxJava `Observable` to a missionary flow. To follow along grab the latest version of missionary and
+[RxJava](https://github.com/ReactiveX/RxJava) is a popular library providing a reactive streams implementation. We're going to walk through some examples from an [InfoQ guide](http://web.archive.org/web/20200807102627/https://www.infoq.com/articles/rxjava-by-example/) to compare an RxJava `Observable` to a missionary flow. To follow along grab the latest version of missionary and
 
 ```clj
 (require '[missionary.core :as m])
@@ -441,3 +441,167 @@ Now we can return to a single transducer solution:
 ```
 
 As you can see transducers make the solutions simpler, shorter and easier to reason about.
+
+
+# Comparison to RxJava (RxJava readme examples)
+
+Let's look at the [RxJava readme](https://github.com/ReactiveX/RxJava/blob/ad50bcda192a2e73ad1fc3532ac27362d50dc898/README.md) for some further examples.
+
+> One of the common use cases for RxJava is to run some computation, network request on a background thread and show the results (or error) on the UI thread:
+
+```java
+import io.reactivex.rxjava3.schedulers.Schedulers;
+
+Flowable.fromCallable(() -> {
+    Thread.sleep(1000); //  imitate expensive computation
+    return "Done";
+})
+  .subscribeOn(Schedulers.io())
+  .observeOn(Schedulers.single())
+  .subscribe(System.out::println, Throwable::printStackTrace);
+
+Thread.sleep(2000); // <--- wait for the flow to finish
+```
+
+The `subscribeOn` ensures the callable is run on a thread dedicated for IO (blocking) tasks. `observeOn` ensures the value is observerd on the single (e.g. UI) thread.
+
+The callable example emits a single value, so we'll use a task in missionary instead:
+
+```clj
+(try (m/? (m/via m/blk (Thread/sleep 1000) "Done"))
+     (catch Throwable t (.printStackTrace t)))
+```
+
+`via` allows running a task on a different `java.util.concurrent.Executor`. The 2 predefined executors are `cpu` for CPU bound tasks and `blk` for IO bound (BLocKing) tasks.
+
+
+> Processing the numbers 1 to 10 in parallel is a bit more involved:
+
+```java
+Flowable.range(1, 10)
+  .flatMap(v ->
+      Flowable.just(v)
+        .subscribeOn(Schedulers.computation())
+        .map(w -> w * w)
+  )
+  .blockingSubscribe(System.out::println);
+```
+
+> Alternatively, the `Flowable.parallel()` operator and the `ParallelFlowable` type help achieve the same parallel processing pattern:
+
+```java
+Flowable.range(1, 10)
+  .parallel()
+  .runOn(Schedulers.computation())
+  .map(v -> v * v)
+  .sequential()
+  .blockingSubscribe(System.out::println);
+```
+
+Here the goal is to run the `map` computation in parallel.
+
+If we don't care about the order of the results we can fork the flow concurrently:
+
+```clj
+(m/? (m/aggregate conj (m/ap (let [v (m/?= (m/enumerate (range 1 11)))] (m/? (m/via m/cpu (* v v)))))))
+```
+
+Otherwise we need to turn each value into a task and `join` them:
+
+```clj
+(apply m/join vector (m/? (m/aggregate conj (m/transform (map #(m/via m/cpu (* % %))) (m/enumerate (range 1 11))))))
+```
+
+
+> flatMap is a powerful operator and helps in a lot of situations. For example, given a service that returns a Flowable, we'd like to call another service with values emitted by the first service:
+
+```java
+Flowable<Inventory> inventorySource = warehouse.getInventoryAsync();
+inventorySource
+    .flatMap(inventoryItem -> erp.getDemandAsync(inventoryItem.getId())
+            .map(demand -> "Item " + inventoryItem.getName() + " has demand " + demand))
+    .subscribe(System.out::println);
+```
+
+Basically `aFlowable.map(somethingReturningaFlowable)` would return a `Flowable<Publisher<T>>`, whereas `flatMap` "flattens" them into just `Flowable<T>`.
+
+Assuming `getDemandAsync` returns a single value we'd model that as a task:
+
+```clj
+(def inventory (get-inventory warehouse))
+(->> (m/ap (let [item (m/?? inventory), demand (m/? (get-demand erp item))] {:item item :demand demand}))
+     (m/aggregate (fn [_ {:keys [item demand]}] (println "Item" (:name item) "has demand" demand))))
+```
+
+
+> [...] given a value, invoke another service, await and continue with its result:
+
+```java
+service.apiCall()
+    .flatMap(value -> service.anotherApiCall(value))
+    .flatMap(next -> service.finalCall(next))
+```
+
+If these are tasks:
+
+```clj
+(m/? (m/sp (->> (api-call service) m/? (another-api-call service) m/? (final-call service) m/?)))
+```
+
+If these are flows:
+
+```clj
+(m/aggregate conj (m/ap (->> (api-call service) m/?? (another-api-call service) m/?? (final-call service) m/??)))
+```
+
+
+> It is often the case also that later sequences would require values from earlier mappings. This can be achieved by moving the outer flatMap into the inner parts of the previous flatMap for example:
+
+```java
+service.apiCall()
+    .flatMap(value ->
+        service.anotherApiCall(value)
+        .flatMap(next -> service.finalCallBoth(value, next))
+)
+```
+
+We'll only show with tasks since flows look very similar:
+
+```clj
+(m/? (m/sp (let [value (m/? (api-call service)), next (m/? (another-api-call service value))]
+             (m/? (final-call-both service value next)))))
+```
+
+
+> In other scenarios, the result(s) of the first source/dataflow is irrelevant and one would like to continue with a quasi independent another source. Here, flatMap works as well. [...] Often though there is a way that is somewhat more expressive (and also lower overhead) by using Completable as the mediator and its operator andThen to resume with something else:
+
+```java
+sourceObservable
+  .ignoreElements()           // returns Completable
+  .andThen(someSingleSource)
+  .map(v -> v.toString())
+```
+
+Here `sourceObservable` needs to complete and only then another source can be run.
+
+```clj
+(m/? (m/sp (m/? (m/aggregate (constantly nil) source-flow)) (str (m/? some-task))))
+```
+
+
+> Sometimes, there is an implicit data dependency between the previous sequence and the new sequence that, for some reason, was not flowing through the "regular channels".
+
+```java
+AtomicInteger count = new AtomicInteger();
+Observable.range(1, 10)
+  .doOnNext(ignored -> count.incrementAndGet())
+  .ignoreElements()
+  .andThen(Single.fromCallable(() -> count.get()))
+  .subscribe(System.out::println);
+```
+
+```clj
+(def count (atom 0))
+(m/? (m/aggregate (fn [_ _] (swap! count inc)) nil (m/enumerate (range 1 11))))
+(println @count)
+```
