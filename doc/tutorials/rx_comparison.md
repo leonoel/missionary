@@ -321,7 +321,9 @@ Missionary has another fork operator, the concurrent fork `?=`. It forks the exe
 ```clj
 (let [start (System/currentTimeMillis)]
   (defn is-slow-tick-time [] (-> (System/currentTimeMillis) (- start) (mod 30000) (>= 15000))))
-(defn interval [ms] (m/ap (loop [] (if (m/?? (m/enumerate [true false])) :emit (do (m/? (m/sleep ms)) (recur))))))
+(defn interval [ms]
+  (m/ap (m/? (m/sleep (- (m/?? (m/enumerate (next (iterate (partial + ms) (System/currentTimeMillis)))))
+                         (System/currentTimeMillis)) :emit))))
 (def fast (interval 1000))
 (def slow (interval 3000))
 (def clock (m/ap (m/?? (m/?= (m/enumerate [(m/transform (filter (fn [_] (is-slow-tick-time))) slow)
