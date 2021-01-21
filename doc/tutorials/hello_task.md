@@ -146,7 +146,7 @@ World
 [nil nil]
 ```
 
-Since `blocking-hello-world` is blocking the whole thread we're stuck. For these purposes missionary allows offloading a task on a different `java.util.concurrent.Executor` via the `m/via` macro. Missionary ships with 2 predefedined executors, `m/cpu` for CPU bound tasks and `m/blk` for IO bound (BLocKing) tasks. With this new insight we can fix our previous example:
+Since `blocking-hello-world` is blocking the whole thread we're stuck. For these purposes missionary allows offloading a task on a different `java.util.concurrent.Executor` via the `m/via` macro. Missionary ships with 2 predefined executors, `m/cpu` for CPU bound tasks and `m/blk` for IO bound (BLocKing) tasks. With this new insight we can fix our previous example:
 
 ```clojure
 (time (m/? (m/join vector (m/via m/blk (blocking-hello-world)) (m/via m/blk (blocking-hello-world)))))
