@@ -70,3 +70,13 @@ To test it, we need a flow of values emitting at various intervals.
           (m/aggregate conj)))
 #_=> [24 79 9 37]
 ```
+
+## Concurrent forking
+
+What if we want to fork the processes concurrently? Enter the `?=` operator. It forks evaluation for *all* values concurrently. Values are returned from the flow in the order they finish, which is not necessarily the initial order.
+
+```clojure
+(m/? (m/aggregate conj (m/ap (let [ms (m/?= (m/enumerate [300 100 400 200]))]
+                               (m/? (m/sleep ms ms))))))
+#_=> [100 200 300 400]
+```

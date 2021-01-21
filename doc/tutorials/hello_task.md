@@ -123,3 +123,37 @@ Hello
 !
 ;; throws after 500 ms
 ```
+
+## Execution model
+
+All operators run user-provided code immediately, in the thread allowing the computation. This scheduling strategy is the simplest possible, makes evaluation order largely deterministic with virtually no overhead, while leaving a lot of flexibility to the user for fine-grained performance tuning.
+
+One important consequence of this design decision is that user-provided code is assumed to be inexpensive. On the JVM, blocking APIs are common, which can lead to surprising behaviors if improperly handled.
+
+What happens if we have a service outside of our control that blocks our thread?
+
+```clojure
+(defn blocking-hello-world []
+  (println "Hello")
+  (Thread/sleep 500)
+  (println "World"))
+(time (m/? (m/join vector (m/sp (blocking-hello-world)) (m/sp (blocking-hello-world)))))
+Hello
+World
+Hello
+World
+"Elapsed time: 1006.127854 msecs"
+[nil nil]
+```
+
+Since `blocking-hello-world` is blocking the whole thread we're stuck. For these purposes missionary allows offloading a task on a different `java.util.concurrent.Executor` via the `m/via` macro. Missionary ships with 2 predefined executors, `m/cpu` for CPU bound tasks and `m/blk` for IO bound (BLocKing) tasks. With this new insight we can fix our previous example:
+
+```clojure
+(time (m/? (m/join vector (m/via m/blk (blocking-hello-world)) (m/via m/blk (blocking-hello-world)))))
+HelloHello
+
+World
+World
+"Elapsed time: 501.968621 msecs"
+[nil nil]
+```
