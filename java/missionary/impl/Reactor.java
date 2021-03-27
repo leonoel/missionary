@@ -22,7 +22,7 @@ public interface Reactor {
             int yi = y[i];
             if (xi != yi) return xi < yi;
         }
-        return xl < yl;
+        return xl > yl;
     }
 
     static Publisher link(Publisher x, Publisher y) {
@@ -155,47 +155,55 @@ public interface Reactor {
         return cur;
     }
 
+    static void emit(Publisher pub) {
+        Subscription head = pub.head;
+        pub.head = null;
+        pub.tail = null;
+        int p = 1;
+        for(Subscription sub = head; sub != null; sub = sub.next) {
+            sub.prev = sub;
+            p++;
+        }
+        if (pub.pending == 0) {
+            pub.pending = p;
+            if (CURRENT == transfer(pub)) {
+                pub.child = pub;
+                pub.pending = -1;
+                pub.active = null;
+            } else {
+                pub.active = pub.context.active;
+                pub.context.active = pub;
+            }
+        } else {
+            pub.value = CURRENT;
+            pub.active = null;
+        }
+        for (Subscription sub = head; sub != null; sub = head) {
+            head = head.next;
+            sub.next = null;
+            signal(sub.subscriber, sub.notifier);
+        }
+    }
+
+    static Publisher finish(Context ctx) {
+        Publisher pub;
+        while ((pub = ctx.active) != null) {
+            ctx.active = pub.active;
+            pub.active = pub;
+            ack(pub);
+        }
+        pub = ctx.tomorrow;
+        ctx.tomorrow = null;
+        return pub;
+    }
+
     static void leave(Context ctx, Context prv) {
         if (ctx != prv) {
-            Publisher pub;
-            while ((pub = ctx.emitter = ctx.tomorrow) != null) {
-                ctx.tomorrow = null;
-                Publisher active = null;
+            while ((ctx.emitter = finish(ctx)) != null) {
                 do {
-                    Subscription head = pub.head;
-                    pub.head = null;
-                    pub.tail = null;
-                    ctx.today = remove(pub);
-                    int p = 1;
-                    for(Subscription sub = head; sub != null; sub = sub.next) {
-                        sub.prev = sub;
-                        p++;
-                    }
-                    if (pub.pending == 0) {
-                        pub.pending = p;
-                        if (CURRENT == transfer(pub)) {
-                            pub.child = pub;
-                            pub.pending = -1;
-                            pub.active = null;
-                        } else {
-                            pub.active = active;
-                            active = pub;
-                        }
-                    } else {
-                        pub.value = CURRENT;
-                        pub.active = null;
-                    }
-                    for (Subscription sub = head; sub != null; sub = head) {
-                        head = head.next;
-                        sub.next = null;
-                        signal(sub.subscriber, sub.notifier);
-                    }
-                } while ((pub = ctx.emitter = ctx.today) != null);
-                while ((pub = active) != null) {
-                    active = pub.active;
-                    pub.active = pub;
-                    ack(pub);
-                }
+                    ctx.today = remove(ctx.emitter);
+                    emit(ctx.emitter);
+                } while ((ctx.emitter = ctx.today) != null);
             }
             if (ctx.running == 0) {
                 ctx.cancelled = null;
@@ -308,6 +316,7 @@ public interface Reactor {
         Object result;
         int children;
         int running;
+        Publisher active;
         Publisher current;
         Publisher emitter;
         Publisher today;
@@ -354,7 +363,7 @@ public interface Reactor {
         pub.context = ctx;
         pub.active = pub;
         pub.child = pub;
-        pub.pending = d ? 0 : -1;
+        pub.pending = 1;
         Publisher prv = ctx.tail;
         ctx.tail = pub;
         pub.prev = prv;
@@ -401,6 +410,11 @@ public interface Reactor {
                 }
             }
         });
+        pub.pending = d ? 0 : -1;
+        if (pub.child == null) {
+            pub.child = pub;
+            emit(pub);
+        }
         ctx.current = par;
         return pub;
     }
