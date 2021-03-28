@@ -337,12 +337,15 @@ public interface Reactor {
 
     static Object context(IFn b, IFn s, IFn f) {
         Context ctx = new Context();
-        ctx.completed = s;
         ctx.cancelled = f;
         synchronized (ctx) {
             Context cur = enter(ctx);
             try {
-                ctx.result = b.invoke();
+                Object r = b.invoke();
+                if (ctx.cancelled != null) {
+                    ctx.result = r;
+                    ctx.completed = s;
+                }
             } catch (Throwable e) {
                 if (ctx.cancelled != null) {
                     ctx.result = e;
