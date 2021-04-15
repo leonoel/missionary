@@ -819,44 +819,54 @@
 ;;;;;;;;;;;;;
 
 (declare relieve-cancel)
-(declare relieve-deref)
+(declare relieve-transfer)
 (deftype Relieve
   [reducer notifier terminator
-   iterator current
-   ^boolean busy
-   ^boolean done
-   ^boolean failed]
+   iterator current last error
+   ^boolean busy]
   IFn
   (-invoke [r] (relieve-cancel r))
   IDeref
-  (-deref [r] (relieve-deref r)))
+  (-deref [r] (relieve-transfer r)))
 
 (defn relieve-cancel [^Relieve r]
   ((.-iterator r)))
 
 (defn relieve-pull [^Relieve r]
-  (loop []
-    (if (.-done r)
-      (when (identical? nop (.-current r)) ((.-terminator r)))
-      (let [c (.-current r)]
-        (try (let [x @(.-iterator r)]
-               (set! (.-current r) (if (identical? nop c) x ((.-reducer r) c x))))
-             (catch :default e
-               (set! (.-failed r) true)
-               (set! (.-current r) e)))
-        (when (identical? nop c) ((.-notifier r)))))
-    (when (set! (.-busy r) (not (.-busy r))) (recur))))
+  (loop [s nop]
+    (let [c (.-current r)
+          s (if-some [rf (.-reducer r)]
+              (try (let [x @(.-iterator r)]
+                     (if (identical? nop c)
+                       (do (set! (.-current r) x) (.-notifier r))
+                       (do (set! (.-current r) (rf c x)) s)))
+                   (catch :default e
+                     (set! (.-error r) e)
+                     (relieve-cancel r) s))
+              (do (set! (.-last r) c)
+                  (set! (.-current r) nop)
+                  (if (identical? nop c)
+                    (if (identical? nop (.-error r))
+                      (.-terminator r) (.-notifier r)) s)))]
+      (if (set! (.-busy r) (not (.-busy r)))
+        (recur s) (s)))))
 
-(defn relieve-deref [^Relieve r]
+(defn relieve-transfer [^Relieve r]
   (let [x (.-current r)]
-    (set! (.-current r) nop)
-    (when (.-done r) ((.-terminator r)))
-    (if (.-failed r) (throw x) x)))
+    (if (identical? nop x)
+      (let [x (.-last r)
+            e (.-error r)]
+        (if (identical? nop x)
+          (do ((.-terminator r)) (throw e))
+          (do (set! (.-last r) nop)
+              ((if (identical? nop e)
+                 (.-terminator r) (.-notifier r))) x)))
+      (do (set! (.-current r) nop) x))))
 
 (defn relieve [rf f n t]
-  (let [r (->Relieve rf n t nil nop true false false)
+  (let [r (->Relieve rf n t nil nop nop nil true)
         n #(when (set! (.-busy r) (not (.-busy r))) (relieve-pull r))]
-    (set! (.-iterator r) (f n #(do (set! (.-done r) true) (n))))
+    (set! (.-iterator r) (f n #(do (set! (.-reducer r) nil) (n))))
     (n) r))
 
 
