@@ -1,10 +1,11 @@
 (ns ^:no-doc missionary.impl
-  (:import (java.io Writer)
-           (org.reactivestreams Publisher)
-           (missionary.impl
-             Enumerate Aggregate RaceJoin Sleep Never Ambiguous Fiber Thunk Dataflow Mailbox Rendezvous Semaphore
-             Watch Observe Transform Integrate Pub Sub Relieve Buffer Latest Sample Zip Sequential Ambiguous$Process
-             Reactor Reactor$Context Reactor$Publisher)))
+  (:import
+    (java.io Writer)
+    (org.reactivestreams Publisher)
+    (missionary.impl
+      Enumerate Aggregate RaceJoin Sleep Never Ambiguous Fiber Thunk Dataflow Mailbox Rendezvous Semaphore Watch
+      Observe Transform Integrate Pub Sub Relieve Buffer Latest Sample Zip Sequential Ambiguous$Process Reactor
+      Reactor$Context Reactor$Publisher Relieve$It)))
 
 (defn nop [])
 
@@ -76,8 +77,8 @@
 (defmethod print-method Integrate [o w] (print-object o w))
 (defn integrate [rf i f n t] (Integrate. rf i f n t))
 
-(defmethod print-method Relieve [o w] (print-object o w))
-(defn relieve [rf f n t] (Relieve. rf f n t))
+(defmethod print-method Relieve$It [o w] (print-object o w))
+(defn relieve [rf f n t] (Relieve/spawn rf f n t))
 
 (defmethod print-method Buffer [o w] (print-object o w))
 (defn buffer [c f n t] (Buffer. c f n t))

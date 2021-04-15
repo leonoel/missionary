@@ -3,87 +3,102 @@ package missionary.impl;
 import clojure.lang.AFn;
 import clojure.lang.IDeref;
 import clojure.lang.IFn;
-import clojure.lang.Util;
 
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
-public final class Relieve extends AFn implements IDeref {
+public interface Relieve {
 
-    static final AtomicIntegerFieldUpdater<Relieve> PRESSURE =
-            AtomicIntegerFieldUpdater.newUpdater(Relieve.class, "pressure");
+    AtomicIntegerFieldUpdater<It> PRESSURE =
+            AtomicIntegerFieldUpdater.newUpdater(It.class, "pressure");
 
-    static final AtomicReferenceFieldUpdater<Relieve, Object> CURRENT =
-            AtomicReferenceFieldUpdater.newUpdater(Relieve.class, Object.class, "current");
+    AtomicReferenceFieldUpdater<It, Object> CURRENT =
+            AtomicReferenceFieldUpdater.newUpdater(It.class, Object.class, "current");
 
-    IFn reducer;
-    IFn notifier;
-    IFn terminator;
-    Object iterator;
-    Throwable error;
-    Object last;
+    class It extends AFn implements IDeref {
 
-    volatile int pressure;
-    volatile Object current = CURRENT;
+        IFn reducer;
+        IFn notifier;
+        IFn terminator;
+        Object iterator;
+        Throwable error;
+        Object last;
 
-    void pull() {
-        do if (reducer == null) {
-            while (!CURRENT.compareAndSet(this, last = current, CURRENT));
-            if (last == CURRENT) ((error == null) ? terminator : notifier).invoke();
-        } else try {
-            IFn r = reducer;
-            Object x = ((IDeref) iterator).deref();
-            Object p;
-            while (!CURRENT.compareAndSet(this, p = current, (p == CURRENT) ? x : r.invoke(p, x)));
-            if (p == CURRENT) notifier.invoke();
-        } catch (Throwable e) {
-            error = e;
-            invoke();
-        } while (0 == PRESSURE.decrementAndGet(this));
+        volatile int pressure;
+        volatile Object current = CURRENT;
+
+        @Override
+        public Object invoke() {
+            return cancel(this);
+        }
+
+        @Override
+        public Object deref() {
+            return transfer(this);
+        }
     }
 
-    public Relieve(IFn r, IFn f, IFn n, IFn t) {
-        reducer = r;
-        notifier = n;
-        terminator = t;
-        iterator = f.invoke(
+    static Object cancel(It it) {
+        return ((IFn) it.iterator).invoke();
+    }
+
+    static Object transfer(It it) {
+        for(;;) {
+            Object x = it.current;
+            if (x == CURRENT) {
+                if (it.last == CURRENT) {
+                    it.terminator.invoke();
+                    return clojure.lang.Util.sneakyThrow(it.error);
+                } else {
+                    x = it.last;
+                    it.last = CURRENT;
+                    ((it.error != null) ? it.notifier : it.terminator).invoke();
+                    return x;
+                }
+            }
+            if (CURRENT.compareAndSet(it, x, CURRENT)) return x;
+        }
+    }
+
+    static void pull(It it) {
+        IFn rf;
+        Object p;
+        IFn signal = Util.NOP;
+        do if ((rf = it.reducer) == null) {
+            while (!CURRENT.compareAndSet(it, it.last = it.current, CURRENT));
+            if (it.last == CURRENT) signal = it.error == null ? it.terminator : it.notifier;
+        } else try {
+            Object x = ((IDeref) it.iterator).deref();
+            while (!CURRENT.compareAndSet(it, p = it.current, (p == CURRENT) ? x : rf.invoke(p, x)));
+            if (p == CURRENT) signal = it.notifier;
+        } catch (Throwable e) {
+            it.error = e;
+            it.invoke();
+        } while (0 == PRESSURE.decrementAndGet(it));
+        signal.invoke();
+    }
+
+    static It spawn(IFn r, IFn f, IFn n, IFn t) {
+        It it = new It();
+        it.reducer = r;
+        it.notifier = n;
+        it.terminator = t;
+        it.iterator = f.invoke(
                 new AFn() {
                     @Override
                     public Object invoke() {
-                        if (0 == PRESSURE.incrementAndGet(Relieve.this)) pull();
+                        if (0 == PRESSURE.incrementAndGet(it)) pull(it);
                         return null;
                     }},
                 new AFn() {
                     @Override
                     public Object invoke() {
-                        reducer = null;
-                        if (0 == PRESSURE.incrementAndGet(Relieve.this)) pull();
+                        it.reducer = null;
+                        if (0 == PRESSURE.incrementAndGet(it)) pull(it);
                         return null;
                     }});
-        if (0 == PRESSURE.decrementAndGet(this)) pull();
+        if (0 == PRESSURE.decrementAndGet(it)) pull(it);
+        return it;
     }
 
-    @Override
-    public Object invoke() {
-        return ((IFn) iterator).invoke();
-    }
-
-    @Override
-    public Object deref() {
-        for(;;) {
-            Object x = current;
-            if (x == CURRENT) {
-                if (last == CURRENT) {
-                    terminator.invoke();
-                    return Util.sneakyThrow(error);
-                } else {
-                    x = last;
-                    last = CURRENT;
-                    ((error != null) ? notifier : terminator).invoke();
-                    return x;
-                }
-            }
-            if (CURRENT.compareAndSet(this, x, CURRENT)) return x;
-        }
-    }
 }
