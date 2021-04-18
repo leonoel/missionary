@@ -331,6 +331,8 @@ Missionary has another fork operator, the concurrent fork `?=`. It forks the exe
 (m/? (m/aggregate (fn [_ _] (println (java.util.Date.))) nil (m/transform (take 20) clock)))
 ```
 
+*Note*: The RxJava intervals don't backpressure. Depending on your use case you might want to [`relieve`](https://cljdoc.org/d/missionary/missionary/b.18/api/missionary.core#relieve) backpressure as well.
+
 ### g) Plug in
 
 The InfoQ example using an `AsyncEmitter` to turn a listener into a cold `Observable` is out of date (not present in RxJava 3). For completeness we will copy it here though. If anyone knows a RxJava3 solution feel free to submit a PR!
