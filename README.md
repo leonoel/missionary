@@ -39,6 +39,7 @@ Imperative-style concurrent programming comes along with serious pitfalls. Uncon
 ### Tutorials
 1. [Hello task](doc/tutorials/hello_task.md)
 2. [Hello flow](doc/tutorials/hello_flow.md)
+3. [Comparison to RxJava](doc/tutorials/rx_comparison.md)
 
 ### Guides
 1. [Retry with backoff](doc/guides/retry_backoff.md)
