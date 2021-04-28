@@ -487,7 +487,7 @@ Example :
 "} eduction
   ([f] f)
   ([x f] (fn [n t] (i/transform x f n t)))
-  ([x & fs] (eduction (apply comp x (butlast fs)) (last fs))))
+  ([x f & fs] (eduction (apply comp x f (butlast fs)) (last fs))))
 
 (def ^{:deprecated true
        :doc "Alias for `eduction`"}
