@@ -24,17 +24,17 @@ Observable.just("Hello", "World")
 
 This builds a stream of 2 statically defined values and the subscribe call registers a method that will consume the produced values. The end result is 2 lines on stdout.
 
-While an `Observable` is [full of methods](https://javadoc.io/doc/io.reactivex.rxjava3/rxjava/latest/io/reactivex/rxjava3/core/Observable.html), a missionary flow has only a few [primitive operators](https://cljdoc.org/d/missionary/missionary/b.17/api/missionary.core) that can fulfill the same demands (note that the core namespace includes the whole missionary API, not just flows, so the actual number of functions/macros is lower than you see in the namespace). The most basic one is the fork named `??`:
+While an `Observable` is [full of methods](https://javadoc.io/doc/io.reactivex.rxjava3/rxjava/latest/io/reactivex/rxjava3/core/Observable.html), a missionary flow has only a few [primitive operators](https://cljdoc.org/d/missionary/missionary/b.17/api/missionary.core) that can fulfill the same demands (note that the core namespace includes the whole missionary API, not just flows, so the actual number of functions/macros is lower than you see in the namespace). The most basic one is the fork named `?>`:
 
 ```clj
-(m/? (m/aggregate (constantly nil) (m/ap (println (m/?? (m/enumerate ["Hello" "World"]))))))
+(m/? (m/reduce (constantly nil) (m/ap (println (m/?> (m/seed ["Hello" "World"]))))))
 ```
 
 For those who need a refresher:
-- `enumerate` turns a collection into a flow. 
-- `??` forks the execution of the current `ap` block. So `(m/ap (println (m/?? ...)))` will be run once for each value, i.e. `(println "Hello")`, then `(println "World")`. It is literally a fork in the execution path. 
+- `seed` turns a collection into a flow. 
+- `?>` forks the execution of the current `ap` block. So `(m/ap (println (m/?> ...)))` will be run once for each value, i.e. `(println "Hello")`, then `(println "World")`. It is literally a fork in the execution path. 
 - `ap` returns yet again a flow.
-- `aggregate` reduces over the flow, returning a task. Since we don't care about the return value in this case we just return nil.
+- `reduce` reduces over the flow, returning a task. Since we don't care about the return value in this case we just return nil.
 - `?` runs the task.
 
 While there is certainly more functions/macros being called, you'll find that they are completely orthogonal and compose nicely. The end result is a simpler API.
@@ -42,13 +42,13 @@ While there is certainly more functions/macros being called, you'll find that th
 Since this pattern of reducing a flow for a side effect will be present in the few next sections we're define a helper macro to cut on the boilerplate a bit:
 
 ```clj
-(defmacro drain [flow] `(m/? (m/aggregate (constantly nil) ~flow)))
+(defmacro drain [flow] `(m/? (m/reduce (constantly nil) ~flow)))
 ```
 
 Now our solution shortens to:
 
 ```clj
-(drain (m/ap (println (m/?? (m/enumerate ["Hello" "World"])))))
+(drain (m/ap (println (m/?> (m/seed ["Hello" "World"])))))
 ```
 
 ### b) Zip it
@@ -83,9 +83,9 @@ Missionary has a `zip` function as well. No other new functions are needed:
 
 ```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
-  (drain (m/ap (println (m/?? (m/zip (partial format "%2d. %s")
-                                     (m/enumerate (range 1 100))
-                                     (m/enumerate words)))))))
+  (drain (m/ap (println (m/?> (m/zip (partial format "%2d. %s")
+                                     (m/seed (range 1 100))
+                                     (m/seed words)))))))
 ```
 
 ### c) Letters
@@ -127,18 +127,18 @@ No new methods are needed for the missionary implementation, we just fork some m
 
 ```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
-  (drain (m/ap (println (m/?? (m/zip (partial format "%2d. %s")
-                                     (m/enumerate (range 1 100))
-                                     (m/ap (m/?? (m/enumerate (m/?? (m/enumerate words)))))))))))
+  (drain (m/ap (println (m/?> (m/zip (partial format "%2d. %s")
+                                     (m/seed (range 1 100))
+                                     (m/ap (m/?> (m/seed (m/?> (m/seed words)))))))))))
 ```
 
 *Note*: the nested `ap` call is necessary to not fork the whole block. If we had written
 
 ```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
-  (drain (m/ap (println (m/?? (m/zip (partial format "%2d. %s")
-                                     (m/enumerate (range 1 100))
-                                     (m/enumerate (m/?? (m/enumerate words)))))))))
+  (drain (m/ap (println (m/?> (m/zip (partial format "%2d. %s")
+                                     (m/seed (range 1 100))
+                                     (m/seed (m/?> (m/seed words)))))))))
 ```
 
 we would get
@@ -164,9 +164,9 @@ we would get
 
 ```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
-  (drain (m/ap (println (m/?? (m/zip (partial format "%2d. %s")
-                                     (m/enumerate (range 1 100))
-                                     (m/enumerate (mapcat seq words))))))))
+  (drain (m/ap (println (m/?> (m/zip (partial format "%2d. %s")
+                                     (m/seed (range 1 100))
+                                     (m/seed (mapcat seq words))))))))
 ```
 
 in this case. However that wouldn't be the same as the RxJava code that actually flatmapped over an `Observable`.
@@ -217,14 +217,14 @@ Observable.from(words)
 
 One new method, `distinct`, is introduced here.
 
-We will introduce a new function in missionary as well, a much more general one though, `transform`. It takes a transducer and returns a new flow, transforming the values along the way. We don't need to reimplement disticnt for flows but can reuse a generic transducer:
+We will introduce a new function in missionary as well, a much more general one though, `eduction`. It takes a transducer and returns a new flow, transforming the values along the way. We don't need to reimplement distinct for flows but can reuse a generic transducer:
 
 ```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
-  (drain (m/ap (println (m/?? (m/zip (partial format "%2d. %s")
-                                     (m/enumerate (range 1 100))
-                                     (->> (m/ap (m/?? (m/enumerate (m/?? (m/enumerate words)))))
-                                          (m/transform (distinct)))))))))
+  (drain (m/ap (println (m/?> (m/zip (partial format "%2d. %s")
+                                     (m/seed (range 1 100))
+                                     (->> (m/ap (m/?> (m/seed (m/?> (m/seed words)))))
+                                          (m/eduction (distinct)))))))))
 ```
 
 
@@ -261,14 +261,14 @@ This outputs:
 
 1 new method is introduced, `sorted`.
 
-There is no sort function in missionary and there isn't a transducer available either since sorting requires consuming the whole collecition. No new functions are needed though, we just need to `aggregate` the flow and `enumerate`it:
+There is no sort function in missionary and there isn't a transducer available either since sorting requires consuming the whole collecition. No new functions are needed though, we just need to `reduce` the flow and `seed`it:
 
 ```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
-  (drain (m/ap (println (m/?? (m/zip (partial format "%2d. %s")
-                                     (m/enumerate (range 1 100))
-                                     (->> (m/ap (m/?? (m/enumerate (m/?? (m/enumerate words)))))
-                                          (m/aggregate conj (sorted-set)) m/? m/enumerate)))))))
+  (drain (m/ap (println (m/?> (m/zip (partial format "%2d. %s")
+                                     (m/seed (range 1 100))
+                                     (->> (m/ap (m/?> (m/seed (m/?> (m/seed words)))))
+                                          (m/reduce conj (sorted-set)) m/? m/seed)))))))
 ```
 
 ### f) Merge
@@ -322,13 +322,13 @@ Missionary has another fork operator, the concurrent fork `?=`. It forks the exe
 (let [start (System/currentTimeMillis)]
   (defn is-slow-tick-time [] (-> (System/currentTimeMillis) (- start) (mod 30000) (>= 15000))))
 (defn interval [ms]
-  (m/ap (m/? (m/sleep (- (m/?? (m/enumerate (next (iterate (partial + ms) (System/currentTimeMillis)))))
+  (m/ap (m/? (m/sleep (- (m/?> (m/seed (next (iterate (partial + ms) (System/currentTimeMillis)))))
                          (System/currentTimeMillis)) :emit))))
 (def fast (interval 1000))
 (def slow (interval 3000))
-(def clock (m/ap (m/?? (m/?= (m/enumerate [(m/transform (filter (fn [_] (is-slow-tick-time))) slow)
-                                           (m/transform (filter (fn [_] (not (is-slow-tick-time)))) fast)])))))
-(m/? (m/aggregate (fn [_ _] (println (java.util.Date.))) nil (m/transform (take 20) clock)))
+(def clock (m/ap (m/?> (m/?= (m/seed [(m/eduction (filter (fn [_] (is-slow-tick-time))) slow)
+                                      (m/eduction (filter (fn [_] (not (is-slow-tick-time)))) fast)])))))
+(m/? (m/reduce (fn [_ _] (println (java.util.Date.))) nil (m/eduction (take 20) clock)))
 ```
 
 *Note*: The RxJava intervals don't backpressure. Depending on your use case you might want to [`relieve`](https://cljdoc.org/d/missionary/missionary/b.18/api/missionary.core#relieve) backpressure as well.
@@ -372,50 +372,47 @@ A flow doesn't provide callbacks that we could use to emit values or signal erro
                       (error [e] (mbx [:err e]))))
     (m/ap (loop [[t v] (m/? mbx)]
             (case t
-              :val (if (m/?? (m/enumerate [true false])) v (recur (m/? mbx)))
+              :val (if (m/?> (m/seed [true false])) v (recur (m/? mbx)))
               :err (throw e)
-              :done (m/?? m/none))))))
+              :done (m/?> m/none))))))
 ```
 
 ## 2. Diverging
 
-An interesting style is to think more in terms of functional `transform`ations over a given flow (a.k.a. transducers).
+An interesting style is to think more in terms of functional `eduction`s over a given flow (a.k.a. transducers).
 
 In `1b` we don't strictly need to zip two flows, we're just interested in indexing the entries. This can be more easily achieved with the `map-indexed` transducer:
 
 ```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
-  (drain (m/ap (println (m/?? (->> (m/enumerate words)
-                                   (m/transform (map-indexed #(format "%2d. %s" (inc %1) %2)))))))))
+  (drain (m/ap (println (m/?> (->> (m/seed words)
+                                   (m/eduction (map-indexed #(format "%2d. %s" (inc %1) %2)))))))))
 ```
 
 In `1c` we don't need to `flatMap` or double-fork the flow, we can rely on transducers again:
 
 ```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
-  (drain (m/ap (println (m/?? (->> (m/enumerate words)
-                                   (m/transform (comp (mapcat seq)
-                                                      (map-indexed #(format "%2d. %s" (inc %1) %2))))))))))
+  (drain (m/ap (println (m/?> (->> (m/seed words)
+                                   (m/eduction (mapcat seq) (map-indexed #(format "%2d. %s" (inc %1) %2)))))))))
 ```
 
 In `1d` we already used a transducer, so now we just need to plug it in:
 
 ```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
-  (drain (m/ap (println (m/?? (->> (m/enumerate words)
-                                   (m/transform (comp (mapcat seq)
-                                                      (distinct)
-                                                      (map-indexed #(format "%2d. %s" (inc %1) %2))))))))))
+  (drain (m/ap (println (m/?> (->> (m/seed words)
+                                   (m/eduction (mapcat seq) (distinct) (map-indexed #(format "%2d. %s" (inc %1) %2)))))))))
 ```
 
 In `1e` we have to break out of our pattern a bit since we need to sort the letters:
 
 ```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
-  (drain (m/ap (println (m/?? (->> (m/enumerate words)
-                                   (m/transform (comp (mapcat seq) (distinct)))
-                                   (m/aggregate conj (sorted-set)) m/? m/enumerate
-                                   (m/transform (map-indexed #(format "%2d. %s" (inc %1) %2)))))))))
+  (drain (m/ap (println (m/?> (->> (m/seed words)
+                                   (m/eduction (mapcat seq) (distinct))
+                                   (m/reduce conj (sorted-set)) m/? m/seed
+                                   (m/eduction (map-indexed #(format "%2d. %s" (inc %1) %2)))))))))
 ```
 
 The "have to" is a bit strong, noone can stop us from implementing our own sorting transducer!
@@ -439,9 +436,9 @@ Now we can return to a single transducer solution:
 
 ```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
-  (drain (m/ap (println (m/?? (->> (m/enumerate words)
-                                   (m/transform (comp (mapcat seq) (distinct) (tsort)
-                                                      (map-indexed #(format "%2d. %s" (inc %1) %2))))))))))
+  (drain (m/ap (println (m/?> (->> (m/seed words)
+                                   (m/eduction (mapcat seq) (distinct) (tsort)
+                                               (map-indexed #(format "%2d. %s" (inc %1) %2)))))))))
 ```
 
 As you can see transducers make the solutions simpler, shorter and easier to reason about.
@@ -507,13 +504,13 @@ Here the goal is to run the `map` computation in parallel.
 If we don't care about the order of the results we can fork the flow concurrently:
 
 ```clj
-(m/? (m/aggregate conj (m/ap (let [v (m/?= (m/enumerate (range 1 11)))] (m/? (m/via m/cpu (* v v)))))))
+(m/? (m/reduce conj (m/ap (let [v (m/?= (m/seed (range 1 11)))] (m/? (m/via m/cpu (* v v)))))))
 ```
 
 Otherwise we need to turn each value into a task and `join` them:
 
 ```clj
-(apply m/join vector (m/? (m/aggregate conj (m/transform (map #(m/via m/cpu (* % %))) (m/enumerate (range 1 11))))))
+(apply m/join vector (m/? (m/reduce conj (m/eduction (map #(m/via m/cpu (* % %))) (m/seed (range 1 11))))))
 ```
 
 
@@ -533,8 +530,8 @@ Assuming `getDemandAsync` returns a single value we'd model that as a task:
 
 ```clj
 (def inventory (get-inventory warehouse))
-(->> (m/ap (let [item (m/?? inventory), demand (m/? (get-demand erp item))] {:item item :demand demand}))
-     (m/aggregate (fn [_ {:keys [item demand]}] (println "Item" (:name item) "has demand" demand))))
+(->> (m/ap (let [item (m/?> inventory), demand (m/? (get-demand erp item))] {:item item :demand demand}))
+     (m/reduce (fn [_ {:keys [item demand]}] (println "Item" (:name item) "has demand" demand))))
 ```
 
 
@@ -555,7 +552,7 @@ If these are tasks:
 If these are flows:
 
 ```clj
-(m/aggregate conj (m/ap (->> (api-call service) m/?? (another-api-call service) m/?? (final-call service) m/??)))
+(m/reduce conj (m/ap (->> (api-call service) m/?> (another-api-call service) m/?> (final-call service) m/?>)))
 ```
 
 
@@ -589,7 +586,7 @@ sourceObservable
 Here `sourceObservable` needs to complete and only then another source can be run.
 
 ```clj
-(m/? (m/sp (m/? (m/aggregate (constantly nil) source-flow)) (str (m/? some-task))))
+(m/? (m/sp (m/? (m/reduce (constantly nil) source-flow)) (str (m/? some-task))))
 ```
 
 
@@ -606,6 +603,6 @@ Observable.range(1, 10)
 
 ```clj
 (def count (atom 0))
-(m/? (m/aggregate (fn [_ _] (swap! count inc)) nil (m/enumerate (range 1 11))))
+(m/? (m/reduce (fn [_ _] (swap! count inc)) nil (m/seed (range 1 11))))
 (println @count)
 ```

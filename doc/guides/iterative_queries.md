@@ -48,7 +48,7 @@ The first strategy coming to mind is to recursively build successive flows for e
    (m/ap
      (let [{:keys [page next]} (m/? (api id))             ;; fetch current page and next id
            rest (if (some? next) (pages next) m/none)]    ;; recursively build the rest of the flow                              
-       (m/?? (m/integrate {} page rest))))))              ;; prepend the page and emit the result
+       (m/?> (m/reductions {} page rest))))))              ;; prepend the page and emit the result
 ```
 
 This implementation seems to work. However, it will crash in the long run because it builds a hierarchy of processes that grows indefinitely for each successive step. The memory footprint will gradually increase, and the stack will ultimately blow up.
@@ -69,14 +69,14 @@ As usual, we can keep stack frames under control using `loop` to make the iterat
        (let [x (->> [:page :next]
                     (map (m/? (api id)))         ;; fetch current page and next id
                     (remove nil?)                ;; detect end of stream
-                    (m/enumerate)                ;; enumerate branches
-                    (m/??))]                     ;; fork the process
+                    (m/seed)                     ;; seed branches
+                    (m/?>))]                     ;; fork the process
          (if (uuid? x) (recur x) x))))))         ;; depending on the branch, emit the value or request more
 ```
 
 ```clojure
 (m/? (->> (pages)
-          (m/transform (map count))
-          (m/aggregate +)))
+          (m/eduction (map count))
+          (m/reduce +)))
 #_=> 10000
 ```
