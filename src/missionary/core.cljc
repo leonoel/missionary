@@ -429,6 +429,22 @@ Returns a discrete flow producing values from given `collection`. Cancelling bef
   enumerate seed)
 
 
+(defmacro
+  ^{:arglists '([& forms])
+    :doc "In an `ap` block, evaluates each form sequentially and returns successive results."}
+  amb> [& forms]
+  `(case (?> (seed (range ~(count forms))))
+     ~@(interleave (range) forms)))
+
+
+(defmacro
+  ^{:arglists '([& forms])
+    :doc "In an `ap` block, evaluates each form concurrently and returns results in order of availability."}
+  amb= [& forms]
+  `(case (?= (seed (range ~(count forms))))
+     ~@(interleave (range) forms)))
+
+
 (defn
   ^{:static true
     :arglists '([rf flow] [rf init flow])
