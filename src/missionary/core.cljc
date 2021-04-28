@@ -1,4 +1,5 @@
 (ns missionary.core
+  (:refer-clojure :exclude [reduce reductions eduction])
   (:require [missionary.impl :as i]
             [cloroutine.core :refer [cr] :include-macros true])
   #?(:cljs (:require-macros [missionary.core :refer [sp ap]])))
@@ -178,10 +179,14 @@ In an ambiguous process block, runs given `flow` non-preemptively (aka concat), 
 
 Example :
 ```clojure
-(? (aggregate conj (ap (inc (?? (enumerate [1 2 3]))))))
+(? (reduce conj (ap (inc (?> (seed [1 2 3]))))))
 #_=> [2 3 4]
 ```
-"} ?? [f] (i/fiber-flow-concat f))
+"} ?> [f] (i/fiber-flow-concat f))
+
+(defmacro ^{:deprecated true
+            :doc "Alias for `?>`"}
+  ?? [f] `(?> ~f))
 
 
 (defn
@@ -192,17 +197,21 @@ In an ambiguous process block, runs given `flow` preemptively (aka switch), fork
 Example :
 ```clojure
 (defn debounce [delay flow]
-  (ap (let [x (?! flow)]
+  (ap (let [x (?< flow)]
     (try (? (sleep delay x))
-         (catch Exception _ (?? none))))))
+         (catch Exception _ (?> none))))))
 
-(? (->> (ap (let [n (?? (enumerate [24 79 67 34 18 9 99 37]))]
+(? (->> (ap (let [n (?> (seed [24 79 67 34 18 9 99 37]))]
               (? (sleep n n))))
         (debounce 50)
-        (aggregate conj)))
+        (reduce conj)))
 ```
 #_=> [24 79 9 37]
-"} ?! [f] (i/fiber-flow-switch f))
+"} ?< [f] (i/fiber-flow-switch f))
+
+(defmacro ^{:deprecated true
+            :doc "Alias for `?<`"}
+  ?! [f] `(?< ~f))
 
 
 (defn
@@ -213,9 +222,9 @@ In an ambiguous process block, runs given `flow` and concurrently forks current 
 Example :
 ```clojure
 (? (->> (m/ap
-          (let [x (m/?= (m/enumerate [19 57 28 6 87]))]
+          (let [x (m/?= (m/seed [19 57 28 6 87]))]
             (m/? (m/sleep x x))))
-        (aggregate conj)))
+        (reduce conj)))
 
 #_=> [6 19 28 57 87]
 ```
@@ -235,13 +244,13 @@ Cancelling an `sp` task triggers cancellation of the task it's currently running
 (defmacro
   ^{:arglists '([& body])
     :doc "
-Returns a flow evaluating `body` (in an implicit `do`) and producing values of each subsequent fork. Body evaluation can be parked with `?` and forked with `??`, `?!` and `?=`.
+Returns a flow evaluating `body` (in an implicit `do`) and producing values of each subsequent fork. Body evaluation can be parked with `?` and forked with `?>`, `?<` and `?=`.
 
 Cancelling an `ap` flow triggers cancellation of the task/flow it's currently running, along with all tasks/flows subsequently run.
 "} ap [& body]
   `(partial (cr {?  i/fiber-unpark
-                 ?? i/fiber-unpark
-                 ?! i/fiber-unpark
+                 ?> i/fiber-unpark
+                 ?< i/fiber-unpark
                  ?= i/fiber-unpark}
               ~@body) i/ap))
 
@@ -401,7 +410,7 @@ The empty flow. Doesn't produce any value and terminates immediately. Cancelling
 
 Example :
 ```clojure
-(? (aggregate conj none))
+(? (reduce conj none))
 #_=> []
 ```
 "} none (fn [_ t] (t) i/nop))
@@ -412,8 +421,12 @@ Example :
     :arglists '([collection])
     :doc "
 Returns a discrete flow producing values from given `collection`. Cancelling before having reached the end makes the flow fail immediately.
-"} enumerate [coll]
+"} seed [coll]
   (fn [n t] (i/enumerate coll n t)))
+
+(def ^{:deprecated true
+       :doc "Alias for `seed`"}
+  enumerate seed)
 
 
 (defn
@@ -426,12 +439,16 @@ Cancelling propagates to upstream flow. Early termination by `rf` (via `reduced`
 
 Example :
 ```clojure
-(? (aggregate + (enumerate (range 10))))
+(? (reduce + (seed (range 10))))
 #_=> 45
 ```
-"} aggregate
+"} reduce
   ([rf flow] (fn [s f] (i/aggregate rf (rf) flow s f)))
   ([rf i flow] (fn [s f] (i/aggregate rf i flow s f))))
+
+(def ^{:deprecated true
+       :doc "Alias for `reduce`"}
+  aggregate reduce)
 
 
 (defn
@@ -462,12 +479,19 @@ Cancelling propagates to upstream flow. Early termination by `xf` (via `reduced`
 
 Example :
 ```clojure
-(? (->> (enumerate (range 10))
-        (transform (comp (filter odd?) (mapcat range) (partition-all 4)))
-        (aggregate conj)))
+(? (->> (seed (range 10))
+        (eduction (comp (filter odd?) (mapcat range) (partition-all 4)))
+        (reduce conj)))
 #_=> [[0 0 1 2] [0 1 2 3] [4 0 1 2] [3 4 5 6] [0 1 2 3] [4 5 6 7] [8]]
 ```
-"} transform [x f] (fn [n t] (i/transform x f n t)))
+"} eduction
+  ([f] f)
+  ([x f] (fn [n t] (i/transform x f n t)))
+  ([x & fs] (eduction (apply comp x (butlast fs)) (last fs))))
+
+(def ^{:deprecated true
+       :doc "Alias for `eduction`"}
+  transform eduction)
 
 
 (defn
@@ -481,14 +505,18 @@ Cancelling propagates to upstream flow. Early termination by `rf` (via `reduced`
 Example :
 ```clojure
 (? (->> [1 2 3 4 5]
-        (enumerate)
-        (integrate +)
-        (aggregate conj)))
+        (seed)
+        (reductions +)
+        (reduce conj)))
 #_=> [0 1 3 6 10 15]
 ```
-"} integrate
+"} reductions
   ([rf f] (fn [n t] (i/integrate rf (rf) f n t)))
   ([rf i f] (fn [n t] (i/integrate rf i f n t))))
+
+(def ^{:deprecated true
+       :doc "Alias for `reductions`"}
+  integrate reductions)
 
 
 (defn
@@ -519,13 +547,13 @@ Example :
 ```clojure
 ;; Delays each `input` value by `delay` milliseconds
 (defn delay-each [delay input]
-  (ap (? (sleep delay (?? input)))))
+  (ap (? (sleep delay (?> input)))))
 
-(? (->> (ap (let [n (?? (enumerate [24 79 67 34 18 9 99 37]))]
+(? (->> (ap (let [n (?> (seed [24 79 67 34 18 9 99 37]))]
               (? (sleep n n))))
         (relieve +)
         (delay-each 80)
-        (aggregate conj)))
+        (reduce conj)))
 #_=> [24 79 67 61 99 37]
 ```
 "} relieve [rf f] (fn [n t] (i/relieve rf f n t)))
@@ -549,17 +577,17 @@ Returns a continuous flow running given continuous `flows` in parallel and combi
 
 ```clojure
 (defn sleep-emit [delays]
-  (ap (let [n (?? (enumerate delays))]
+  (ap (let [n (?> (seed delays))]
         (? (sleep n n)))))
 
 (defn delay-each [delay input]
-  (ap (? (sleep delay (?? input)))))
+  (ap (? (sleep delay (?> input)))))
 
 (? (->> (latest vector
                 (sleep-emit [24 79 67 34])
                 (sleep-emit [86 12 37 93]))
         (delay-each 50)
-        (aggregate conj)))
+        (reduce conj)))
 
 #_=> [[24 86] [24 12] [79 37] [67 37] [34 93]]
 ```
@@ -579,17 +607,17 @@ Cancellation propagates to both flows. When `sampler` terminates, `sampled` is c
 Example :
 ```clojure
 (defn sleep-emit [delays]
-  (ap (let [n (?? (enumerate delays))]
+  (ap (let [n (?> (seed delays))]
         (? (sleep n n)))))
 
 (defn delay-each [delay input]
-  (ap (? (sleep delay (?? input)))))
+  (ap (? (sleep delay (?> input)))))
 
 (? (->> (sample vector
                 (sleep-emit [24 79 67 34])
                 (sleep-emit [86 12 37 93]))
         (delay-each 50)
-        (aggregate conj)))
+        (reduce conj)))
 
 #_=> [[24 86] [24 12] [79 37] [67 93]]
 ```
@@ -606,15 +634,15 @@ Cancelling propagates to every upstream flow. If any upstream flow fails, the fl
 
 Example :
 ```clojure
-(? (->> (gather (enumerate [1 2 3])
-                (enumerate [:a :b :c]))
-        (aggregate conj)))
+(? (->> (gather (seed [1 2 3])
+                (seed [:a :b :c]))
+        (reduce conj)))
 #_=> [1 :a 2 :b 3 :c]
 ```
 "} gather
   ([] none)
   ([f] f)
-  ([f & fs] (ap (?? (?= (enumerate (cons f fs)))))))
+  ([f & fs] (ap (?> (?= (seed (cons f fs)))))))
 
 
 (defn
@@ -628,9 +656,9 @@ Cancelling propagates to every upstream flow. If any upstream flow fails or if `
 Example :
 ```clojure
 (m/? (->> (m/zip vector
-                 (m/enumerate [1 2 3])
-                 (m/enumerate [:a :b :c]))
-          (m/aggregate conj)))
+                 (m/seed [1 2 3])
+                 (m/seed [:a :b :c]))
+          (m/reduce conj)))
 #_=> [[1 :a] [2 :b] [3 :c]]
 ```
 "} zip [c f & fs] (fn [n t] (i/zip c (cons f fs) n t)))
