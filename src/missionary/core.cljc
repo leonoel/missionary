@@ -641,7 +641,8 @@ Example :
 
 
 (defn
-  ^{:static true
+  ^{:deprecated true
+    :static true
     :arglists '([& flows])
     :doc "
 Returns a discrete flow running given discrete `flows` in parallel and emitting upstream values unchanged, as soon as they're available, until every upstream flow is terminated.
