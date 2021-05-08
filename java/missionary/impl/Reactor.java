@@ -156,14 +156,17 @@ public interface Reactor {
     }
 
     static void emit(Publisher pub) {
+        Context ctx = pub.context;
+        Publisher prv = ctx.emitter;
         Subscription head = pub.head;
-        pub.head = null;
-        pub.tail = null;
         int p = 1;
         for(Subscription sub = head; sub != null; sub = sub.next) {
             sub.prev = sub;
             p++;
         }
+        pub.head = null;
+        pub.tail = null;
+        ctx.emitter = pub;
         if (pub.pending == 0) {
             pub.pending = p;
             if (CURRENT == transfer(pub)) {
@@ -183,9 +186,10 @@ public interface Reactor {
             sub.next = null;
             signal(sub.subscriber, sub.notifier);
         }
+        ctx.emitter = prv;
     }
 
-    static Publisher finish(Context ctx) {
+    static Publisher done(Context ctx) {
         Publisher pub;
         while ((pub = ctx.active) != null) {
             ctx.active = pub.active;
@@ -199,11 +203,12 @@ public interface Reactor {
 
     static void leave(Context ctx, Context prv) {
         if (ctx != prv) {
-            while ((ctx.emitter = finish(ctx)) != null) {
+            Publisher pub;
+            while ((pub = done(ctx)) != null) {
                 do {
-                    ctx.today = remove(ctx.emitter);
-                    emit(ctx.emitter);
-                } while ((ctx.emitter = ctx.today) != null);
+                    ctx.today = remove(pub);
+                    emit(pub);
+                } while ((pub = ctx.today) != null);
             }
             if (ctx.running == 0) {
                 ctx.cancelled = null;

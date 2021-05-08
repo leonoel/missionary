@@ -1237,7 +1237,7 @@ stored in field `active`. When an item is inactive, `active` is assigned to itse
           (if (== xi yi)
             (recur (inc i))
             (< xi yi)))
-        (< xl yl)))))
+        (> xl yl)))))
 
 (defn reactor-link [x y]
   (if (reactor-lt (.-ranks x) (.-ranks y))
@@ -1341,49 +1341,55 @@ stored in field `active`. When an item is inactive, `active` is assigned to itse
     (when (nil? (.-child pub))
       (reactor-schedule pub))))
 
+(defn reactor-emit [pub]
+  (let [ctx (.-context pub)
+        prv (.-emitter ctx)
+        h (.-head pub)
+        p (loop [s h p 1] (if (nil? s) p (recur (.-next (set! (.-prev s) s)) (inc p))))]
+    (set! (.-head pub) nil)
+    (set! (.-tail pub) nil)
+    (set! (.-emitter ctx) pub)
+    (if (zero? (.-pending pub))
+      (do (set! (.-pending pub) p)
+          (if (identical? (reactor-transfer pub) nop)
+            (do (set! (.-child pub) pub)
+                (set! (.-pending pub) -1)
+                (set! (.-active pub) nil))
+            (do (set! (.-active pub) (.-active ctx))
+                (set! (.-active ctx) pub))))
+      (do (set! (.-value pub) nop)
+          (set! (.-active pub) nil)))
+    (loop [s h]
+      (when-not (nil? s)
+        (let [n (.-next s)]
+          (set! (.-next s) nil)
+          (reactor-signal (.-subscriber s) (.-notifier s))
+          (recur n))))
+    (set! (.-emitter ctx) prv)))
+
+(defn reactor-done [ctx]
+  (loop []
+    (when-some [p (.-active ctx)]
+      (set! (.-active ctx) (.-active p))
+      (set! (.-active p) p)
+      (reactor-ack p)
+      (recur)))
+  (let [p (.-tomorrow ctx)]
+    (set! (.-tomorrow ctx) nil) p))
+
 (defn reactor-enter [ctx]
   (doto reactor-current (-> (identical? ctx) (when-not (set! reactor-current ctx)))))
 
 (defn reactor-leave [ctx prv]
   (when-not (identical? ctx prv)
-    (while (some? (set! (.-emitter ctx) (.-tomorrow ctx)))
-      (set! (.-tomorrow ctx) nil)
-      (loop [active nil]
-        (let [pub (.-emitter ctx)
-              head (.-head pub)]
-          (set! (.-head pub) nil)
-          (set! (.-tail pub) nil)
-          (set! (.-today ctx) (reactor-remove pub))
-          (let [active
-                (loop [s head p 1]
-                  (if (nil? s)
-                    (if (zero? (.-pending pub))
-                      (do (set! (.-pending pub) p)
-                          (if (identical? (reactor-transfer pub) nop)
-                            (do (set! (.-child   pub) pub)
-                                (set! (.-pending pub) -1)
-                                (set! (.-active  pub) nil)
-                                active)
-                            (do (set! (.-active  pub) active)
-                                pub)))
-                      (do (set! (.-value   pub) nop)
-                          (set! (.-active  pub) nil)
-                          active))
-                    (recur (.-next (set! (.-prev s) s)) (inc p))))]
-            (loop [s head]
-              (when-not (nil? s)
-                (let [n (.-next s)]
-                  (set! (.-next s) nil)
-                  (reactor-signal (.-subscriber s) (.-notifier s))
-                  (recur n))))
-            (if (nil? (set! (.-emitter ctx) (.-today ctx)))
-              (loop [p active]
-                (when-not (nil? p)
-                  (let [n (.-active p)]
-                    (set! (.-active p) p)
-                    (reactor-ack p)
-                    (recur n))))
-              (recur active))))))
+    (loop []
+      (when-some [p (reactor-done ctx)]
+        (loop [p p]
+          (set! (.-today ctx) (reactor-remove p))
+          (reactor-emit p)
+          (when-some [p (.-today ctx)]
+            (recur p)))
+        (recur)))
     (when (zero? (.-running ctx))
       (set! (.-cancelled ctx) nil)
       ((.-completed ctx) (.-result ctx)))
@@ -1445,7 +1451,7 @@ stored in field `active`. When an item is inactive, `active` is assigned to itse
         (failer n t reactor-err-sub-orphan)))))
 
 (deftype Context
-  [completed cancelled result ^number children ^number running current emitter today tomorrow head tail]
+  [completed cancelled result ^number children ^number running active current emitter today tomorrow head tail]
   IFn
   (-invoke [this]
     (when-not (nil? cancelled)
@@ -1454,9 +1460,12 @@ stored in field `active`. When an item is inactive, `active` is assigned to itse
         (reactor-leave this cur)))))
 
 (defn context [b s f]
-  (let [ctx (->Context s f nil 0 0 nil nil nil nil nil nil)
+  (let [ctx (->Context nil f nil 0 0 nil nil nil nil nil nil nil)
         cur (reactor-enter ctx)]
-    (try (set! (.-result ctx) (b))
+    (try (let [r (b)]
+           (when-not (nil? (.-cancelled ctx))
+             (set! (.-result ctx) r)
+             (set! (.-completed ctx) s)))
          (catch :default e
            (when-some [c (.-cancelled ctx)]
              (set! (.-result ctx) e)
@@ -1477,7 +1486,7 @@ stored in field `active`. When an item is inactive, `active` is assigned to itse
                           a (make-array (inc n))]
                       (dotimes [i n] (aset a i (aget (.-ranks par) i)))
                       (doto a (aset n (doto (.-children par) (->> (inc) (set! (.-children par))))))))
-              nil nil 0 (if d 0 -1) prv nil nil nil nil nil nil)]
+              nil nil 0 1 prv nil nil nil nil nil nil)]
     (set! (.-active pub) pub)
     (set! (.-child pub) pub)
     (set! (.-tail ctx) pub)
@@ -1501,4 +1510,8 @@ stored in field `active`. When an item is inactive, `active` is assigned to itse
                   (while (some? (.-head pub))
                     (reactor-cancel-sub (.-head pub))))
                 (reactor-leave ctx cur))))
+    (set! (.-pending pub) (if d 0 -1))
+    (when (nil? (.-child pub))
+      (set! (.-child pub) pub)
+      (reactor-emit pub))
     (set! (.-current ctx) par) pub))
