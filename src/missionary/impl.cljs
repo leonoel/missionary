@@ -1446,7 +1446,8 @@ stored in field `active`. When an item is inactive, `active` is assigned to itse
             (set! (.-prev sub) sub)
             (if (identical? active this)
               (if (identical? prev this) (t) (reactor-attach sub))
-              (do (when (pos? pending) (set! (.-pending this) (inc pending))) (n))))
+              (do (when (pos? pending) (set! (.-pending this) (inc pending)))
+                  (n))) sub)
           (failer n t reactor-err-sub-cyclic))
         (failer n t reactor-err-sub-orphan)))))
 
