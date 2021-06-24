@@ -241,6 +241,10 @@
    :timeout 500}
   (delay-each 50 (m/latest vector (sleep-emit [24 79 67 34]) (sleep-emit [86 12 37 93]))))
 
+(defflow latest-seed
+  {:results (map =? (range 10))}
+  (m/latest identity (m/seed (range 10))))
+
 (defflow sample-none
   {:results []}
   (m/sample {} (m/ap) m/none))

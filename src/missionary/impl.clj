@@ -5,7 +5,7 @@
     (missionary.impl
       Enumerate Aggregate RaceJoin Sleep Never Ambiguous Fiber Thunk Dataflow Mailbox Rendezvous Semaphore Watch
       Observe Transform Integrate Pub Sub Relieve Buffer Latest Sample Zip Sequential Ambiguous$Process Reactor
-      Reactor$Context Reactor$Publisher Relieve$It)))
+      Reactor$Context Reactor$Publisher Relieve$It Latest$It)))
 
 (defn nop [])
 
@@ -83,8 +83,8 @@
 (defmethod print-method Buffer [o w] (print-object o w))
 (defn buffer [c f n t] (Buffer. c f n t))
 
-(defmethod print-method Latest [o w] (print-object o w))
-(defn latest [f fs n t] (Latest. f fs n t))
+(defmethod print-method Latest$It [o w] (print-object o w))
+(defn latest [f fs n t] (Latest/spawn f fs n t))
 
 (defmethod print-method Sample [o w] (print-object o w))
 (defn sample [f sd sr n t] (Sample. f sd sr n t))

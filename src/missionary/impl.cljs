@@ -950,9 +950,10 @@
 
 (declare latest-cancel)
 (declare latest-deref)
+(declare latest-idle)
 (deftype Latest
   [combinator notifier terminator
-   iterators buffer prevs
+   iterators args prevs
    ^number state
    ^number alive]
   IFn
@@ -965,33 +966,57 @@
     (dotimes [i (alength its)]
       ((aget its i)))))
 
+(defn latest-flush [^Latest l p]
+  (loop [i p]
+    (let [p (aget (.-prevs l) i)]
+      (try @(aget (.-iterators l) i) (catch :default _))
+      (if (== p (alength (.-prevs l)))
+        (latest-idle l) (recur p)))))
+
+(defn latest-ready [^Latest l]
+  (if-some [n (.-notifier l)]
+    (n) (let [s (.-state l)]
+          (set! (.-state l) (alength (.-prevs l)))
+          (latest-flush l s))))
+
+(defn latest-idle [^Latest l]
+  (if (== (.-state l) (alength (.-prevs l)))
+    (set! (.-state l) -1)
+    (if-some [t (.-terminator l)]
+      (t) (latest-ready l))))
+
 (defn latest-deref [^Latest l]
-  (let [c (alength (.-iterators l))]
-    (try (loop [i (let [i (.-state l)] (set! (.-state l) -1) i)]
-           (let [p (aget (.-prevs l) i)]
-             (aset (.-buffer l) i @(aget (.-iterators l) i))
-             (when-not (== p c) (recur p))))
-         (.apply (.-combinator l) nil (.-buffer l))
-         (catch :default e
-           (set! (.-notifier l) #(try (latest-deref l) (catch :default _)))
-           (latest-cancel l) (throw e))
-         (finally
-           (if (== -1 (.-state l))
-             (set! (.-state l) c)
-             (if (== c (.-state l))
-               ((.-terminator l))
-               ((.-notifier l))))))))
+  (let [c (alength (.-prevs l))]
+    (loop [i (let [i (.-state l)] (set! (.-state l) c) i)]
+      (let [p (aget (.-prevs l) i)]
+        (try
+          (aset (.-args l) i @(aget (.-iterators l) i))
+          (catch :default e
+            (set! (.-notifier l) nil)
+            (latest-cancel l)
+            (if (== p c)
+              (latest-idle l)
+              (latest-flush l p))
+            (throw e)))
+        (if (== p c)
+          (try (let [x (.apply (.-combinator l) nil (.-args l))]
+                 (latest-idle l) x)
+               (catch :default e
+                 (set! (.-notifier e) nil)
+                 (latest-cancel l)
+                 (latest-idle l)
+                 (throw e)))
+          (recur p))))))
 
 (defn latest [f fs n t]
   (let [c (count fs)
         i (iter fs)
-        l (->Latest f n t (object-array c) (object-array c) (object-array c) c c)
+        l (->Latest f n nil (object-array c) (object-array c) (object-array c) c c)
         t #(let [d (dec (.-alive l))]
              (set! (.-alive l) d)
              (when (zero? d)
-               (if (== -1 (.-state l))
-                 (set! (.-state l) c)
-                 ((.-terminator l)))))]
+               (set! (.-terminator l) t)
+               (latest-idle l)))]
     (loop [index 0]
       (when (.hasNext i)
         (aset (.-prevs l) index -1)
@@ -1003,9 +1028,10 @@
                      (set! (.-state l) s)
                      (when (zero? s) ((.-notifier l))))
                    (let [s (.-state l)]
-                     (aset (.-prevs l) index s)
                      (set! (.-state l) index)
-                     (when (== c s) ((.-notifier l))))) t))
+                     (if (== s -1)
+                       (do (aset (.-prevs l) index c) (latest-ready l))
+                       (aset (.-prevs l) index s)))) t))
         (recur (inc index)))) l))
 
 
