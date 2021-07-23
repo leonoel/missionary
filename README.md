@@ -130,6 +130,7 @@ Design notes
 # Projects using Missionary
 * hyperfiddle/hfql, a streaming datomic pull evaluator
 * hyperfiddle/photon, a reactive dialect of Clojure for distributed dataflow
+* hyperfiddle/zero, full-stack web apps with incremental view maintenance all the way from database views to DOM views, as one streaming computation
 
 # FAQ
 
