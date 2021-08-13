@@ -11,26 +11,26 @@ Missionary's goals are:
 ```clojure
 (require '[missionary.core :as m])
 
-; a task is a value of an async recipe for an effect
-(def hello-task (m/sp (println "Hello") 42))
-(hello-task #(print ::success %) #(print ::failure %))
-; hello
-; => 42
-
-(def nap-task (m/sleep 1000)) ; effect value for async sleep
+; a task is an effect as a value, aka "IO action" or "recipe"
+(def hello-task (m/sp (println "Hello") (m/? (m/sleep 1000)) 42))
+(def cancel! (hello-task #(println ::success %) #(println ::failure %)))
+; Hello
+; ::success 42
 
 ; async sequential composition of effects
 ; no callbacks, pure functional, composed pipeline is a value
 ; transparent propagation of termination and failure to entrypoint
 (def async-hello-task
   (m/sp
-    (m/? hello-task)
-    (m/? nap-task)
-    (println "World")
-    (m/? nap-task)
-    (println "!")))
+    (let [x (m/? hello-task)]   ; run task value and await result
+      (m/? hello-task)          ; reuse same task value
+      (println "World!")
+      x)))
 
-(def cancel (async-hello-task #(print ::success %) #(print ::failure %)))
+(def cancel! (async-hello-task #(println ::success %) #(println ::failure %)))
+; Hello
+(cancel!)
+; ::failure #error {:cause "Sleep cancelled."}
 ```
 
 # Features
@@ -140,49 +140,71 @@ Discussions
 # Quick start
 
 ```clojure
-(ns example
+(ns readme2
   (:require [missionary.core :as m]
-            [hyperfiddle.rcf :refer [tests ! %]]))
+            [hyperfiddle.rcf :as rcf :refer [tests ! %]]))
 
-(tests 
-  "Task"
-  (def task (m/sleep 1000))
-  (def cancel (task (fn success [v] (prn :success v))
-                    (fn failure [e] (prn :failure e))))
-  % := _
+(tests
+  "async tests demo"
+  ; rcf/! is like println except taps the value to a queue for checking
+  (rcf/! :a)
+  (! :b)
+  % := :a
+  % := :b
+  % := ::rcf/timeout)
 
-  "monad-like sequential composition with dynamic control flow"
+(tests
+  "Task is a single-value producer (one-off async effect)"
+  (def task (m/sp (println "Hello") (m/? (m/sleep 50)) (! 42)))
+  (def cancel! (task (fn success [v] (println :success v))
+                     (fn failure [e] (println :failure e))))
+  % := 42)
+
+(tests
+  "Tasks are sequential composition (monad-like, async/await)"
+  (def nap (m/sleep 10 42))
   (def task
     (m/sp
-      (let [a (m/? (m/sleep 1000 42))]
-        (m/? (if (odd? a)
-               (m/sleep 1000 a)
-               (m/sleep 1000 (inc a)))))))
+      (m/? (if (odd? (m/? nap))     ; runtime control flow
+             (m/sleep 10 ::odd)
+             (m/sleep 10 ::even)))))
+  (def cancel! (task ! !))
+  % := ::even)
 
+(tests
   "concurrent tasks (running in parallel)"
-  (let [x-task (m/sleep 1000 :x)]
-    ; tasks are pure values, thus reusable (promises are not)
-    (! (m/join vector x-task x-task)))
-  ; 1000 ms sleep, not 2000
-  % := [:x :x]
-  
-  "event stream"
-  
+  ; tasks are pure values, thus reusable (promises are not)
+  (let [x-task (m/sleep 800 :x)]
+    (! (m/? (m/join vector x-task x-task))))
+  ; 800 ms sleep, not 1600
+  % := [:x :x])
+
+(tests
+  "discrete flow (eager event stream with backpressure)")
+
+(tests
+  "continuous flow (lazy signal with work-skipping)")
+
+(tests
+  "integrate a discrete flow into a continuous flow by relieving backpressure")
+
+(tests
   "dataflow diamond, an incremental DAG with shared node"
   (def a (atom 1))
   (def app
     (m/reactor
       (let [>a (m/signal! (m/watch a))
             >b (m/signal! (m/latest + >a >a))]
-        (m/stream! (m/ap (println "v:" (! (m/?> >b))))))))
-  (def dispose (app prn prn))                       
-  ; v: 2
+        (m/stream! (m/ap (! (m/?> >b)))))))
+  (def dispose (app prn prn))
   % := 2
-  (swap! a inc)                          
-  ; "v: 4"
+  (swap! a inc)
   % := 4
-  ; A glitch-free engine writes 2 then 4, Rx would write 2, 3, then 4
+  ; A glitch-free engine emits 2 4, Rx would wrongly emit 2 3 4
   (dispose))
+
+(tests 
+  "hiccup incremental rendering with work-skipping")
 ```
 
 # References
