@@ -424,32 +424,6 @@
   (set! (.-coroutine g) c)
   ((.-resume g) x))
 
-(defn ap-emit [^Gather g x]
-  (set! (.-current g) x)
-  (let [^Ambiguous p (.-process g)]
-    (if (identical? nop (.-queue p))
-      (do (set! (.-queue p) nil)
-          (set! (.-next g) nil)
-          (set! (.-head p) g)
-          ((.-notifier p)))
-      (do (set! (.-next g) (.-queue p))
-          (set! (.-queue p) g)))))
-
-(defn ap-step [^Gather g]
-  (let [pf fiber-current]
-    (set! fiber-current g)
-    (loop []
-      (try
-        (let [x ((.-coroutine g))]
-          (when-not (identical? x nop)
-            (ap-emit g x)))
-        (catch :default e
-          (set! (.-failed g) true)
-          (ap-emit g e)))
-      (when (set! (.-busy g) (not (.-busy g)))
-        (recur)))
-    (set! fiber-current pf)))
-
 (defn ap-cancel [^Gather g]
   (when-some [t (.-token g)]
     (set! (.-token g) nil) (t)))
@@ -460,7 +434,25 @@
           (fn [x]
             (set! (.-current g) x)
             (when (set! (.-busy g) (not (.-busy g)))
-              (ap-step g))))
+              (let [pf fiber-current]
+                (set! fiber-current g)
+                (loop []
+                  (let [x (try ((.-coroutine g))
+                               (catch :default e
+                                 (set! (.-failed g) true) e))]
+                    (if (set! (.-busy g) (not (.-busy g)))
+                      (recur)
+                      (do (set! fiber-current pf)
+                          (when-not (identical? x nop)
+                            (set! (.-current g) x)
+                            (let [^Ambiguous p (.-process g)]
+                              (if (identical? nop (.-queue p))
+                                (do (set! (.-queue p) nil)
+                                    (set! (.-next g) nil)
+                                    (set! (.-head p) g)
+                                    ((.-notifier p)))
+                                (do (set! (.-next g) (.-queue p))
+                                    (set! (.-queue p) g)))))))))))))
     (set! (.-rethrow g)
           (fn [e]
             (set! (.-failed g) true)
@@ -488,10 +480,7 @@
                      ((.-backtrack c) ap-run (if (== GATHER (.-type c)) (ap-gather p) g) x) r)
                    (catch :default e
                      (set! (.-coroutine g) (.-backtrack c))
-                     (set! (.-failed g) true)
-                     (set! (.-current g) e)
-                     (when (set! (.-busy g) (not (.-busy g))) (ap-step g))
-                     false)))))
+                     ((.-rethrow g) e) false)))))
         (nil? (ap-ready (.-choice g)))))))
 
 (defn ap-ready [^Choice c]

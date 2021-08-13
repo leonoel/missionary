@@ -24,38 +24,6 @@ public interface Ambiguous {
             g.process.terminator.invoke();
     }
 
-    static void emit(Gather g, Object x) {
-        g.current = x;
-        Object q;
-        for(;;) {
-            q = g.process.queue;
-            if (q == Process.QUEUE) {
-                if (Process.QUEUE.compareAndSet(g.process, q, null)) {
-                    g.next = null;
-                    g.process.head = g;
-                    g.process.notifier.invoke();
-                    break;
-                }
-            } else {
-                g.next = (Gather) q;
-                if (Process.QUEUE.compareAndSet(g.process, q, g)) break;
-            }
-        }
-    }
-
-    static void step(Gather g) {
-        Fiber prev = CURRENT.get();
-        CURRENT.set(g);
-        do try {
-            Object x = g.coroutine.invoke();
-            if (x != CURRENT) emit(g, x);
-        } catch (Throwable e) {
-            g.failed = true;
-            emit(g, e);
-        } while (0 == Gather.PRESSURE.decrementAndGet(g));
-        CURRENT.set(prev);
-    }
-
     static void more(Gather g) {
         do if (g.choice.done) {
             g.choice = g.choice.parent;
@@ -75,9 +43,7 @@ public interface Ambiguous {
             if (q != Process.QUEUE) return;
         } catch (Throwable e) {
             g.coroutine = g.choice.backtrack;
-            g.failed = true;
-            g.current = e;
-            if (0 == Gather.PRESSURE.incrementAndGet(g)) step(g);
+            g.rethrow.invoke(e);
             return;
         } while (null == ready(g.choice));
     }
@@ -130,8 +96,29 @@ public interface Ambiguous {
             @Override
             public Object invoke(Object x) {
                 g.current = x;
-                if (0 == Gather.PRESSURE.incrementAndGet(g)) step(g);
-                return null;
+                if (0 != Gather.PRESSURE.incrementAndGet(g)) return null;
+                Fiber prev = CURRENT.get();
+                CURRENT.set(g);
+                do try {
+                    x = g.coroutine.invoke();
+                } catch (Throwable e) {
+                    g.failed = true;
+                    x = e;
+                } while (0 == Gather.PRESSURE.decrementAndGet(g));
+                CURRENT.set(prev);
+                if (x == CURRENT) return null;
+                g.current = x;
+                for(;;) if ((x = g.process.queue) == Process.QUEUE) {
+                    if (Process.QUEUE.compareAndSet(g.process, x, null)) {
+                        g.next = null;
+                        g.process.head = g;
+                        g.process.notifier.invoke();
+                        return null;
+                    }
+                } else {
+                    if (Process.QUEUE.compareAndSet(g.process, g.next = (Gather) x, g))
+                        return null;
+                }
             }
         };
         g.rethrow = new AFn() {
