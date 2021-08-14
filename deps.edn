@@ -19,6 +19,7 @@
 
   :cljs-test
   {:extra-deps  {olical/cljs-test-runner
-                 {:mvn/version "3.7.0"}}
+                 {:mvn/version "3.7.0"}
+                 hyperfiddle/rcf {:git/url "https://github.com/hyperfiddle/rcf.git" :sha "b3592fe"}}
    :extra-paths ["test" "cljs-test-runner-out/gen"]
    :main-opts   ["-m" "cljs-test-runner.main"]}}}
