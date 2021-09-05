@@ -302,6 +302,11 @@
   {:failure fine?}
   (m/reactor (m/stream! (m/signal! (m/ap (fine!))))))
 
+(deftask reactor-stream-crash-delayed
+  {:failure fine?
+   :timeout 10}
+  (m/reactor (m/stream! (m/stream! (m/ap (m/? (m/sleep 0)) (fine!))))))
+
 (deftask reactor-stream-cancel
   {:success nil?}
   (m/reactor ((m/stream! (m/ap)))))

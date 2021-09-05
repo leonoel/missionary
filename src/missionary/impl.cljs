@@ -1411,11 +1411,11 @@ stored in field `active`. When an item is inactive, `active` is assigned to itse
     (set! reactor-current prv) nil))
 
 (deftype Subscription
-  [notifier terminator subscriber subscribed prev next]
+  [notifier terminator subscriber subscribed prev next ^boolean cancelled]
   IFn
   (-invoke [this]
     (if (identical? prev this)
-      (set! (.-notifier this) nil)
+      (set! (.-cancelled this) true)
       (let [ctx (.-context subscriber)
             cur (reactor-enter ctx)]
         (reactor-cancel-sub this)
@@ -1430,7 +1430,7 @@ stored in field `active`. When an item is inactive, `active` is assigned to itse
       (let [val (if (and (identical? val nop)
                          (not (identical? (.-prev pub) pub)))
                   (reactor-transfer pub) val)]
-        (if (or (nil? notifier)
+        (if (or cancelled
                 (and (identical? (.-prev pub) pub)
                      (identical? (.-child pub) pub)))
           (reactor-signal subscriber terminator)
@@ -1457,7 +1457,7 @@ stored in field `active`. When an item is inactive, `active` is assigned to itse
           cur (.-current ctx)]
       (if (and (identical? ctx reactor-current) (some? cur))
         (if (and (not (identical? this cur)) (reactor-lt ranks (.-ranks cur)))
-          (let [sub (->Subscription n t cur this nil nil)]
+          (let [sub (->Subscription n t cur this nil nil false)]
             (set! (.-prev sub) sub)
             (if (identical? active this)
               (if (identical? prev this) (t) (reactor-attach sub))
