@@ -133,6 +133,50 @@ Discussions
 
 *What is backpressure on an event stream?* –
 
+
+# Prior art
+
+## vs imperative
+`missionary` promotes a functional approach to concurrency, focusing on computation instead of conveyance. It is deeply
+impacting for the user because the objects implied in both cases have fundamentally different requirements : whereas
+communication devices have indefinite scope and can be safely garbage collected, running processes are bounded in time
+and must be supervised.
+
+Popular conveyance-oriented techniques include clojure's succession model, CSP, futures/promises, actor systems. In
+all of these programming models, the first-class primitive is a communication device (resp. reference types, channels,
+dataflow variables, mailing addresses) used as an interface to coordinate encapsulated stateful processes. This low-level
+programming style generally makes no attempt to provide any structure to concurrent computations, which means
+supervision must be implemented in user space, generally as an afterthought, often simply omitted. Imperative
+[structured concurrency](https://en.wikipedia.org/wiki/Structured_concurrency) is currently an active area of research.
+
+Functional composition is fundamentally more constrained because it enforces a strict hierarchy of concurrent programs.
+The benefit for the user is that supervision concerns don't leak to the domain, the runtime engine knows about the
+program structure and therefore can endorse the right behavior in face of failure (cancel siblings and propagate error
+to parent). Usual communication devices are still provided to cover use cases requiring data transfer across branches
+of the supervision tree, but their usage is specialized instead of generalized.
+
+## vs functional
+[ReactiveX](http://reactivex.io) is one of the first functional effect system to have gained significant traction
+in mainstream languages. Other popular incarnations of this paradigm can be found in the Scala ecosystem, namely
+[Cats Effects](https://typelevel.org/cats-effect), [ZIO](https://zio.dev) and [Monix](https://monix.io), all heavily
+influenced by haskell's IO monad.
+
+`missionary` aims to make sequential composition more practical, dismissing monadic binding in favor of a DSL that is
+a superset of the host language. This idea is by no means new, it is even rather popular nowadays and present in almost
+every modern concurrency framework, including in clojure with [core.async](https://github.com/clojure/core.async)'s
+`go` blocks. Ambiguous expressions are the natural extension of this technique to multiple value producers, but that
+part has definitely not reached mainstream yet. Surprisingly enough, it is sparingly used even in the modern functional
+programming landscape.
+
+## vs reactive
+While traditional streaming engines are focusing on discrete events, `missionary` is designed upfront to also support
+continuous time, which is the realm of [FRP](https://en.wikipedia.org/wiki/Functional_reactive_programming). This is
+made possible by the flow abstraction, a foundational protocol allowing a producer to signal availability of a value
+without eagerly computing it, making suitable for both backpressured event streaming and lazy sampling of time-varying
+values. This unified representation bridges the gap between functional and reactive programming into a consistent model
+providing the best of both worlds.
+
+
 # Community
 
 [#missionary](https://app.slack.com/client/T03RZGPFR/CL85MBPEF) on Clojurians slack
