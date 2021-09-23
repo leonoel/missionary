@@ -46,7 +46,7 @@ public interface Reactor {
         Publisher prev = null;
         Publisher head = root.child;
         root.child = root;
-        while(head != null) {
+        while (head != null) {
             Publisher next = head.sibling;
             head.sibling = null;
             if (prev == null) prev = head;
@@ -96,7 +96,7 @@ public interface Reactor {
 
     static void cancel(Context ctx) {
         ctx.cancelled = null;
-        for(Publisher pub = ctx.head; pub != null; pub = ctx.head) pub.invoke();
+        for (Publisher pub = ctx.head; pub != null; pub = ctx.head) pub.invoke();
     }
 
     static void cancel(Publisher pub) {
@@ -160,7 +160,7 @@ public interface Reactor {
         Publisher prv = ctx.emitter;
         Subscription head = pub.head;
         int p = 1;
-        for(Subscription sub = head; sub != null; sub = sub.next) {
+        for (Subscription sub = head; sub != null; sub = sub.next) {
             sub.prev = sub;
             p++;
         }
@@ -226,12 +226,13 @@ public interface Reactor {
         Publisher subscribed;
         Subscription prev;
         Subscription next;
+        boolean cancelled;
 
         @Override
         public Object invoke() {
             Context ctx = subscribed.context;
             synchronized (ctx) {
-                if (prev == this) notifier = null;
+                if (prev == this) cancelled = true;
                 else {
                     Context cur = enter(ctx);
                     cancel(this);
@@ -245,12 +246,12 @@ public interface Reactor {
         public Object deref() {
             Publisher pub = subscribed;
             Context ctx = pub.context;
-            synchronized(ctx) {
+            synchronized (ctx) {
                 Context cur = enter(ctx);
                 Object val = pub.value;
                 if (0 < pub.pending) ack(pub);
                 if (val == CURRENT && pub.prev != pub) val = transfer(pub);
-                if (notifier == null || (pub.prev == pub && pub.child == pub))
+                if (cancelled || (pub.prev == pub && pub.child == pub))
                     signal(subscriber, terminator); else attach(this);
                 leave(ctx, cur);
                 return val == CURRENT ? clojure.lang.Util.sneakyThrow(ERR_SUB_CANCEL) : val;
@@ -411,7 +412,7 @@ public interface Reactor {
                     ctx.running--;
                     if (pub.prev != pub) {
                         detach(pub);
-                        for(Subscription sub = pub.head; sub != null; sub = pub.head) cancel(sub);
+                        for (Subscription sub = pub.head; sub != null; sub = pub.head) cancel(sub);
                     }
                     leave(ctx, cur);
                     return null;

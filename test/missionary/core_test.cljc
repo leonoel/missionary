@@ -83,6 +83,13 @@
                  (m/? (m/sleep n n))))
          (deb 50))))
 
+(deftask ambiguous-eval-order
+  {:success (=? [[1 3] [2 4]])
+   :timeout 10}
+  (let [counter (partial swap! (atom 0) inc)]
+    (m/reduce (fn [r x] (conj r [x (counter)])) []
+      (m/ap (m/? (m/sleep (m/amb> 0 0) (counter)))))))
+
 (deftask aggregate
   {:success (=? [1 2 3])}
   (m/reduce conj (m/seed [1 2 3])))
@@ -294,6 +301,11 @@
 (deftask reactor-signal-crash
   {:failure fine?}
   (m/reactor (m/stream! (m/signal! (m/ap (fine!))))))
+
+(deftask reactor-stream-crash-delayed
+  {:failure fine?
+   :timeout 10}
+  (m/reactor (m/stream! (m/stream! (m/ap (m/? (m/sleep 0)) (fine!))))))
 
 (deftask reactor-stream-cancel
   {:success nil?}
