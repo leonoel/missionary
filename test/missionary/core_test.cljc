@@ -6,6 +6,9 @@
 (def =? (partial partial =))
 (def fine! #(throw (ex-info "this is fine." {:fine true})))
 (def fine? (comp :fine ex-data))
+(def evil-keys "A vector of 1024 different values sharing the same hash.
+https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-the-same-hashcode-in-java"
+  (nth (iterate (partial into [] (mapcat (juxt (partial str "Aa") (partial str "BB")))) [""]) 10))
 
 (deftask sleep-success
   {:timeout 10
@@ -331,3 +334,23 @@
           i1 (m/stream! (m/ap (m/? (m/sleep 2 1))))
           i2 (m/stream! (m/ap (m/? (m/sleep 1 2))))]
       (m/stream! (m/zip (partial swap! r conj) i1 i2)) r)))
+
+(deftask groupby
+  {:success (=? (apply + (range 971)))}
+  (m/reduce +
+    (m/ap
+      (->> (m/seed (shuffle (range 971)))
+        (m/group-by #(evil-keys (mod % 167)))
+        (m/?=)
+        (val)
+        (m/eduction (take 13))
+        (m/reduce +)
+        (m/?)))))
+
+(defflow groupby-input-failure
+  {:failure fine?}
+  (m/group-by {} (m/ap (fine!))))
+
+(defflow groupby-keyfn-failure
+  {:failure fine?}
+  (m/group-by (fn [_] (fine!)) (m/seed (range))))

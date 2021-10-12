@@ -1,9 +1,10 @@
 (ns missionary.core
-  (:refer-clojure :exclude [reduce reductions eduction])
+  (:refer-clojure :exclude [reduce reductions eduction group-by])
   (:require [missionary.impl :as i]
             [cloroutine.core :refer [cr] :include-macros true]
             #?(:cljs [missionary.impl.reduce])
-            #?(:cljs [missionary.impl.reductions]))
+            #?(:cljs [missionary.impl.reductions])
+            #?(:cljs [missionary.impl.groupby]))
   #?(:cljs (:require-macros [missionary.core :refer [sp ap amb> amb= ?? ?! holding reactor]])))
 
 
@@ -682,6 +683,40 @@ Example :
 ```
 "} zip [c f & fs] (fn [n t] (i/zip c (cons f fs) n t)))
 
+(defn
+  ^{:static true
+    :arglists '([kf >f])
+    :doc "
+Returns a discrete flow running given discrete flow, calling given key function on each produced value, grouping values
+according to keys returned by the function, and producing a key-group pair for each grouping found. A group is a flow
+consuming values matching a key. Upstream values are dispatched in constant time to their group consumer.
+
+Cancelling a group consumer makes it fail immediately. If a value is subsequently found for the same grouping, the
+key-group pair is produced again, including in the special case where the consumer is cancelled while a transfer was
+pending.
+
+If upstream fails, or if the key function throws, then upstream is cancelled and flushed and the error is propagated
+downstream.
+
+When the last upstream value is consumed, downstream terminates along with each active consumer and subsequent ones.
+
+Concurrent consumers on a single group are not allowed, attempting to do so will fail the latest consumer.
+
+Example :
+```clojure
+(def words [\"Air\" \"Bud\" \"Cup\" \"Awake\" \"Break\" \"Chunk\" \"Ant\" \"Big\" \"Check\"])
+(def groups
+  (m/ap (let [[k >x] (m/?= (m/group-by (juxt first count) (m/seed words)))]
+          [k (m/? (m/reduce conj >x))])))
+(m/? (m/reduce conj {} groups))
+#_=> {[\\C 3] [\"Cup\"],
+      [\\B 5] [\"Break\"],
+      [\\A 5] [\"Awake\"],
+      [\\B 3] [\"Bud\" \"Big\"],
+      [\\A 3] [\"Air\" \"Ant\"],
+      [\\C 5] [\"Chunk\" \"Check\"]}
+```
+"} group-by [kf f] (fn [n t] (missionary.impl.groupby/run kf f n t)))
 
 (defn
   ^{:static true
