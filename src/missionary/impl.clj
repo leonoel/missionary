@@ -3,8 +3,8 @@
     (java.io Writer)
     (org.reactivestreams Publisher)
     (missionary.impl
-      Enumerate Aggregate RaceJoin Sleep Never Ambiguous Fiber Thunk Dataflow Mailbox Rendezvous Semaphore Watch
-      Observe Transform Integrate Pub Sub Relieve Buffer Latest Sample Zip Sequential Ambiguous$Process Reactor
+      Enumerate RaceJoin Sleep Never Ambiguous Fiber Thunk Dataflow Mailbox Rendezvous Semaphore Watch
+      Observe Transform Pub Sub Relieve Buffer Latest Sample Zip Sequential Ambiguous$Process Reactor
       Reactor$Context Reactor$Publisher Relieve$It Latest$It)))
 
 (defn nop [])
@@ -62,9 +62,6 @@
 (defmethod print-method Enumerate [o w] (print-object o w))
 (defn enumerate [c n t] (Enumerate. c n t))
 
-(defmethod print-method Aggregate [o w] (print-object o w))
-(defn aggregate [rf i flow s f] (Aggregate. rf i flow s f))
-
 (defmethod print-method Watch [o w] (print-object o w))
 (defn watch [r n t] (Watch. r n t))
 
@@ -73,9 +70,6 @@
 
 (defmethod print-method Transform [o w] (print-object o w))
 (defn transform [x f n t] (Transform. x f n t))
-
-(defmethod print-method Integrate [o w] (print-object o w))
-(defn integrate [rf i f n t] (Integrate. rf i f n t))
 
 (defmethod print-method Relieve$It [o w] (print-object o w))
 (defn relieve [rf f n t] (Relieve/spawn rf f n t))

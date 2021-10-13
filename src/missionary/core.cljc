@@ -1,7 +1,9 @@
 (ns missionary.core
   (:refer-clojure :exclude [reduce reductions eduction])
   (:require [missionary.impl :as i]
-            [cloroutine.core :refer [cr] :include-macros true])
+            [cloroutine.core :refer [cr] :include-macros true]
+            #?(:cljs [missionary.impl.reduce])
+            #?(:cljs [missionary.impl.reductions]))
   #?(:cljs (:require-macros [missionary.core :refer [sp ap amb> amb= ?? ?! holding reactor]])))
 
 
@@ -459,8 +461,8 @@ Example :
 #_=> 45
 ```
 "} reduce
-  ([rf flow] (fn [s f] (i/aggregate rf (rf) flow s f)))
-  ([rf i flow] (fn [s f] (i/aggregate rf i flow s f))))
+  ([rf flow] (fn [s f] (missionary.impl.reduce/run rf flow s f)))
+  ([rf i flow] (reduce (fn ([] i) ([r x] (rf r x))) flow)))
 
 (def ^{:deprecated true
        :doc "Alias for `reduce`"}
@@ -527,8 +529,8 @@ Example :
 #_=> [0 1 3 6 10 15]
 ```
 "} reductions
-  ([rf f] (fn [n t] (i/integrate rf (rf) f n t)))
-  ([rf i f] (fn [n t] (i/integrate rf i f n t))))
+  ([rf f] (fn [n t] (missionary.impl.reductions/run rf f n t)))
+  ([rf i f] (reductions (fn ([] i) ([r x] (rf r x))) f)))
 
 (def ^{:deprecated true
        :doc "Alias for `reductions`"}
