@@ -75,15 +75,12 @@ providing the best of both worlds.
 
 API Reference: [`missionary.core`](https://cljdoc.org/d/missionary/missionary/CURRENT/api/missionary.core)
 
+How-to guides: [cookbook](https://github.com/leonoel/missionary/wiki)
+
 ### Tutorials
 1. [Hello task](doc/tutorials/hello_task.md)
 2. [Hello flow](doc/tutorials/hello_flow.md)
 3. [Comparison to RxJava](doc/tutorials/rx_comparison.md)
-
-### Guides
-1. [Retry with backoff](doc/guides/retry_backoff.md)
-2. [Happy eyeballs](doc/guides/happy_eyeballs.md)
-3. [Iterative queries](doc/guides/iterative_queries.md)
 
 ## Ecosystem
 
