@@ -22,7 +22,7 @@
 Project status: experimental
 
 ```clojure
-{:deps {missionary/missionary {:mvn/version "b.22"}}} 
+{:deps {missionary/missionary {:mvn/version "b.23"}}} 
 ```
 [![clojars](https://img.shields.io/clojars/v/missionary.svg)](https://clojars.org/missionary)
 [![cljdoc](https://cljdoc.org/badge/missionary/missionary)](https://cljdoc.org/d/missionary/missionary/CURRENT)
