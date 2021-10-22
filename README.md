@@ -26,7 +26,7 @@ Project status: experimental
 ```
 [![clojars](https://img.shields.io/clojars/v/missionary.svg)](https://clojars.org/missionary)
 [![cljdoc](https://cljdoc.org/badge/missionary/missionary)](https://cljdoc.org/d/missionary/missionary/CURRENT)
-[![build](https://travis-ci.org/leonoel/missionary.svg?branch=master)](https://travis-ci.org/leonoel/missionary)
+[![build](https://api.travis-ci.com/leonoel/missionary.svg?branch=master)](https://app.travis-ci.com/github/leonoel/missionary)
 [![license](https://img.shields.io/github/license/leonoel/missionary.svg)](LICENSE)
 
 ## Prior art
