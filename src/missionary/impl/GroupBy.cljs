@@ -1,4 +1,4 @@
-(ns missionary.impl.groupby)
+(ns missionary.impl.GroupBy)
 
 (def cancelled (ex-info "Group consumer cancelled." {:cancelled :missionary/group-by}))
 

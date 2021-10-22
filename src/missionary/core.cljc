@@ -1,10 +1,8 @@
 (ns missionary.core
   (:refer-clojure :exclude [reduce reductions eduction group-by])
   (:require [missionary.impl :as i]
-            [cloroutine.core :refer [cr] :include-macros true]
-            #?(:cljs [missionary.impl.reduce])
-            #?(:cljs [missionary.impl.reductions])
-            #?(:cljs [missionary.impl.groupby]))
+            [cloroutine.core :refer [cr] :include-macros true])
+  (:import (missionary.impl Reduce Reductions GroupBy))
   #?(:cljs (:require-macros [missionary.core :refer [sp ap amb> amb= ?? ?! holding reactor]])))
 
 
@@ -462,7 +460,7 @@ Example :
 #_=> 45
 ```
 "} reduce
-  ([rf flow] (fn [s f] (missionary.impl.reduce/run rf flow s f)))
+  ([rf flow] (fn [s f] (Reduce/run rf flow s f)))
   ([rf i flow] (reduce (fn ([] i) ([r x] (rf r x))) flow)))
 
 (def ^{:deprecated true
@@ -530,7 +528,7 @@ Example :
 #_=> [0 1 3 6 10 15]
 ```
 "} reductions
-  ([rf f] (fn [n t] (missionary.impl.reductions/run rf f n t)))
+  ([rf f] (fn [n t] (Reductions/run rf f n t)))
   ([rf i f] (reductions (fn ([] i) ([r x] (rf r x))) f)))
 
 (def ^{:deprecated true
@@ -716,7 +714,7 @@ Example :
       [\\A 3] [\"Air\" \"Ant\"],
       [\\C 5] [\"Chunk\" \"Check\"]}
 ```
-"} group-by [kf f] (fn [n t] (missionary.impl.groupby/run kf f n t)))
+"} group-by [kf f] (fn [n t] (GroupBy/run kf f n t)))
 
 (defn
   ^{:static true

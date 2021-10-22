@@ -5,7 +5,7 @@ import clojure.lang.IDeref;
 import clojure.lang.IFn;
 import clojure.lang.Reduced;
 
-public interface reduce {
+public interface Reduce {
 
     class Process extends AFn {
         static {

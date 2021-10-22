@@ -2,7 +2,7 @@ package missionary.impl;
 
 import clojure.lang.*;
 
-public interface groupby {
+public interface GroupBy {
 
     Throwable CANCELLED = new ExceptionInfo("Group consumer cancelled.", RT.map(
             Keyword.intern(null, "cancelled"),
