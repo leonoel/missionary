@@ -119,7 +119,6 @@ Tutorials
 
 How-to guides: [cookbook](https://github.com/leonoel/missionary/wiki)
 
-* [Hyperfiddle](https://hyperfiddle.net) leverages `missionary` to build its [next-generation web stack](https://hyperfiddle.notion.site/Reactive-Clojure-You-don-t-need-a-web-framework-you-need-a-web-language-44b5bfa526be4af282863f34fa1cfffc).
 
 ## Community
 
