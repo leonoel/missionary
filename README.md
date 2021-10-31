@@ -1,25 +1,47 @@
-# Missionary – an asynchronous programming toolkit for clojure and clojurescript
+# Missionary – a functional effect and streaming system for Clojure/Script
 
-## Goals
-* Provide solid foundations to meet the needs of modern web programming, especially sophisticated real-time collaborative applications.
-* Promote functional effects as the default Clojure concurrency model. Underlying abstractions, [task](https://github.com/leonoel/task)s and [flow](https://github.com/leonoel/flow)s, are dependency-free for this reason, `missionary` is merely a reference implementation.
-* Unification of functional effect/streaming systems and reactive programming in a highly composable model leveraging referential transparency when it matters.
+Missionary is a reactive dataflow programming toolkit providing referentially transparent operators for lazy continuous signals, eager discrete streams, and IO actions. Missionary aims to improve over state-of-the-art reactive systems, it can be used as a general-purpose asynchronous programming toolkit but also as a basis for event streaming and incremental computations.
 
-## Principles
-* Embrace the host, like clojure. Don't try to fix null pointers, exception handling, thread interruption, or lack of TCO.
-* Embrace the language. Support the existing ecosystem, leverage metaprogramming and reuse existing abstractions : collections, transducers, reducing functions, reference types.
+```clojure 
+(require '[missionary.core :as m])
 
-## Features
-* strict supervision by default
-* expressive IOC syntax with backtracking
-* standard effect system and concurrency toolkit
-* backpressured streaming of discrete events ([Reactive Streams](http://www.reactive-streams.org/) adapters provided)
-* lazy sampling of continuous time variables
-* reactive programming facilities
+; this is a reactive computation, the println reacts to input changes
+(def !input (atom 1))
+(def main (m/reactor
+            (let [>x (m/signal! (m/watch !input))       ; continuous signal reflecting atom state
+                  >y (m/signal! (m/latest + >x >x))]    ; derived computation, diamond shape
+              (m/stream! (m/ap (println (m/?< >y))))))) ; discrete effect performed on successive values
 
-## Usage
+(def dispose! (main #(prn ::success %) #(prn ::crash %)))
+; 2
+(swap! !x inc)
+; 4
+(dispose!)
 
-Project status: experimental
+; Each change on the input propagates atomically through the graph. 3 is an inconsistent state and is therefore not computed.
+```
+
+Features
+* Discrete event streams with backpressure
+* Continuous-time signals with lazy sampling
+* Correct incremental maintenance of dynamic DAGs without inconsistent states (aka FRP glitches)
+* Correct error handling by default. Strict process supervision provides transparent propagation of cancellation and failure, with strong resource cleanup guarantees
+* Asynchronous design for efficiency and ClojureScript compatibility
+* Reactive Streams compliant
+
+Key ideas
+* Unification of functional effect systems and FRP / dataflow programming
+* Unification of continuous-time and discrete-time primitives under the common Flow protocol
+* Embrace and reuse Clojure core abstractions including collections, transducers, reducing functions and reference types
+* Sequential composition DSL is a superset of clojure with full metaprogramming support, same expressive power as monads
+
+Missionary's mission is to establish a rigorous foundation for modern web programming, particularly sophisticated real-time collaborative applications. Missionary's reactive primitives are fully separated and unbundled in order to achieve low-level control over every aspect of the computation (discrete vs continuous, eager vs lazy, allocation and reaction boundaries).
+
+Missionary can be used as a foundation to build higher level reactive abstractions. For example, Missionary's "reactive VM" is the compiler target of [hyperfiddle/photon](https://hyperfiddle.notion.site/Reactive-Clojure-You-don-t-need-a-web-framework-you-need-a-web-language-44b5bfa526be4af282863f34fa1cfffc), a reactive dialect of Clojure/Script for UI programming.
+
+# Dependency
+
+Project maturity: experimental, but stable. The current development priority is documentation.
 
 ```clojure
 {:deps {missionary/missionary {:mvn/version "b.23"}}} 
@@ -29,7 +51,7 @@ Project status: experimental
 [![build](https://api.travis-ci.com/leonoel/missionary.svg?branch=master)](https://app.travis-ci.com/github/leonoel/missionary)
 [![license](https://img.shields.io/github/license/leonoel/missionary.svg)](LICENSE)
 
-## Prior art
+# Prior art
 
 ### vs imperative
 `missionary` promotes a functional approach to concurrency, focusing on computation instead of conveyance. It is deeply
@@ -75,19 +97,19 @@ providing the best of both worlds.
 
 API Reference: [`missionary.core`](https://cljdoc.org/d/missionary/missionary/CURRENT/api/missionary.core)
 
-How-to guides: [cookbook](https://github.com/leonoel/missionary/wiki)
+Discussions:
+* [ClojureVerse (2019)](https://clojureverse.org/t/missionary-new-release-with-streaming-support-design-notes/4510)
+* [reddit (2021)](https://www.reddit.com/r/Clojure/comments/k2db8k/leonoelmissionary_a_functional_effect_and/)
 
-### Tutorials
+Tutorials
 1. [Hello task](doc/tutorials/hello_task.md)
 2. [Hello flow](doc/tutorials/hello_flow.md)
 3. [Comparison to RxJava](doc/tutorials/rx_comparison.md)
 
-## Ecosystem
+How-to guides: [cookbook](https://github.com/leonoel/missionary/wiki)
 
-* [Hyperfiddle](https://hyperfiddle.net) leverages `missionary` to build its [next-generation web stack](https://hyperfiddle.notion.site/Reactive-Clojure-You-don-t-need-a-web-framework-you-need-a-web-language-44b5bfa526be4af282863f34fa1cfffc).
 
 ## Community
 
-Intermediate reports and discussions : [clojureverse](https://clojureverse.org/t/missionary-new-release-with-streaming-support-design-notes/4510/7), [reddit](https://www.reddit.com/r/Clojure/comments/k2db8k/leonoelmissionary_a_functional_effect_and/)
+[#missionary](https://app.slack.com/client/T03RZGPFR/CL85MBPEF) on Clojurians slack
 
-Live chat : [#missionary](https://app.slack.com/client/T03RZGPFR/CL85MBPEF) on Clojurians slack
