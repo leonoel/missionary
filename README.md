@@ -1,6 +1,6 @@
 # Missionary – a functional effect and streaming system for Clojure/Script
 
-Missionary is a reactive dataflow programming toolkit providing referentially transparent operators for lazy continuous signals, eager discrete streams, and async tasks (IO actions). Missionary is comparable to Rx, ZIO & ZStream, Cats Effect, FS2, Haskell's Reflex, OCaml's Incremental and has some overlap with core.async.
+Missionary is a reactive dataflow programming toolkit providing referentially transparent operators for lazy continuous signals, eager discrete streams, and IO actions. Missionary aims to improve over state-of-the-art reactive systems, it can be used as a general-purpose asynchronous programming toolkit but also as a basis for event streaming and incremental computations.
 
 ```clojure 
 (require '[missionary.core :as m])
@@ -8,9 +8,9 @@ Missionary is a reactive dataflow programming toolkit providing referentially tr
 ; this is a reactive computation, the println reacts to input changes
 (def !input (atom 1))
 (def main (m/reactor
-            (let [>x (m/signal! (m/watch !input))       ; signal derived from atom
-                  >z (m/signal! (m/latest + >x >x))]    ; diamond DAG
-              (m/stream! (m/ap (println (m/?< >z)))))))
+            (let [>x (m/signal! (m/watch !input))       ; continuous signal reflecting atom state
+                  >y (m/signal! (m/latest + >x >x))]    ; derived computation, diamond shape
+              (m/stream! (m/ap (println (m/?< >y))))))) ; discrete effect performed on successive values
 
 (def dispose! (main #(prn ::success %) #(prn ::crash %)))
 ; 2
@@ -18,37 +18,26 @@ Missionary is a reactive dataflow programming toolkit providing referentially tr
 ; 4
 (dispose!)
 
-; Correct glitch-free result is 2, 4; Rx gives 2, 3, 4 
-; publishing an inconsistent/incorrect intermediate state
+; Each change on the input propagates atomically through the graph. 3 is an inconsistent state and is therefore not computed.
 ```
-You might think of missionary as a reactive virtual machine with reactive assembly instructions.
 
 Features
-* eager discrete streams with backpressure
-* lazy continuous signals with lazy sampling
-* Correct incremental maintenance without [FRP glitches](https://github.com/raquo/Airstream#frp-glitches)
-* No userland error handling. Strict process supervision provides transparent propagation of cancellation and failure, with strong resource cleanup guarantees.
+* Discrete event streams with backpressure
+* Continuous-time signals with lazy sampling
+* Correct incremental maintenance of dynamic DAGs without inconsistent states (aka FRP glitches)
+* Correct error handling by default. Strict process supervision provides transparent propagation of cancellation and failure, with strong resource cleanup guarantees
 * Asynchronous design for efficiency and ClojureScript compatibility
 * Reactive Streams compliant
 
 Key ideas
-* unification of functional effect systems and FRP / dataflow programming, which is not obvious. We think functional programming and dataflow programming unify, they are the same thing.
-* equivalence of continuous-time and discrete-time primitives, and their unification under the common Flow protocol
-* embrace and reuse Clojure core abstractions including collections, transducers, reducing functions and reference types
-* implemented with metaprogramming, not monads, but can express monadic control flow for IO actions, streams and signals
+* Unification of functional effect systems and FRP / dataflow programming
+* Unification of continuous-time and discrete-time primitives under the common Flow protocol
+* Embrace and reuse Clojure core abstractions including collections, transducers, reducing functions and reference types
+* Sequential composition DSL is a superset of clojure with full metaprogramming support, same expressive power as monads
 
-Missionary's mission is to establish a rigorous foundation for modern web programming, particularly sophisticated real-time collaborative applications. Missionary's reactive primitives are fully seperated and unbundled in order to achieve low-level control over every aspect of the computation (discrete vs continuous, eager vs lazy, allocation and reaction boundaries). Missionary is therefore not a high-level library, but rather a low-level async toolkit that enables you to build high level reactive abstractions. For example, Missionary's "reactive VM" is the compiler target of [hyperfiddle/photon](https://hyperfiddle.notion.site/Reactive-Clojure-You-don-t-need-a-web-framework-you-need-a-web-language-44b5bfa526be4af282863f34fa1cfffc), a reactive dialect of Clojure/Script for UI programming.
+Missionary's mission is to establish a rigorous foundation for modern web programming, particularly sophisticated real-time collaborative applications. Missionary's reactive primitives are fully separated and unbundled in order to achieve low-level control over every aspect of the computation (discrete vs continuous, eager vs lazy, allocation and reaction boundaries).
 
-# Applications
-
-|application|app primitive|missionary primitive|properties|comment|
-|---|---|---|---|---|
-|spreadsheets|cells|continuous flow|lazy, static control flow, not history sensitive||
-|html rendering|element|continuous flow|lazy, dynamic control flow, not history sensitive|only care about most recent value, intermediate states don't matter. Complex control flow (if, for, exceptions)|
-|dom event streams|event|discrete flow|eager, dynamic control flow, history sensitive|E.g. stream of keyboard events. discrete and history sensitive because no event can be skipped, must integrate the event log to get a current value.|
-|data workflow orchestration|function|discrete flow|eager, static||
-|effect sequences|callback|discrete flow|eager, dynamic|like event streams, no effect can be skipped.|
-|async expressions|promise-like|task|||
+Missionary can be used as a foundation to build higher level reactive abstractions. For example, Missionary's "reactive VM" is the compiler target of [hyperfiddle/photon](https://hyperfiddle.notion.site/Reactive-Clojure-You-don-t-need-a-web-framework-you-need-a-web-language-44b5bfa526be4af282863f34fa1cfffc), a reactive dialect of Clojure/Script for UI programming.
 
 # Dependency
 
