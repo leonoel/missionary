@@ -3,8 +3,8 @@
     (java.io Writer)
     (org.reactivestreams Publisher)
     (missionary.impl
-      Enumerate RaceJoin Sleep Never Ambiguous Fiber Thunk Dataflow Mailbox Rendezvous Semaphore Watch
-      Observe Transform Pub Sub Buffer Zip Sequential Ambiguous$Process)))
+      Enumerate RaceJoin Sleep Never Thunk Dataflow Mailbox Rendezvous Semaphore Watch
+      Observe Transform Pub Sub Buffer Zip)))
 
 (defn nop [])
 
@@ -26,19 +26,6 @@
 
 (defmethod print-method Thunk [o w] (print-object o w))
 (defn thunk [e t s f] (Thunk. e t s f))
-
-(defmethod print-method Sequential [o w] (print-object o w))
-(defn sp [c s f] (Sequential. c s f))
-
-(defmethod print-method Ambiguous$Process [o w] (print-object o w))
-(defn ap [c n t] (Ambiguous/process c n t))
-
-(defn fiber-unpark      []  (.unpark     ^Fiber (.get Fiber/CURRENT)))
-(defn fiber-poll        []  (.poll       ^Fiber (.get Fiber/CURRENT)))
-(defn fiber-task        [t] (.task       ^Fiber (.get Fiber/CURRENT) t))
-(defn fiber-flow-concat [f] (.flowConcat ^Fiber (.get Fiber/CURRENT) f))
-(defn fiber-flow-switch [f] (.flowSwitch ^Fiber (.get Fiber/CURRENT) f))
-(defn fiber-flow-gather [f] (.flowGather ^Fiber (.get Fiber/CURRENT) f))
 
 (defmethod print-method RaceJoin [o w] (print-object o w))
 (defn race-join [r c ts s f] (RaceJoin. r c ts s f))

@@ -4,84 +4,96 @@ import clojure.lang.*;
 import missionary.Cancelled;
 
 import java.util.concurrent.CountDownLatch;
-import java.util.function.Supplier;
 
 public interface Fiber {
-    ThreadLocal<Fiber> CURRENT = ThreadLocal.withInitial(new Supplier<Fiber>() {
-        Fiber THREAD = new Fiber() {
-            @Override
-            public Object poll() {
-                return Thread.currentThread().isInterrupted() ?
-                        clojure.lang.Util.sneakyThrow(new Cancelled("Thread interrupted.")) : null;
-            }
+    Object park(IFn t);
+    Object swich(IFn f);
+    Object fork(Number n, IFn f);
+    Object check();
+    Object unpark();
 
-            @Override
-            public Object task(IFn t) {
-                return new CountDownLatch(1) {
-                    boolean failed;
-                    Object result;
-                    {
-                        IFn cancel = (IFn) t.invoke(
-                                new AFn() {
-                                    @Override
-                                    public Object invoke(Object x) {
-                                        failed = false;
-                                        result = x;
-                                        countDown();
-                                        return null;
-                                    }
-                                },
-                                new AFn() {
-                                    @Override
-                                    public Object invoke(Object x) {
-                                        failed = true;
-                                        result = x;
-                                        countDown();
-                                        return null;
-                                    }
-                                });
-                        try {await();}
-                        catch (InterruptedException _) {
-                            cancel.invoke();
-                            try {await();} catch (InterruptedException __) {}
-                            Thread.currentThread().interrupt();
-                        }
-                        if (failed) clojure.lang.Util.sneakyThrow((Throwable) result);
+    Fiber thread = new Fiber() {
+        @Override
+        public Object park(IFn t) {
+            return new CountDownLatch(1) {
+                boolean failed;
+                Object result;
+                {
+                    IFn cancel = (IFn) t.invoke(
+                            new AFn() {
+                                @Override
+                                public Object invoke(Object x) {
+                                    failed = false;
+                                    result = x;
+                                    countDown();
+                                    return null;
+                                }
+                            },
+                            new AFn() {
+                                @Override
+                                public Object invoke(Object x) {
+                                    failed = true;
+                                    result = x;
+                                    countDown();
+                                    return null;
+                                }
+                            });
+                    try {await();}
+                    catch (InterruptedException _) {
+                        cancel.invoke();
+                        try {await();} catch (InterruptedException __) {}
+                        Thread.currentThread().interrupt();
                     }
-                }.result;
-            }
-
-            @Override
-            public Object flowConcat(IFn f) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public Object flowSwitch(IFn f) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public Object flowGather(IFn f) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public Object unpark() {
-                throw new UnsupportedOperationException();
-            }
-        };
+                    if (failed) clojure.lang.Util.sneakyThrow((Throwable) result);
+                }
+            }.result;
+        }
 
         @Override
-        public Fiber get() {
-            return THREAD;
+        public Object swich(IFn flow) {
+            throw new UnsupportedOperationException();
         }
-    });
 
-    Object poll();
-    Object task(IFn t);
-    Object flowConcat(IFn f);
-    Object flowSwitch(IFn f);
-    Object flowGather(IFn f);
-    Object unpark();
+        @Override
+        public Object fork(Number par, IFn flow) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Object check() {
+            return Thread.currentThread().isInterrupted() ?
+                    clojure.lang.Util.sneakyThrow(new Cancelled("Thread interrupted.")) : null;
+        }
+
+        @Override
+        public Object unpark() {
+            throw new UnsupportedOperationException();
+        }
+    };
+
+    ThreadLocal<Fiber> fiber = ThreadLocal.withInitial(() -> thread);
+
+    static Object current() {
+        return fiber.get();
+    }
+
+    static Object check(Fiber fiber) {
+        return fiber.check();
+    }
+
+    static Object park(Fiber fiber, IFn task) {
+        return fiber.park(task);
+    }
+
+    static Object swich(Fiber fiber, IFn flow) {
+        return fiber.swich(flow);
+    }
+
+    static Object fork(Fiber fiber, Number par, IFn flow) {
+        return fiber.fork(par, flow);
+    }
+
+    static Object unpark(Fiber fiber) {
+        return fiber.unpark();
+    }
 }

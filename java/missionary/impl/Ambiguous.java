@@ -3,335 +3,476 @@ package missionary.impl;
 import clojure.lang.*;
 import missionary.Cancelled;
 
-import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
-import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
-
-import static missionary.impl.Fiber.CURRENT;
+import static missionary.impl.Fiber.fiber;
 import static missionary.impl.Util.NOP;
 
 public interface Ambiguous {
 
-    static IFn ready(Choice c) {
-        IFn s;
-        while (!Choice.READY.compareAndSet(c, s = c.ready, s == null ? NOP : null));
-        return s;
-    }
-
-    static void terminate(Gather g) {
-        Object a;
-        while (!Process.ALIVE.compareAndSet(g.process, a = g.process.alive, a instanceof Integer ?
-                ((Integer) a) - 1 : ((IPersistentSet) a).disjoin(g)));
-        if (1 == (a instanceof Integer ? (Integer) a : ((IPersistentSet) a).count()))
-            g.process.terminator.invoke();
-    }
-
-    static void more(Gather g) {
-        do if (g.choice.done) {
-            g.choice = g.choice.parent;
-            if (g.choice == null) {
-                terminate(g);
-                return;
-            }
-        } else if (g.failed) try {
-            ((IDeref) g.choice.iterator).deref();
-        } catch (Throwable _) {
-        } else try {
-            Object x = ((IDeref) g.choice.iterator).deref();
-            Object q = null;
-            if (g.choice.type == Choice.GATHER) while ((q = g.process.queue) != Process.QUEUE &&
-                    !Process.QUEUE.compareAndSet(g.process, g.next = (Gather) q, g));
-            g.choice.backtrack.invoke(RUN, g.choice.type == Choice.GATHER ? gather(g.process) : g, x);
-            if (q != Process.QUEUE) return;
-        } catch (Throwable e) {
-            g.coroutine = g.choice.backtrack;
-            g.rethrow.invoke(e);
-            return;
-        } while (null == ready(g.choice));
-    }
-
-    static void choice(Gather g, IFn flow, int type) {
-        Choice c = new Choice();
-        c.parent = g.choice;
-        c.backtrack = g.coroutine;
-        c.iterator = flow.invoke(new AFn() {
-            @Override
-            public Object invoke() {
-                IFn s = ready(c);
-                if (s == null) more(g); else s.invoke();
-                return null;
-            }
-        }, new AFn() {
-            @Override
-            public Object invoke() {
-                c.done = true;
-                IFn s = ready(c);
-                if (s == null) more(g);
-                return null;
-            }
-        });
-        c.type = type;
-        swap(g, c);
-        g.choice = c;
-        if (null == ready(c)) more(g);
-    }
-
-    static void swap(Gather g, IFn cancel) {
-        if (g.choice == null) Util.swap(g, Gather.TOKEN, cancel);
-        else {
-            Util.swap(g.choice, Choice.TOKEN, cancel);
-            if (g.choice.type == Choice.SWITCH) for(;;) {
-                IFn current = g.choice.ready;
-                if (current == null) {
-                    if (!g.choice.done) cancel.invoke();
-                    break;
-                }
-                if (Choice.READY.compareAndSet(g.choice, current, cancel)) break;
-            }
-        }
-    }
-
-    static Gather gather(Process p) {
-        Gather g = new Gather();
-        g.process = p;
-        g.resume = new AFn() {
-            @Override
-            public Object invoke(Object x) {
-                g.current = x;
-                if (0 != Gather.PRESSURE.incrementAndGet(g)) return null;
-                Fiber prev = CURRENT.get();
-                CURRENT.set(g);
-                do try {
-                    x = g.coroutine.invoke();
-                } catch (Throwable e) {
-                    g.failed = true;
-                    x = e;
-                } while (0 == Gather.PRESSURE.decrementAndGet(g));
-                CURRENT.set(prev);
-                if (x == CURRENT) return null;
-                g.current = x;
-                for(;;) if ((x = g.process.queue) == Process.QUEUE) {
-                    if (Process.QUEUE.compareAndSet(g.process, x, null)) {
-                        g.next = null;
-                        g.process.head = g;
-                        g.process.notifier.invoke();
-                        return null;
-                    }
-                } else {
-                    if (Process.QUEUE.compareAndSet(g.process, g.next = (Gather) x, g))
-                        return null;
-                }
-            }
-        };
-        g.rethrow = new AFn() {
-            @Override
-            public Object invoke(Object x) {
-                g.failed = true;
-                return g.resume.invoke(x);
-            }
-        };
-        Object a;
-        while (!Process.ALIVE.compareAndSet(p, a = p.alive, a instanceof Integer ?
-                ((Integer) a) + 1 : ((IPersistentSet) a).cons(g)));
-        if (a instanceof Integer) cancel(g);
-        return g;
-    }
-
-    static void cancel(Gather g) {
-        IFn t;
-        while ((t = g.token) != null && !Gather.TOKEN.compareAndSet(g, t, null));
-        if (t != null) t.invoke();
-    }
-
-    static Process process(IFn c, IFn n, IFn t) {
-        Process p = new Process();
-        p.notifier = n;
-        p.terminator = t;
-        RUN.invoke(c, gather(p), null);
-        return p;
-    }
-
-    static Gather reverse(Gather prev) {
-        Gather next = null;
-        while (prev != null) {
-            Gather swap = prev.next;
-            prev.next = next;
-            next = prev;
-            prev = swap;
-        }
-        return next;
-    }
-
-    static Gather emitter(Gather next) {
-        while (next != null && next.choice != null && next.choice.type == Choice.GATHER) {
-            Gather g = next;
-            next = g.next;
-            if (null == ready(g.choice)) more(g);
-        }
-        return next;
-    }
-
-    IFn RUN = new AFn() {
-        @Override
-        public Object invoke(Object c, Object t, Object x) {
-            Gather f = (Gather) t;
-            f.coroutine = (IFn) c;
-            return f.resume.invoke(x);
-        }
-    };
-
     final class Process extends AFn implements IDeref {
 
-        static final AtomicReferenceFieldUpdater<Process, Object> QUEUE =
-                AtomicReferenceFieldUpdater.newUpdater(Process.class, Object.class, "queue");
-
-        static final AtomicReferenceFieldUpdater<Process, Object> ALIVE =
-                AtomicReferenceFieldUpdater.newUpdater(Process.class, Object.class, "alive");
-
-        volatile Object queue = QUEUE;
-        volatile Object alive = PersistentHashSet.EMPTY;
+        static {
+            Util.printDefault(Process.class);
+        }
 
         IFn notifier;
         IFn terminator;
-        Gather head;
+        Branch head;
+        Branch tail;
+        Branch child;
 
         @Override
-        public Object invoke() {
-            for(;;) {
-                Object a = alive;
-                if (a instanceof Integer) return null;
-                if (ALIVE.compareAndSet(this, a, ((IPersistentSet) a).count())) {
-                    for (Object o : (Iterable) a) cancel((Gather) o);
-                    return null;
-                }
-            }
+        public synchronized Object invoke() {
+            kill(this);
+            return null;
         }
 
         @Override
-        public Object deref() {
-            try {
-                return head.unpark();
-            } catch (Throwable e) {
-                notifier = new AFn() {
-                    @Override
-                    public Object invoke() {
-                        try {deref();} catch (Throwable _) {}
-                        return null;
-                    }
-                };
-                invoke();
-                throw e;
-            } finally {
-                Gather next = emitter(head.next);
-                if (head.choice == null) terminate(head);
-                else if (null == ready(head.choice)) more(head);
-                if (next == null) {
-                    Gather prev;
-                    while (!QUEUE.compareAndSet(this, prev = (Gather) queue, prev == null ? QUEUE : null)
-                            || ((next = emitter(reverse(prev))) == null && prev != null));
-                }
-                if (next != null) {
-                    head = next;
-                    notifier.invoke();
-                }
-            }
+        public synchronized Object deref() {
+            return transfer(this);
         }
     }
 
-    final class Gather implements Fiber {
-
-        static final AtomicReferenceFieldUpdater<Gather, IFn> TOKEN =
-                AtomicReferenceFieldUpdater.newUpdater(Gather.class, IFn.class, "token");
-
-        static final AtomicIntegerFieldUpdater<Gather> PRESSURE =
-                AtomicIntegerFieldUpdater.newUpdater(Gather.class, "pressure");
-
-        IFn resume;
-        IFn rethrow;
-
-        volatile IFn token = NOP;
-        volatile int pressure = -1;
-
-        Process process;
-        IFn coroutine;
-        boolean failed;
-        Object current;
+    final class Branch implements Fiber {
+        Object parent;
+        Branch prev;
+        Branch next;
+        Branch queue;
         Choice choice;
-        Gather next;
+        Object current;
 
         @Override
-        public Object poll() {
-            return choice == null ? token == null :
-                    choice.token == null || (choice.type == Choice.SWITCH && choice.ready == null && !choice.done) ?
-                clojure.lang.Util.sneakyThrow(new Cancelled("Process cancelled.")) : null;
+        public Object check() {
+            return choice.live ? null : clojure.lang.Util.sneakyThrow(new Cancelled("Process cancelled."));
         }
 
         @Override
-        public Object task(IFn t) {
-            swap(this, (IFn) t.invoke(resume, rethrow));
-            return CURRENT;
+        public Object park(IFn task) {
+            return suspend(this, null, task);
         }
 
         @Override
-        public Object flowConcat(IFn f) {
-            choice(this, f, Choice.CONCAT);
-            return CURRENT;
+        public Object swich(IFn flow) {
+            return suspend(this, -1, flow);
         }
 
         @Override
-        public Object flowSwitch(IFn f) {
-            choice(this, f, Choice.SWITCH);
-            return CURRENT;
-        }
-
-        @Override
-        public Object flowGather(IFn f) {
-            choice(this, f, Choice.GATHER);
-            return CURRENT;
+        public Object fork(Number par, IFn flow) {
+            return suspend(this, par, flow);
         }
 
         @Override
         public Object unpark() {
-            boolean t = failed;
-            failed = false;
-            Object x = current;
-            current = null;
-            return t ? clojure.lang.Util.sneakyThrow((Throwable) x) : x;
+            return resume(this);
         }
     }
 
-    final class Choice extends AFn {
-        static final int CONCAT = 0;
-        static final int SWITCH = 1;
-        static final int GATHER = 2;
-
-        static final AtomicReferenceFieldUpdater<Choice, IFn> TOKEN =
-                AtomicReferenceFieldUpdater.newUpdater(Choice.class, IFn.class, "token");
-
-        static final AtomicReferenceFieldUpdater<Choice, IFn> READY =
-                AtomicReferenceFieldUpdater.newUpdater(Choice.class, IFn.class, "ready");
-
-        volatile IFn token = NOP;
-        volatile IFn ready = NOP;
-
-        Choice parent;
-        IFn backtrack;
+    final class Choice {
+        Branch branch;
+        Choice prev;
+        Choice next;
+        IFn coroutine;
         Object iterator;
-        int type;
+        Number parallelism;
+        boolean live;
+        boolean busy;
         boolean done;
+    }
 
+    final class Processor {
+        Branch branch;
+        Processor prev;
+        Processor next;
+        Branch child;
+    }
+
+    IFn boot = new AFn() {
         @Override
-        public Object invoke() {
-            for (;;) {
-                IFn c = token;
-                if (c == null) break;
-                if (TOKEN.compareAndSet(this, c, null)) {
-                    ((IFn) iterator).invoke();
-                    c.invoke();
-                    break;
-                }
-            }
+        public Object invoke(Object cr, Object c) {
+            Choice choice = (Choice) c;
+            choice.coroutine = (IFn) cr;
+            ready(choice);
             return null;
         }
+    };
+
+    static void backtrack(Choice p, Branch b, Choice c) {
+        try {
+            c.iterator = NOP;
+            b.choice = c;
+            b.current = ((IDeref) p.iterator).deref();
+            p.coroutine.invoke(boot, c);
+        } catch (Throwable e) {
+            c.done = true;
+            b.current = e;
+            boot.invoke(p.coroutine, c);
+        }
     }
 
+    static void choose(Choice p) {
+        Branch b = p.branch;
+        Choice n = p.next;
+        Choice c = new Choice();
+        c.prev = p;
+        c.next = n;
+        c.branch = b;
+        c.live = p.live;
+        p.next = n.prev = c;
+        backtrack(p, b, c);
+    }
+
+    static void branch(Choice p) {
+        p.parallelism = Numbers.dec(p.parallelism);
+        Branch parent = p.branch;
+        Processor prev = (Processor) parent.current;
+        Processor curr = new Processor();
+        curr.branch = parent;
+        Branch b = new Branch();
+        b.parent = curr;
+        Choice c = new Choice();
+        c.branch = b;
+        c.live = p.live;
+        parent.current = curr;
+        if (prev == null) curr.prev = curr.next = curr;
+        else {
+            Processor next = prev.next;
+            prev.next = next.prev = curr;
+            curr.prev = prev;
+            curr.next = next;
+        }
+        curr.child = b.prev = b.next = b;
+        c.prev = c.next = c;
+        backtrack(p, b, c);
+    }
+
+    static Process root(Branch b) {
+        Object node = b.parent;
+        for(;;) if (node instanceof Processor) node = ((Processor) node).branch.parent;
+        else if (node instanceof Branch) node = ((Branch) node).parent; else break;
+        return (Process) node;
+    }
+
+    static void kill(Process ps) {
+        Branch b = ps.child;
+        if (b != null) walk(b.next);
+    }
+
+    static void cancel(Choice c) {
+        Branch b = c.branch;
+        for(;;) {
+            if (!c.live) break;
+            c.live = false;
+            ((IFn) c.iterator).invoke();
+            Choice t = b.choice;
+            if (t == null) break;
+            do c = c.next; while (c.prev == null);
+            if (c == t.next) {
+                Object curr = b.current;
+                if (curr instanceof Processor) {
+                    Processor pr = ((Processor) curr).next;
+                    for(;;) {
+                        walk(pr.child.next);
+                        curr = b.current;
+                        if (curr == null) break;
+                        do pr = pr.next; while (pr.prev == null);
+                        if (pr == ((Processor) curr).next) break;
+                    }
+                } else if (curr instanceof Branch) walk(((Branch) curr).next);
+                break;
+            }
+        }
+    }
+
+    static void walk(Branch b) {
+        for(;;) {
+            cancel(b.choice.next);
+            Object node = b.parent;
+            Branch t = node instanceof Processor ? ((Processor) node).child :
+                    node instanceof Branch ? (Branch) ((Branch) node).current : ((Process) node).child;
+            if (t == null) break;
+            do b = b.next; while (b.prev == null);
+            if (b == t.next) break;
+        }
+    }
+
+    static void move(Branch x, Branch y) {
+        Object p = x.parent;
+        Branch b = y;
+        do (b = b.next).parent = p; while (b != y);
+        Branch xx = x.next;
+        Branch yy = y.next;
+        (x.next = yy).prev = x;
+        (y.next = xx).prev = y;
+    }
+
+    static void discard(Branch b) {
+        Object parent = b.parent;
+        Branch prev = b.prev;
+        Branch next = b.next;
+        b.prev = null;
+        b.choice = null;
+        b.current = null;
+        if (parent instanceof Branch) {
+            Branch br = (Branch) parent;
+            if (b == prev) {
+                Choice c = br.choice;
+                br.current = null;
+                if (c.busy && c.done) {
+                    c.busy = c.done = false;
+                    choose(c);
+                }
+            } else {
+                prev.next = next;
+                next.prev = prev;
+                if (br.current == b) br.current = prev;
+            }
+        } else if (parent instanceof Processor) {
+            Processor pr = (Processor) parent;
+            if (b == prev) {
+                b = pr.branch;
+                Choice c = b.choice;
+                Processor p = pr.prev;
+                Processor n = pr.next;
+                pr.child = null;
+                pr.prev = null;
+                if (pr == p) b.current = null; else {
+                    p.next = n;
+                    n.prev = p;
+                    b.current = p;
+                }
+                c.parallelism = Numbers.inc(c.parallelism);
+                if (c.busy && c.done) {
+                    c.busy = c.done = false;
+                    branch(c);
+                }
+            } else {
+                prev.next = next;
+                next.prev = prev;
+                if (pr.child == b) pr.child = prev;
+            }
+        } else {
+            Process ps = (Process) parent;
+            if (b == prev) {
+                ps.child = null;
+                ps.terminator.invoke();
+            } else {
+                prev.next = next;
+                next.prev = prev;
+                if (ps.child == b) ps.child = prev;
+            }
+        }
+    }
+
+    static void ack(Choice c) {
+        if (c.busy && c.done) {
+            c.busy = c.done = false;
+            if (Numbers.isNeg(c.parallelism)) choose(c);
+            else branch(c);
+        }
+    }
+
+    static Branch done(Branch b) {
+        Branch q = b.queue;
+        Choice c = b.choice;
+        Choice p = c.prev;
+        c.prev = null;
+        b.queue = null;
+        if (p == c) discard(b); else {
+            Choice n = c.next;
+            n.prev = p;
+            p.next = n;
+            b.choice = p;
+            b.current = null;
+            ack(p);
+        }
+        return q;
+    }
+
+    static Object transfer(Process ps) {
+        Branch b = ps.head;
+        Object x = b.current;
+        if (b.choice.done) {
+            ps.notifier = null;
+            kill(ps);
+            b = done(b);
+            while (b != null) b = done(b);
+            b = ps.tail;
+            while (b != null) b = done(b);
+            ps.head = ps.tail = null;
+            clojure.lang.Util.sneakyThrow((Throwable) x);
+        }
+        Branch next = done(b);
+        if (next == null) {
+            Branch prev = ps.tail;
+            if (prev == null) ps.head = null;
+            else {
+                do {
+                    Branch swap = prev.queue;
+                    prev.queue = next;
+                    next = prev;
+                    prev = swap;
+                } while (prev != null);
+                ps.tail = null;
+                ps.head = next;
+                ps.notifier.invoke();
+            }
+        } else {
+            ps.head = next;
+            ps.notifier.invoke();
+        }
+        return x;
+    }
+
+    static void ready(Choice c) {
+        if (c.busy = !c.busy) for(;;) {
+            Branch b = c.branch;
+            Number par = c.parallelism;
+            Object curr = b.current;
+            if (par == null) {
+                Object x;
+                Fiber prev = fiber.get();
+                fiber.set(b);
+                try {
+                    x = c.coroutine.invoke();
+                } catch (Throwable e) {
+                    c.done = true;
+                    x = e;
+                }
+                fiber.set(prev);
+                if (x == b) if (c.busy = !c.busy) {} else break; else {
+                    b.current = x;
+                    Process ps = root(b);
+                    IFn n = ps.notifier;
+                    if (n == null) done(b); else if (ps.head == null) {
+                        ps.head = b;
+                        n.invoke();
+                    } else {
+                        b.queue = ps.tail;
+                        ps.tail = b;
+                    }
+                    break;
+                }
+            } else if (c.done) {
+                Choice p = c.prev;
+                c.prev = null;
+                if (c == p) {
+                    if (curr instanceof Branch) move(b, (Branch) curr);
+                    else if (curr instanceof Processor) {
+                        Processor pr = (Processor) curr;
+                        do move(b, (pr = pr.next).child); while (pr != b.current);
+                    }
+                    discard(b);
+                } else {
+                    Choice n = c.next;
+                    n.prev = p;
+                    p.next = n;
+                    if (c == b.choice) {
+                        b.choice = p;
+                        if (curr == null) ack(p); else if (curr instanceof Processor) {
+                            Processor pr = (Processor) curr;
+                            Branch pivot = pr.child;
+                            b.current = pivot;
+                            pivot.parent = b;
+                            while ((pr = pr.next) != curr) move(pivot, pr.child);
+                            pr.prev = pr.next = pr;
+                        }
+                    }
+                }
+                break;
+            } else if (Numbers.isPos(par)) {
+                c.busy = false;
+                branch(c);
+                break;
+            } else if (Numbers.isNeg(par)) if (c == b.choice) if (curr == null) {
+                c.busy = false;
+                choose(c);
+                break;
+            } else {
+                c.done = true;
+                walk(((Branch) curr).next);
+                break;
+            } else {
+                c.done = true;
+                cancel(c.next);
+                break;
+            } else {
+                c.done = true;
+                break;
+            }
+        }
+    }
+
+    static Object suspend(Branch b, Number par, IFn flow) {
+        Choice c = b.choice;
+        c.parallelism = par;
+        c.iterator = flow.invoke(new AFn() {
+            @Override
+            public Object invoke() {
+                Branch b = c.branch;
+                synchronized (root(b)) {
+                    ready(c);
+                    return null;
+                }
+            }
+            @Override
+            public Object invoke(Object x) {
+                Branch b = c.branch;
+                synchronized (root(b)) {
+                    b.current = x;
+                    ready(c);
+                    return null;
+                }
+            }
+        }, new AFn() {
+            @Override
+            public Object invoke() {
+                Branch b = c.branch;
+                synchronized (root(b)) {
+                    c.done = true;
+                    ready(c);
+                    return null;
+                }
+            }
+            @Override
+            public Object invoke(Object x) {
+                Branch b = c.branch;
+                synchronized (root(b)) {
+                    c.done = true;
+                    b.current = x;
+                    ready(c);
+                    return null;
+                }
+            }
+        });
+        if (!c.live) ((IFn) c.iterator).invoke();
+        return b;
+    }
+
+    static Object resume(Branch b) {
+        Choice c = b.choice;
+        Object x = b.current;
+        b.current = null;
+        if (c.done) {
+            c.done = false;
+            clojure.lang.Util.sneakyThrow((Throwable) x);
+        }
+        return x;
+    }
+
+    static Object run(IFn cr, IFn n, IFn t) {
+        Process ps = new Process();
+        synchronized (ps) {
+            Branch b = new Branch();
+            Choice c = new Choice();
+            c.iterator = NOP;
+            c.live = true;
+            c.branch = b;
+            b.parent = ps;
+            ps.notifier = n;
+            ps.terminator = t;
+            ps.child = b.prev = b.next = b;
+            b.choice = c.prev = c.next = c;
+            boot.invoke(cr, c);
+            return ps;
+        }
+    }
 }

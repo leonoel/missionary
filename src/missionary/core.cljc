@@ -2,8 +2,8 @@
   (:refer-clojure :exclude [reduce reductions eduction group-by])
   (:require [missionary.impl :as i]
             [cloroutine.core :refer [cr] :include-macros true])
-  (:import (missionary.impl Reduce Reductions GroupBy Relieve Latest Sample Reactor))
-  #?(:cljs (:require-macros [missionary.core :refer [sp ap amb> amb= ?? ?! holding reactor]])))
+  (:import (missionary.impl Reduce Reductions GroupBy Relieve Latest Sample Reactor Fiber Sequential Ambiguous Continuous))
+  #?(:cljs (:require-macros [missionary.core :refer [sp ap cp amb amb> amb= ! ? ?> ?< ?? ?! ?= holding reactor]])))
 
 
 (def
@@ -155,110 +155,153 @@ milliseconds). Otherwise, input is cancelled and the process succeeds with `valu
        (absolve)))))
 
 
-(defn
-  ^{:static true
-    :arglists '([])
-    :doc "
-Throws an exception if current computation is required to terminate, otherwise returns nil.
+(defn ^:no-doc check []
+  (Fiber/check (Fiber/current)))
 
-Inside a process block, checks process cancellation status.
+(defn ^:no-doc park [task]
+  (Fiber/park (Fiber/current) task))
 
-Outside of process blocks, fallbacks to thread interruption status if host platform supports it.
-"} ! [] (i/fiber-poll))
+(defn ^:no-doc switch [flow]
+  (Fiber/swich (Fiber/current) flow))
+
+(defn ^:no-doc fork [par flow]
+  (assert (pos? par) "Non-positive parallelism.")
+  (Fiber/fork (Fiber/current) par flow))
+
+(defn ^:no-doc unpark []
+  (Fiber/unpark (Fiber/current)))
+
+(defn ^:no-doc sp-run [c s f]
+  (Sequential/run c s f))
+
+(defn ^:no-doc cp-run [c n t]
+  (Continuous/run c n t))
+
+(defn ^:no-doc ap-run [c n t]
+  (Ambiguous/run c n t))
+
+(defmacro ! "
+Throws an instance of `missionary.Cancelled` if current evaluation context is interrupted, otherwise returns nil. The
+evaluation context defaults to the current thread if the host platform supports it, and can be redefined with `sp`,
+`ap`, or `cp`.
+" [] `(check))
 
 
-(defn
-  ^{:arglists '([task])
-    :doc "
-Runs given task, waits for completion and returns result (or throws, if task fails).
-
-Inside a process block, parks the process.
-
-Outside of process blocks, fallbacks to thread blocking if host platform supports it.
-"} ? [t] (i/fiber-task t))
+(defmacro ? "
+Parks current evaluation context by given task. Evaluation resumes when the task completes, result is returned or
+rethrown according to completion status. Interrupting the evaluation context cancels the parking task. The evaluation
+context defaults to the current thread if the host platform supports it, and can be redefined with `sp` or `ap`.
+" [task] `(park ~task))
 
 
-(defn
-  ^{:arglists '([flow])
-    :doc "
-In an ambiguous process block, runs given `flow` non-preemptively (aka concat), forking process for each emitted value.
+(defmacro ?> "
+Forks current evaluation context by given flow. Evaluation resumes whenever the flow transfers, result is returned or
+rethrown according to transfer status. Each transfer creates a new processing branch and defines a new evaluation
+context inherited from its parent. `par` is an optional positive number, defaulting to 1, defining the maximal count
+of processing branches allowed to be run concurrently. Interrupting the parent evaluation context cancels the forking
+flow and interrupts all processing branches currently being run and those subsequently run. The evaluation context is
+undefined by default and can be defined with `ap`.
 
 Example :
 ```clojure
-(? (reduce conj (ap (inc (?> (seed [1 2 3]))))))
+(require '[missionary.core :as m])
+(m/? (m/reduce conj (m/ap (inc (m/?> (m/seed [1 2 3]))))))
 #_=> [2 3 4]
 ```
-"} ?> [f] (i/fiber-flow-concat f))
+
+Example :
+```clojure
+(require '[missionary.core :as m])
+(m/? (->> (m/ap
+            (let [x (m/?> 5 (m/seed [19 57 28 6 87]))]
+              (m/? (m/sleep x x))))
+       (m/reduce conj)))
+#_=> [6 19 28 57 87]    ;; in 87 ms
+```
+" ([flow] `(fork 1 ~flow))
+  ([par flow] `(fork ~par ~flow)))
+
 
 (defmacro ^{:deprecated true
             :doc "Alias for `?>`"}
   ?? [f] `(?> ~f))
 
 
-(defn
-  ^{:arglists '([flow])
-    :doc "
-In an ambiguous process block, runs given `flow` preemptively (aka switch), forking process for each emitted value. Forked process is cancelled if `flow` emits another value before it terminates.
+(defmacro ?< "
+Forks current evaluation context by given flow. Evaluation resumes whenever the flow transfers, result is returned or
+rethrown according to transfer status. Each transfer creates a new processing branch and defines a new evaluation
+context inherited from its parent. Concurrent processing branches are not allowed, and the current processing branch is
+interrupted when the forking flow becomes ready to transfer again. Interrupting the parent evaluation context cancels
+the forking flow and interrupts all processing branches currently being run and those subsequently run. The evaluation
+context is undefined by default and can be defined with `ap` or `cp`.
 
 Example :
 ```clojure
-(defn debounce [delay flow]
-  (ap (let [x (?< flow)]
-    (try (? (sleep delay x))
-         (catch Exception _ (?> none))))))
+(require '[missionary.core :as m])
+(import missionary.Cancelled)
 
-(? (->> (ap (let [n (?> (seed [24 79 67 34 18 9 99 37]))]
-              (? (sleep n n))))
-        (debounce 50)
-        (reduce conj)))
-```
+(defn debounce [delay flow]
+  (m/ap (let [x (m/?< flow)]
+          (try (m/? (m/sleep delay x))
+               (catch Cancelled _ (m/amb))))))
+
+(m/? (->> (m/ap (let [n (m/amb 24 79 67 34 18 9 99 37)]
+                  (m/? (m/sleep n n))))
+       (debounce 50)
+       (m/reduce conj)))
 #_=> [24 79 9 37]
-"} ?< [f] (i/fiber-flow-switch f))
+```
+" [flow] `(switch ~flow))
+
 
 (defmacro ^{:deprecated true
             :doc "Alias for `?<`"}
   ?! [f] `(?< ~f))
 
 
-(defn
+(defmacro
   ^{:arglists '([flow])
-    :doc "
-In an ambiguous process block, runs given `flow` and concurrently forks current process for each value produced by the flow. Values emitted by forked processes are gathered and emitted as soon as available.
-
-Example :
-```clojure
-(? (->> (m/ap
-          (let [x (m/?= (m/seed [19 57 28 6 87]))]
-            (m/? (m/sleep x x))))
-        (reduce conj)))
-
-#_=> [6 19 28 57 87]
-```
-"} ?= [f] (i/fiber-flow-gather f))
+    :deprecated true
+    :doc "Alias for `(?> ##Inf flow)`"}
+  ?= [flow] `(?> ##Inf ~flow))
 
 
 (defmacro
   ^{:arglists '([& body])
     :doc "
-Returns a task evaluating `body` (in an implicit `do`). Body evaluation can be parked with `?`.
-
-Cancelling an `sp` task triggers cancellation of the task it's currently running, along with all tasks subsequently run.
+Returns a task evaluating `body` (in an implicit `do`) in a new evaluation context and completing its result. Body
+evaluation can be parked by a task with `?`. Cancelling a `sp` process interrupts its evaluation context.
 "} sp [& body]
-  `(partial (cr {? i/fiber-unpark} ~@body) i/sp))
+  `(partial
+     (cr {park unpark}
+       ~@body) sp-run))
 
 
 (defmacro
   ^{:arglists '([& body])
     :doc "
-Returns a flow evaluating `body` (in an implicit `do`) and producing values of each subsequent fork. Body evaluation can be parked with `?` and forked with `?>`, `?<` and `?=`.
+Returns a continuous flow evaluating `body` (in an implicit `do`) in a new evaluation context and producing values of
+each subsequent fork. Body evaluation can be forked by a continuous flow with `?<`. Evaluation and transfers are lazy,
+driven by downstream sampling. Cancelling an `cp` process interrupts its root evaluation context.
+"} cp [& body]
+  `(partial
+     (cr {switch unpark}
+       ~@body) cp-run))
 
-Cancelling an `ap` flow triggers cancellation of the task/flow it's currently running, along with all tasks/flows subsequently run.
+
+(defmacro
+  ^{:arglists '([& body])
+    :doc "
+Returns a discrete flow evaluating `body` (in an implicit `do`) in a new evaluation context and producing values of each
+subsequent fork. Body evaluation can be parked by a task with `?` and forked by a flow with `?>` and `?<`. Evaluation
+and transfers are eager, backpressured by downstream transfers. Cancelling an `ap` process interrupts its root
+evaluation context.
 "} ap [& body]
-  `(partial (cr {?  i/fiber-unpark
-                 ?> i/fiber-unpark
-                 ?< i/fiber-unpark
-                 ?= i/fiber-unpark}
-              ~@body) i/ap))
+  `(partial
+     (cr {park unpark
+          fork unpark
+          switch unpark}
+       ~@body) ap-run))
 
 
 (defn
@@ -438,17 +481,32 @@ Returns a discrete flow producing values from given `collection`. Cancelling bef
 (defmacro
   ^{:arglists '([& forms])
     :doc "In an `ap` block, evaluates each form sequentially and returns successive results."}
-  amb> [& forms]
-  `(case (?> (seed (range ~(count forms))))
-     ~@(interleave (range) forms)))
+  amb
+  ([] `(?> none))
+  ([form] form)
+  ([form & forms]
+   (let [n (inc (count forms))]
+     `(case (?> (seed (range ~n)))
+        ~@(interleave (range) (cons form forms))))))
 
 
 (defmacro
   ^{:arglists '([& forms])
     :doc "In an `ap` block, evaluates each form concurrently and returns results in order of availability."}
-  amb= [& forms]
-  `(case (?= (seed (range ~(count forms))))
-     ~@(interleave (range) forms)))
+  amb=
+  ([] `(?> none))
+  ([form] form)
+  ([form & forms]
+   (let [n (inc (count forms))]
+     `(case (?> ~n (seed (range ~n)))
+        ~@(interleave (range) (cons form forms))))))
+
+
+(defmacro
+  ^{:deprecated true
+    :arglists '([& forms])
+    :doc "Alias for `amb`"}
+  amb> [& forms] (cons `amb forms))
 
 
 (defn
@@ -655,28 +713,6 @@ Example :
 #_=> [[24 86] [24 12] [79 37] [67 93]]
 ```
 "} sample (fn [c f & fs] (fn [n t] (Sample/run c f fs n t))))
-
-
-(defn
-  ^{:deprecated true
-    :static true
-    :arglists '([& flows])
-    :doc "
-Returns a discrete flow running given discrete `flows` in parallel and emitting upstream values unchanged, as soon as they're available, until every upstream flow is terminated.
-
-Cancelling propagates to every upstream flow. If any upstream flow fails, the flow is cancelled.
-
-Example :
-```clojure
-(? (->> (gather (seed [1 2 3])
-                (seed [:a :b :c]))
-        (reduce conj)))
-#_=> [1 :a 2 :b 3 :c]
-```
-"} gather
-  ([] none)
-  ([f] f)
-  ([f & fs] (ap (?> (?= (seed (cons f fs)))))))
 
 
 (defn

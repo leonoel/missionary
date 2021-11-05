@@ -70,7 +70,7 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
   {:results (map =? [6 19 28 57 87])
    :timeout 250}
   (m/ap
-    (let [x (m/?= (m/seed [19 57 28 6 87]))]
+    (let [x (m/amb= 19 57 28 6 87)]
       (m/? (m/sleep x x)))))
 
 (defflow debounce
@@ -79,8 +79,8 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
   (letfn [(deb [delay flow]
             (m/ap (let [x (m/?< flow)]
                     (if-try [x (m/? (m/sleep delay x))]
-                      x (m/?> m/none)))))]
-    (->> (m/ap (let [n (m/?> (m/seed [24 79 67 34 18 9 99 37]))]
+                      x (m/amb)))))]
+    (->> (m/ap (let [n (m/amb 24 79 67 34 18 9 99 37)]
                  (m/? (m/sleep n n))))
          (deb 50))))
 
@@ -89,7 +89,7 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
    :timeout 10}
   (let [counter (partial swap! (atom 0) inc)]
     (m/reduce (fn [r x] (conj r [x (counter)])) []
-      (m/ap (m/? (m/sleep (m/amb> 0 0) (counter)))))))
+      (m/ap (m/? (m/sleep (m/amb 0 0) (counter)))))))
 
 (deftask aggregate
   {:success (=? [1 2 3])}
@@ -145,14 +145,6 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
   {:failure fine?}
   (m/eduction identity (m/ap (fine!))))
 
-(defflow gather
-  {:results (map =? [1 :a 2 :b 3 :c])}
-  (m/gather (m/seed [1 2 3]) (m/seed [:a :b :c])))
-
-(defflow gather-input-failure
-  {:failure fine?}
-  (m/gather (m/ap (fine!)) (m/seed [1 2 3])))
-
 (defflow zip
   {:results (map =? [[1 :a] [2 :b] [3 :c]])}
   (m/zip vector (m/seed [1 2 3]) (m/seed [:a :b :c])))
@@ -172,7 +164,7 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
 (defflow relieve
   {:results (map =? [24 79 67 61 99 37])
    :timeout 1000}
-  (->> (m/ap (let [n (m/?> (m/seed [24 79 67 34 18 9 99 37]))]
+  (->> (m/ap (let [n (m/amb 24 79 67 34 18 9 99 37)]
                (m/? (m/sleep n n))))
     (m/relieve +)
     (delay-each 80)))
@@ -337,7 +329,7 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
     (m/ap
       (->> (m/seed (shuffle (range 971)))
         (m/group-by #(evil-keys (mod % 167)))
-        (m/?=)
+        (m/?> 167)
         (val)
         (m/eduction (take 13))
         (m/reduce +)

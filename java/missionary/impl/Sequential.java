@@ -3,110 +3,127 @@ package missionary.impl;
 import clojure.lang.*;
 import missionary.Cancelled;
 
-import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
-import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
+import static missionary.impl.Fiber.fiber;
 
-import static missionary.impl.Util.NOP;
+public interface Sequential {
 
-public final class Sequential extends AFn implements Fiber {
+    class Process extends AFn implements Fiber {
 
-    static final AtomicReferenceFieldUpdater<Sequential, IFn> TOKEN =
-            AtomicReferenceFieldUpdater.newUpdater(Sequential.class, IFn.class, "token");
+        static {
+            Util.printDefault(Process.class);
+        }
 
-    static final AtomicIntegerFieldUpdater<Sequential> PRESSURE =
-            AtomicIntegerFieldUpdater.newUpdater(Sequential.class, "pressure");
+        IFn coroutine;
+        IFn success;
+        IFn failure;
+        IFn resume;
+        IFn rethrow;
 
-    volatile IFn token = NOP;
-    volatile int pressure;
+        boolean busy;
+        boolean failed;
+        Object current;
+        IFn token = Util.NOP;
 
-    IFn success;
-    IFn failure;
-    IFn coroutine;
-
-    boolean failed;
-    Object current;
-
-    IFn resume = new AFn() {
         @Override
-        public Object invoke(Object x) {
-            current = x;
-            if (0 == PRESSURE.incrementAndGet(Sequential.this)) step();
+        public synchronized Object invoke() {
+            kill(this);
             return null;
         }
-    };
 
-    IFn rethrow = new AFn() {
         @Override
-        public Object invoke(Object x) {
-            failed = true;
-            return resume.invoke(x);
+        public synchronized Object check() {
+            return token == null ? clojure.lang.Util.sneakyThrow(new Cancelled("Process cancelled.")) : null;
         }
-    };
 
-    void step() {
-        Fiber prev = CURRENT.get();
-        CURRENT.set(this);
-        do try {
-            Object x = coroutine.invoke();
-            if (x != CURRENT) success.invoke(x);
-        } catch (Throwable e) {
-            failure.invoke(e);
-        } while (0 == PRESSURE.decrementAndGet(this));
-        CURRENT.set(prev);
-    }
+        @Override
+        public Object park(IFn t) {
+            return suspend(this, t);
+        }
 
-    public Sequential(IFn c, IFn s, IFn f) {
-        success = s;
-        failure = f;
-        coroutine = c;
-        step();
-    }
+        @Override
+        public Object swich(IFn f) {
+            throw new UnsupportedOperationException();
+        }
 
-    @Override
-    public Object invoke() {
-        for(;;) {
-            IFn t = token;
-            if (t == null) break;
-            if (TOKEN.compareAndSet(this, t, null)) {
-                t.invoke();
-                break;
+        @Override
+        public Object fork(Number b, IFn f) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Object unpark() {
+            Object x = current;
+            current = null;
+            if (failed) {
+                failed = false;
+                clojure.lang.Util.sneakyThrow((Throwable) x);
             }
+            return x;
         }
-        return null;
     }
 
-    @Override
-    public Object poll() {
-        return token == null ? clojure.lang.Util.sneakyThrow(new Cancelled("Process cancelled.")) : null;
+    static void kill(Process ps) {
+        IFn c = ps.token;
+        if (c != null) {
+            ps.token = null;
+            c.invoke();
+        }
     }
 
-    @Override
-    public Object task(IFn t) {
-        Util.swap(this, TOKEN, (IFn) t.invoke(resume, rethrow));
-        return CURRENT;
+    static Object suspend(Process ps, IFn task) {
+        IFn c = (IFn) task.invoke(ps.resume, ps.rethrow);
+        if (ps.token == null) c.invoke();
+        else ps.token = c;
+        return ps;
     }
 
-    @Override
-    public Object flowConcat(IFn f) {
-        throw new UnsupportedOperationException();
+    static void step(Process ps) {
+        if (ps.busy = !ps.busy) {
+            Fiber prev = fiber.get();
+            fiber.set(ps);
+            try {
+                Object x;
+                for(;;) if (ps == (x = ps.coroutine.invoke())) if (ps.busy = !ps.busy) {}
+                else break; else {
+                    ps.success.invoke(x);
+                    break;
+                }
+            } catch (Throwable e) {
+                ps.failure.invoke(e);
+            }
+            fiber.set(prev);
+        }
     }
 
-    @Override
-    public Object flowSwitch(IFn f) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Object flowGather(IFn f) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Object unpark() {
-        boolean t = failed;
-        failed = false;
-        Object x = current;
-        current = null;
-        return t ? clojure.lang.Util.sneakyThrow((Throwable) x) : x;
+    static Process run(IFn c, IFn s, IFn f) {
+        Process ps = new Process();
+        synchronized (ps) {
+            ps.coroutine = c;
+            ps.success = s;
+            ps.failure = f;
+            ps.resume = new AFn() {
+                @Override
+                public Object invoke(Object x) {
+                    synchronized (ps) {
+                        ps.current = x;
+                        step(ps);
+                        return null;
+                    }
+                }
+            };
+            ps.rethrow = new AFn() {
+                @Override
+                public Object invoke(Object x) {
+                    synchronized (ps) {
+                        ps.failed = true;
+                        ps.current = x;
+                        step(ps);
+                        return null;
+                    }
+                }
+            };
+            step(ps);
+            return ps;
+        }
     }
 }
