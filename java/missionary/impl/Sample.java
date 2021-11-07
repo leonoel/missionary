@@ -1,129 +1,165 @@
 package missionary.impl;
 
-
 import clojure.lang.AFn;
 import clojure.lang.IDeref;
 import clojure.lang.IFn;
-import clojure.lang.PersistentHashMap;
+import clojure.lang.RT;
 
-import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+import java.util.Iterator;
 
-public final class Sample extends AFn implements IDeref {
+public interface Sample {
 
-    static final AtomicIntegerFieldUpdater<Sample> STATE =
-            AtomicIntegerFieldUpdater.newUpdater(Sample.class, "state");
+    class Process extends AFn implements IDeref {
 
-    static final int SAMPLED_BUSY = 1 << 0;
-    static final int SAMPLER_BUSY = 1 << 1;
-    static final int SAMPLED_DONE = 1 << 2;
-    static final int SAMPLER_DONE = 1 << 3;
+        static {
+            Util.printDefault(Process.class);
+        }
 
-    static boolean is(int s, int m) {
-        return (s & m) == m;
-    }
+        IFn combinator;
+        IFn notifier;
+        IFn terminator;
+        Object[] args;
+        Object[] inputs;
+        boolean busy;
+        boolean done;
+        int alive;
 
-    IFn combinator;
-    IFn notifier;
-    IFn terminator;
+        @Override
+        public Object invoke() {
+            return ((IFn) inputs[inputs.length - 1]).invoke();
+        }
 
-    Object sampledIterator;
-    Object samplerIterator;
-    Object latest = STATE;
-
-    volatile int state = SAMPLED_BUSY | SAMPLER_BUSY;
-
-    void flush() {
-        int s;
-        do {
-            try {((IDeref) sampledIterator).deref();}
-            catch (Throwable _) {}
-            while (!STATE.compareAndSet(this, s = state, s ^ SAMPLED_BUSY));
-        } while (is(s, SAMPLED_BUSY));
-    }
-
-    public Sample(IFn c, IFn sd, IFn sr, IFn n, IFn t) {
-        combinator = c;
-        notifier = n;
-        terminator = t;
-        sampledIterator = sd.invoke(new AFn() {
-            @Override
-            public Object invoke() {
-                int s;
-                while (!STATE.compareAndSet(Sample.this, s = state, s ^ SAMPLED_BUSY));
-                if (is(s, SAMPLED_BUSY | SAMPLER_DONE | SAMPLER_BUSY)) flush();
-                return null;
-            }
-        }, new AFn() {
-            @Override
-            public Object invoke() {
-                int s;
-                while (!STATE.compareAndSet(Sample.this, s = state, s | SAMPLED_DONE));
-                if (is(s,    SAMPLER_DONE | SAMPLER_BUSY)) terminator.invoke();
-                return null;
-            }
-        });
-        samplerIterator = sr.invoke(new AFn() {
-            @Override
-            public Object invoke() {
-                int s;
-                while (!STATE.compareAndSet(Sample.this, s = state, s ^ SAMPLER_BUSY));
-                if (is(s, SAMPLER_BUSY)) notifier.invoke();
-                return null;
-            }
-        }, new AFn() {
-            @Override
-            public Object invoke() {
-                ((IFn) sampledIterator).invoke();
-                int s;
-                while (!STATE.compareAndSet(Sample.this, s = state, s | SAMPLER_DONE));
-                if (is(s, SAMPLER_BUSY)) {
-                    if (is(s, SAMPLED_DONE)) terminator.invoke();
-                    else if (!is(s, SAMPLED_BUSY)) flush();
-                }
-                return null;
-            }
-        });
-    }
-
-    @Override
-    public Object invoke() {
-        ((IFn) sampledIterator).invoke();
-        ((IFn) samplerIterator).invoke();
-        return null;
-    }
-
-    @Override
-    public Object deref() {
-        int s = state;
-        int m = SAMPLER_BUSY;
-        try {
-            if (!is(s, SAMPLED_BUSY)) {
-                m |= SAMPLED_BUSY;
-                latest = ((IDeref) sampledIterator).deref();
-            }
-            Object x = ((IDeref) samplerIterator).deref();
-            if (latest == STATE) throw new IllegalStateException("Unable to sample : flow is not ready.");
-            return combinator.invoke(latest, x);
-        } catch (Throwable e) {
-            latest = null;
-            combinator = PersistentHashMap.EMPTY;
-            notifier = new AFn() {
-                @Override
-                public Object invoke() {
-                    try { deref(); } catch (Throwable _) {}
-                    return null;
-                }
-            };
-            invoke();
-            throw e;
-        } finally {
-            while (!STATE.compareAndSet(this, s, s ^= m)) s = state;
-            if (is(s, SAMPLER_BUSY)) {
-                if (is(s, SAMPLER_DONE)) {
-                    if (is(s, SAMPLED_DONE)) terminator.invoke();
-                    else if (!is(s, SAMPLED_BUSY)) flush();
-                }
-            } else notifier.invoke();
+        @Override
+        public synchronized Object deref() {
+            return transfer(this);
         }
     }
+
+    static void terminate(Process p) {
+        if (--p.alive == 0) p.terminator.invoke();
+    }
+
+    static void ready(Process p) {
+        Object[] args = p.args;
+        Object[] inputs = p.inputs;
+        int sampled = inputs.length - 1;
+        while (p.busy = !p.busy)
+            if (p.done) {
+                for (int i = 0; i != sampled; i++) {
+                    Object input = inputs[i];
+                    ((IFn) input).invoke();
+                    if (args[i] == args) Util.discard(input);
+                    else args[i] = args;
+                }
+                terminate(p);
+                break;
+            }
+            else if (args[sampled] == args)
+                Util.discard(inputs[sampled]);
+            else {
+                p.notifier.invoke();
+                break;
+            }
+    }
+
+    static Object transfer(Process p) {
+        IFn c = p.combinator;
+        Object[] args = p.args;
+        Object[] inputs = p.inputs;
+        int sampled = inputs.length - 1;
+        Object sampler = inputs[sampled];
+        try {
+            try {
+                if (c == null) throw new Error("Undefined continuous flow.");
+                for (int i = 0; i != sampled; i++) if (args[i] == args) {
+                    IDeref input = (IDeref) inputs[i];
+                    Object x;
+                    do {
+                        args[i] = null;
+                        x = input.deref();
+                    } while (args[i] == args);
+                    args[i] = x;
+                }
+            } catch (Throwable e) {
+                Util.discard(sampler);
+                throw e;
+            }
+            args[sampled] = ((IDeref) sampler).deref();
+            return Util.apply(c, args);
+        } catch (Throwable e) {
+            ((IFn) sampler).invoke();
+            args[sampled] = args;
+            throw e;
+        } finally {
+            ready(p);
+        }
+    }
+
+    static void dirty(Process p, int i) {
+        Object[] args = p.args;
+        if (args[i] == args) Util.discard(p.inputs[i]);
+        else args[i] = args;
+    }
+
+    static Object run(Object c, Object f, Object fs, Object n, Object t) {
+        int arity = RT.count(fs) + 1;
+        Object[] inputs = new Object[arity];
+        Object[] args = new Object[arity];
+        Process process = new Process();
+        process.combinator = (IFn) c;
+        process.notifier = (IFn) n;
+        process.terminator = (IFn) t;
+        process.inputs = inputs;
+        process.args = args;
+        process.alive = arity;
+        IFn done = new AFn() {
+            @Override
+            public Object invoke() {
+                synchronized (process) {
+                    terminate(process);
+                    return null;
+                }
+            }
+        };
+        synchronized (process) {
+            int i = 0;
+            IFn prev = (IFn) f;
+            Iterator flows = RT.iter(fs);
+            while (flows.hasNext()) {
+                int index = i;
+                inputs[i] = prev.invoke(new AFn() {
+                    @Override
+                    public Object invoke() {
+                        synchronized (process) {
+                            dirty(process, index);
+                            return null;
+                        }
+                    }
+                }, done);
+                if (args[i] == null) process.combinator = null;
+                prev = (IFn) flows.next();
+                i++;
+            }
+            inputs[i] = prev.invoke(new AFn() {
+                @Override
+                public Object invoke() {
+                    synchronized (process) {
+                        ready(process);
+                        return null;
+                    }
+                }
+            }, new AFn() {
+                @Override
+                public Object invoke() {
+                    synchronized(process) {
+                        process.done = true;
+                        ready(process);
+                        return null;
+                    }
+                }
+            });
+        }
+        return process;
+    }
+
 }

@@ -2,7 +2,7 @@
   (:refer-clojure :exclude [reduce reductions eduction group-by])
   (:require [missionary.impl :as i]
             [cloroutine.core :refer [cr] :include-macros true])
-  (:import (missionary.impl Reduce Reductions GroupBy Relieve))
+  (:import (missionary.impl Reduce Reductions GroupBy Relieve Latest Sample Reactor))
   #?(:cljs (:require-macros [missionary.core :refer [sp ap amb> amb= ?? ?! holding reactor]])))
 
 
@@ -592,40 +592,50 @@ Returns a discrete flow producing values emitted by given discrete `flow`, accum
   (fn [n t] (i/buffer c f n t)))
 
 
-(defn
+(def
   ^{:static true
     :arglists '([f & flows])
     :doc "
-Returns a continuous flow running given continuous `flows` in parallel and combining latest value of each flow with given function `f`.
+Returns a flow running an arbitrary number of flows concurrently. The process is ready to transfer when at least one
+input is ready to transfer. On transfer, all ready inputs are transferred, the function is called with the latest
+value of each input and the result is returned. If an input emits consecutive values, all of them are transferred and
+only the latest one is retained. Each input must be initially ready.
+
+Input failures and exceptions thrown by `f` cancel the process and propagate the error. The process terminates when all
+inputs are terminated. Cancelling the process cancels all inputs.
 
 ```clojure
 (defn sleep-emit [delays]
-  (ap (let [n (?> (seed delays))]
-        (? (sleep n n)))))
+  (reductions {} 0
+    (ap (let [n (?> (seed delays))]
+          (? (sleep n n))))))
 
 (defn delay-each [delay input]
   (ap (? (sleep delay (?> input)))))
 
 (? (->> (latest vector
-                (sleep-emit [24 79 67 34])
-                (sleep-emit [86 12 37 93]))
+          (sleep-emit [24 79 67 34])
+          (sleep-emit [86 12 37 93]))
         (delay-each 50)
         (reduce conj)))
 
-#_=> [[24 86] [24 12] [79 37] [67 37] [34 93]]
+#_=> [[0 0] [24 0] [24 86] [79 12] [79 37] [67 37] [34 93]]
 ```
-"} latest
-  ([f] (ap (f)))
-  ([f & fs] (fn [n t] (i/latest f fs n t))))
+"} latest (fn [c & fs] (fn [n t] (Latest/run c fs n t))))
 
 
-(defn
+(def
   ^{:static true
-    :arglists '([f sampled sampler])
+    :arglists '([f sampled* sampler])
     :doc "
-Returns a discrete flow running given `sampler` discrete flow and `sampled` continuous flow in parallel. For each `sampler` value, emits the result of function `f` called with current values of `sampled` and `sampler`.
+Returns a flow running an arbitrary number of sampled flows concurrently with a sampler flow. The process is ready to
+transfer when the sampler is ready to transfer. On transfer, all ready inputs are transferred, the function is called
+with the latest value of each input and the result is returned. If a sampled input emits consecutive values, all of
+them are transferred and only the latest one is retained. Each sampled input must be initially ready.
 
-Cancellation propagates to both flows. When `sampler` terminates, `sampled` is cancelled. A failure in any of both flows, or `f` throwing an exception, or trying to pull a value before first value of `sampled` will cancel the flow and propagate the error.
+When the sampler input terminates, all sampled inputs are cancelled. Input failures and exceptions thrown by `f` cancel
+the process, and propagate the error. The process terminates when all input flows are terminated. Cancelling the process
+cancels the sampler input.
 
 Example :
 ```clojure
@@ -636,15 +646,15 @@ Example :
 (defn delay-each [delay input]
   (ap (? (sleep delay (?> input)))))
 
-(? (->> (sample vector
-                (sleep-emit [24 79 67 34])
-                (sleep-emit [86 12 37 93]))
-        (delay-each 50)
-        (reduce conj)))
+(m/? (->> (m/sample vector
+            (m/reductions {} 0 (sleep-emit [24 79 67 34]))
+            (sleep-emit [86 12 37 93]))
+       (delay-each 50)
+       (m/reduce conj)))
 
 #_=> [[24 86] [24 12] [79 37] [67 93]]
 ```
-"} sample [f sd sr] (fn [n t] (i/sample f sd sr n t)))
+"} sample (fn [c f & fs] (fn [n t] (Sample/run c f fs n t))))
 
 
 (defn
@@ -726,6 +736,18 @@ Example :
   ^{:static true
     :arglists '([boot])
     :doc "
+TODO
+reactor terminates when all nodes are terminated. Success if all nodes successfully terminated, first error otherwise.
+first node failure : the reactor is cancelled, will fail with this error when terminated
+cancelling the reactor : every active node is cancelled along with subsequent ones.
+cancelling a publisher : cancel underlying flow. If continuous, becomes eager.
+cancelling a subscription : the subscription fails with Cancelled.
+publisher failed : every subscription is cancelled along with subsequent ones.
+publisher completed : every subscription terminates, subsequent ones terminate immediately (after first transfer for signals)
+
+
+
+
 Returns a task spawning a reactor context with given boot function, called without argument. A reactor context manages
 the lifecycle of running flows and serializes their emissions in propagation turns. Flows running in a reactor context
 are called publishers, they can be spawned in the boot function or in reaction to any subsequent emission with `stream!`
@@ -757,7 +779,7 @@ spawning will fail. If any publisher flow fails, or if the boot function throws 
 A reactor terminates at the end of the first turn where every publisher flow is terminated, meaning no emission can
 ever happen anymore. It succeeds with the result of the boot function if no publisher failed, otherwise it fails with
 the first error encountered.
-"} reactor-call [i] (fn [s f] (i/context i s f)))
+"} reactor-call [i] (fn [s f] (Reactor/run i s f)))
 
 
 (defmacro
@@ -772,7 +794,7 @@ Calls `reactor-call` with a function evaluating given `body` in an implicit `do`
     :arglists '([flow])
     :doc "
 Spawns a discrete publisher from given flow, see `reactor-call`.
-"} stream! [f] (i/publish f true))
+"} stream! [f] (Reactor/publish f true))
 
 
 (defn
@@ -780,4 +802,4 @@ Spawns a discrete publisher from given flow, see `reactor-call`.
     :arglists '([flow])
     :doc "
 Spawns a continuous publisher from given flow, see `reactor-call`.
-"} signal! [f] (i/publish f false))
+"} signal! [f] (Reactor/publish f false))

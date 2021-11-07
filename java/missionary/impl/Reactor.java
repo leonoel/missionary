@@ -6,7 +6,7 @@ import clojure.lang.IDeref;
 
 public interface Reactor {
 
-    ThreadLocal<Context> CURRENT = new ThreadLocal<>();
+    ThreadLocal<Process> CURRENT = new ThreadLocal<>();
     Throwable ERR_PUB_ORPHAN = new Exception("Publication failure : not in reactor context.");
     Throwable ERR_PUB_CANCEL = new Exception("Publication failure : reactor cancelled.");
     Throwable ERR_SUB_ORPHAN = new Exception("Subscription failure : not in publisher context.");
@@ -37,11 +37,11 @@ public interface Reactor {
         }
     }
 
-    static Publisher insert(Publisher root, Publisher pub) {
+    static Publisher enqueue(Publisher root, Publisher pub) {
         return root == null ? pub : link(pub, root);
     }
 
-    static Publisher remove(Publisher root) {
+    static Publisher dequeue(Publisher root) {
         Publisher heap = null;
         Publisher prev = null;
         Publisher head = root.child;
@@ -61,11 +61,11 @@ public interface Reactor {
     }
 
     static void schedule(Publisher pub) {
-        Context ctx = pub.context;
+        Process ctx = pub.process;
         Publisher emi = ctx.emitter;
         if (emi != null && lt(emi.ranks, pub.ranks))
-            ctx.today = insert(ctx.today, pub);
-        else ctx.tomorrow = insert(ctx.tomorrow, pub);
+            ctx.today = enqueue(ctx.today, pub);
+        else ctx.tomorrow = enqueue(ctx.tomorrow, pub);
     }
 
     static void attach(Subscription sub) {
@@ -77,7 +77,7 @@ public interface Reactor {
     }
 
     static void detach(Publisher pub) {
-        Context ctx = pub.context;
+        Process ctx = pub.process;
         Publisher prv = pub.prev;
         Publisher nxt = pub.next;
         if (prv == null) ctx.head = nxt; else prv.next = nxt;
@@ -87,14 +87,14 @@ public interface Reactor {
     }
 
     static void signal(Publisher pub, IFn f) {
-        Context ctx = pub.context;
+        Process ctx = pub.process;
         Publisher cur = ctx.current;
         ctx.current = pub;
         f.invoke();
         ctx.current = cur;
     }
 
-    static void cancel(Context ctx) {
+    static void cancel(Process ctx) {
         ctx.cancelled = null;
         for (Publisher pub = ctx.head; pub != null; pub = ctx.head) pub.invoke();
     }
@@ -123,10 +123,10 @@ public interface Reactor {
     }
 
     static Object transfer(Publisher pub) {
-        Context ctx = pub.context;
+        Process ctx = pub.process;
         Publisher cur = ctx.current;
         ctx.current = pub;
-        Object val = CURRENT;
+        Object val = pub.ranks;
         try {
             val = ((IDeref) pub.iterator).deref();
         } catch (Throwable e) {
@@ -149,14 +149,15 @@ public interface Reactor {
         }
     }
 
-    static Context enter(Context ctx) {
-        Context cur = CURRENT.get();
+    static Process enter(Process ctx) {
+        Process cur = CURRENT.get();
         if (ctx != cur) CURRENT.set(ctx);
         return cur;
     }
 
     static void emit(Publisher pub) {
-        Context ctx = pub.context;
+        Object stale = pub.ranks;
+        Process ctx = pub.process;
         Publisher prv = ctx.emitter;
         Subscription head = pub.head;
         int p = 1;
@@ -169,16 +170,16 @@ public interface Reactor {
         ctx.emitter = pub;
         if (pub.pending == 0) {
             pub.pending = p;
-            if (CURRENT == transfer(pub)) {
+            if (stale == transfer(pub)) {
                 pub.child = pub;
                 pub.pending = -1;
                 pub.active = null;
             } else {
-                pub.active = pub.context.active;
-                pub.context.active = pub;
+                pub.active = pub.process.active;
+                pub.process.active = pub;
             }
         } else {
-            pub.value = CURRENT;
+            pub.value = stale;
             pub.active = null;
         }
         for (Subscription sub = head; sub != null; sub = head) {
@@ -189,7 +190,7 @@ public interface Reactor {
         ctx.emitter = prv;
     }
 
-    static Publisher done(Context ctx) {
+    static Publisher done(Process ctx) {
         Publisher pub;
         while ((pub = ctx.active) != null) {
             ctx.active = pub.active;
@@ -201,12 +202,12 @@ public interface Reactor {
         return pub;
     }
 
-    static void leave(Context ctx, Context prv) {
+    static void leave(Process ctx, Process prv) {
         if (ctx != prv) {
             Publisher pub;
             while ((pub = done(ctx)) != null) {
                 do {
-                    ctx.today = remove(pub);
+                    ctx.today = dequeue(pub);
                     emit(pub);
                 } while ((pub = ctx.today) != null);
             }
@@ -230,11 +231,11 @@ public interface Reactor {
 
         @Override
         public Object invoke() {
-            Context ctx = subscribed.context;
+            Process ctx = subscribed.process;
             synchronized (ctx) {
                 if (prev == this) cancelled = true;
                 else {
-                    Context cur = enter(ctx);
+                    Process cur = enter(ctx);
                     cancel(this);
                     leave(ctx, cur);
                 }
@@ -245,23 +246,64 @@ public interface Reactor {
         @Override
         public Object deref() {
             Publisher pub = subscribed;
-            Context ctx = pub.context;
+            Process ctx = pub.process;
+            Object stale = pub.ranks;
             synchronized (ctx) {
-                Context cur = enter(ctx);
+                Process cur = enter(ctx);
                 Object val = pub.value;
                 if (0 < pub.pending) ack(pub);
-                if (val == CURRENT && pub.prev != pub) val = transfer(pub);
+                if (val == stale && pub.prev != pub) {
+                    pub.pending = 1;
+                    for(;;) {
+                        val = transfer(pub);
+                        if (pub.child == pub) break;
+                        else pub.child = pub;
+                    }
+                    pub.pending = -1;
+                }
                 if (cancelled || (pub.prev == pub && pub.child == pub))
                     signal(subscriber, terminator); else attach(this);
                 leave(ctx, cur);
-                return val == CURRENT ? clojure.lang.Util.sneakyThrow(ERR_SUB_CANCEL) : val;
+                return val == stale ? clojure.lang.Util.sneakyThrow(ERR_SUB_CANCEL) : val;
             }
         }
     }
 
+    final class Failer extends AFn implements IDeref {
+        static {
+            Util.printDefault(Failer.class);
+        }
+
+        IFn terminator;
+        Throwable error;
+
+        @Override
+        public Object invoke() {
+            return null;
+        }
+
+        @Override
+        public Object deref() {
+            terminator.invoke();
+            return clojure.lang.Util.sneakyThrow(error);
+        }
+    }
+
+    static Object failer(IFn n, IFn t, Throwable e) {
+        n.invoke();
+        Failer f = new Failer();
+        f.terminator = t;
+        f.error = e;
+        return f;
+    }
+
     final class Publisher extends AFn {
 
-        Context context;
+        static {
+            Util.printDefault(Publisher.class);
+        }
+
+        Process process;
         int[] ranks;
         Object iterator;
         Object value;
@@ -277,11 +319,11 @@ public interface Reactor {
 
         @Override
         public Object invoke() {
-            Context ctx = context;
+            Process ctx = process;
             synchronized (ctx) {
                 if (prev != this) {
-                    Context cur = enter(ctx);
-                    if (value != CURRENT || (transfer(this) != CURRENT && prev != this)) cancel(this);
+                    Process cur = enter(ctx);
+                    if (value != ranks || (transfer(this) != ranks && prev != this)) cancel(this);
                     leave(ctx, cur);
                 }
                 return null;
@@ -292,12 +334,12 @@ public interface Reactor {
         public Object invoke(Object n, Object t) {
             IFn notifier = (IFn) n;
             IFn terminator = (IFn) t;
-            Context ctx = context;
+            Process ctx = process;
             Publisher cur = ctx.current;
             if (ctx != CURRENT.get() || cur == null)
-                return new Failer(notifier, terminator, ERR_SUB_ORPHAN);
+                return failer(notifier, terminator, ERR_SUB_ORPHAN);
             if (this == cur || lt(cur.ranks, ranks))
-                return new Failer(notifier, terminator, ERR_SUB_CYCLIC);
+                return failer(notifier, terminator, ERR_SUB_CYCLIC);
             Subscription sub = new Subscription();
             sub.notifier = notifier;
             sub.terminator = terminator;
@@ -315,7 +357,11 @@ public interface Reactor {
         }
     }
 
-    final class Context extends AFn {
+    final class Process extends AFn {
+
+        static {
+            Util.printDefault(Process.class);
+        }
 
         IFn completed;
         IFn cancelled;
@@ -333,7 +379,7 @@ public interface Reactor {
         @Override
         public synchronized Object invoke() {
             if (cancelled != null) {
-                Context cur = enter(this);
+                Process cur = enter(this);
                 cancel(this);
                 leave(this, cur);
             }
@@ -341,11 +387,11 @@ public interface Reactor {
         }
     }
 
-    static Object context(IFn b, IFn s, IFn f) {
-        Context ctx = new Context();
+    static Object run(IFn b, IFn s, IFn f) {
+        Process ctx = new Process();
         ctx.cancelled = f;
         synchronized (ctx) {
-            Context cur = enter(ctx);
+            Process cur = enter(ctx);
             try {
                 Object r = b.invoke();
                 if (ctx.cancelled != null) {
@@ -365,11 +411,11 @@ public interface Reactor {
     }
 
     static Object publish(IFn f, boolean d) {
-        Context ctx = CURRENT.get();
+        Process ctx = CURRENT.get();
         if (ctx == null) clojure.lang.Util.sneakyThrow(ERR_PUB_ORPHAN);
         if (ctx.cancelled == null) clojure.lang.Util.sneakyThrow(ERR_PUB_CANCEL);
         Publisher pub = new Publisher();
-        pub.context = ctx;
+        pub.process = ctx;
         pub.active = pub;
         pub.child = pub;
         pub.pending = 1;
@@ -390,9 +436,9 @@ public interface Reactor {
         pub.iterator = f.invoke(new AFn() {
             @Override
             public Object invoke() {
-                Context ctx = pub.context;
+                Process ctx = pub.process;
                 synchronized (ctx) {
-                    Context cur = enter(ctx);
+                    Process cur = enter(ctx);
                     if (pub.prev != pub) {
                         pub.child = null;
                         if (pub.pending < 1) schedule(pub);
@@ -406,9 +452,9 @@ public interface Reactor {
         }, new AFn() {
             @Override
             public Object invoke() {
-                Context ctx = pub.context;
+                Process ctx = pub.process;
                 synchronized (ctx) {
-                    Context cur = enter(ctx);
+                    Process cur = enter(ctx);
                     ctx.running--;
                     if (pub.prev != pub) {
                         detach(pub);
@@ -420,11 +466,14 @@ public interface Reactor {
             }
         });
         pub.pending = d ? 0 : -1;
+        ctx.current = par;
         if (pub.child == null) {
             pub.child = pub;
             emit(pub);
+        } else if (!d) {
+            cancel(pub);
+            throw new Error("Undefined continuous flow.");
         }
-        ctx.current = par;
         return pub;
     }
 

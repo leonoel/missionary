@@ -245,12 +245,15 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
       (m/? (m/sleep n n)))))
 
 (defflow latest
-  {:results (map =? [[24 86] [24 12] [79 37] [67 37] [34 93]])
+  {:results (map =? [[0 0] [24 0] [24 86] [79 12] [79 37] [67 37] [34 93]])
    :timeout 500}
-  (delay-each 50 (m/latest vector (sleep-emit [24 79 67 34]) (sleep-emit [86 12 37 93]))))
+  (delay-each 50
+    (m/latest vector
+      (m/reductions {} 0 (sleep-emit [24 79 67 34]))
+      (m/reductions {} 0 (sleep-emit [86 12 37 93])))))
 
 (defflow latest-seed
-  {:results (map =? (range 10))}
+  {:results [(=? 9)]}
   (m/latest identity (m/seed (range 10))))
 
 (defflow sample-none
@@ -258,25 +261,20 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
   (m/sample {} (m/ap) m/none))
 
 (defflow sample-sync
-  {:results (map (comp =? vector) (range 10) (range 10))}
-  (m/sample vector (m/seed (range 10)) (m/seed (range 10))))
+  {:results (map (comp =? vector) (repeat 4) (range 10))}
+  (m/sample vector (m/seed (range 5)) (m/seed (range 10))))
 
 (defflow sample-async
   {:results (map =? [[24 86] [24 12] [79 37] [67 93]])
    :timeout 500}
-  (delay-each 50 (m/sample vector (sleep-emit [24 79 67 34]) (sleep-emit [86 12 37 93]))))
+  (delay-each 50
+    (m/sample vector
+      (m/reductions {} 0 (sleep-emit [24 79 67 34]))
+      (sleep-emit [86 12 37 93]))))
 
 (defflow sample-unavailable-sampled
   {:failure any?}
   (m/sample {} m/none (m/seed (range))))
-
-(defflow sample-exhausted-sampled
-  {:results (map (comp =? vector) (concat (range 5) (repeat 4)) (range 10))}
-  (m/sample vector (m/seed (range 5)) (m/seed (range 10))))
-
-(defflow sample-exhausted-sampler
-  {:results (map (comp =? vector) (range 5) (range 5))}
-  (m/sample vector (m/seed (range 10)) (m/seed (range 5))))
 
 (deftask reactor-no-publisher
   {:success nil?}

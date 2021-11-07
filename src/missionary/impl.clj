@@ -4,8 +4,7 @@
     (org.reactivestreams Publisher)
     (missionary.impl
       Enumerate RaceJoin Sleep Never Ambiguous Fiber Thunk Dataflow Mailbox Rendezvous Semaphore Watch
-      Observe Transform Pub Sub Buffer Latest Sample Zip Sequential Ambiguous$Process Reactor
-      Reactor$Context Reactor$Publisher Latest$It)))
+      Observe Transform Pub Sub Buffer Zip Sequential Ambiguous$Process)))
 
 (defn nop [])
 
@@ -74,21 +73,9 @@
 (defmethod print-method Buffer [o w] (print-object o w))
 (defn buffer [c f n t] (Buffer. c f n t))
 
-(defmethod print-method Latest$It [o w] (print-object o w))
-(defn latest [f fs n t] (Latest/spawn f fs n t))
-
-(defmethod print-method Sample [o w] (print-object o w))
-(defn sample [f sd sr n t] (Sample. f sd sr n t))
-
 (defmethod print-method Zip [o w] (print-object o w))
 (defn zip [c fs n t] (Zip. c fs n t))
 
 (defmethod print-method Sub [o w] (print-object o w))
 (defn subscribe [pub n t] (Sub. pub n t))
 (defn publisher [f] (reify Publisher (subscribe [_ s] (Pub. f s))))
-
-(defmethod print-method Reactor$Context [o w] (print-object o w))
-(defn context [i s f] (Reactor/context i s f))
-
-(defmethod print-method Reactor$Publisher [o w] (print-object o w))
-(defn publish [f d] (Reactor/publish f d))

@@ -58,4 +58,11 @@ final class Util {
         pm.addMethod(c, pm.getMethod(Object.class));
     }
 
+    static void discard(Object it) {
+        try {
+            ((IDeref) it).deref();
+        } catch (Throwable e) {
+        }
+    }
+
 }
