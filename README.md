@@ -14,7 +14,7 @@ Missionary is a reactive dataflow programming toolkit providing referentially tr
 
 (def dispose! (main #(prn ::success %) #(prn ::crash %)))
 ; 2
-(swap! !x inc)
+(swap! !input inc)
 ; 4
 (dispose!)
 
