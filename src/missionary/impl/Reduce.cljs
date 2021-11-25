@@ -1,4 +1,4 @@
-(ns missionary.impl.Reduce)
+(ns ^:no-doc missionary.impl.Reduce)
 
 (deftype Process
   [reducer status failure result input
