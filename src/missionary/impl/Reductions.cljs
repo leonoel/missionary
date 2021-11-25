@@ -1,4 +1,4 @@
-(ns missionary.impl.Reductions)
+(ns ^:no-doc missionary.impl.Reductions)
 
 (declare transfer)
 (deftype Process
