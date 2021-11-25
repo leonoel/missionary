@@ -486,25 +486,26 @@ Returns a discrete flow observing values produced by a non-backpressured subject
 "} observe [s] (fn [n t] (i/observe s n t)))
 
 
-(defn
+(def
   ^{:static true
-    :arglists '([xf flow])
+    :arglists '([xf* flow])
     :doc "
-Returns a discrete flow running given discrete `flow` and transforming values with given transducer `xf`.
+Returns a discrete flow running given discrete `flow` and transforming values with the composition of given transducers `xf*`.
 
-Cancelling propagates to upstream flow. Early termination by `xf` (via `reduced` or throwing) cancels upstream flow.
+Cancelling propagates to upstream flow. Early termination by the transducing stage (via `reduced` or throwing) cancels upstream flow.
 
 Example :
 ```clojure
 (? (->> (seed (range 10))
-        (eduction (comp (filter odd?) (mapcat range) (partition-all 4)))
+        (eduction (filter odd?) (mapcat range) (partition-all 4))
         (reduce conj)))
 #_=> [[0 0 1 2] [0 1 2 3] [4 0 1 2] [3 4 5 6] [0 1 2 3] [4 5 6 7] [8]]
 ```
 "} eduction
-  ([f] f)
-  ([x f] (fn [n t] (i/transform x f n t)))
-  ([x f & fs] (eduction (apply comp x f (butlast fs)) (last fs))))
+  (fn e
+    ([f] f)
+    ([x f] (fn [n t] (i/transform x f n t)))
+    ([x y & zs] (apply e (comp x y) zs))))
 
 (def ^{:deprecated true
        :doc "Alias for `eduction`"}
