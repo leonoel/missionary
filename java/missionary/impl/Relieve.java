@@ -4,18 +4,17 @@ import clojure.lang.AFn;
 import clojure.lang.IDeref;
 import clojure.lang.IFn;
 
-import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
 public interface Relieve {
 
-    AtomicIntegerFieldUpdater<It> PRESSURE =
-            AtomicIntegerFieldUpdater.newUpdater(It.class, "pressure");
+    AtomicReferenceFieldUpdater<Process, Object> CURRENT =
+            AtomicReferenceFieldUpdater.newUpdater(Process.class, Object.class, "current");
 
-    AtomicReferenceFieldUpdater<It, Object> CURRENT =
-            AtomicReferenceFieldUpdater.newUpdater(It.class, Object.class, "current");
-
-    class It extends AFn implements IDeref {
+    class Process extends AFn implements IDeref {
+        static {
+            Util.printDefault(Process.class);
+        }
 
         IFn reducer;
         IFn notifier;
@@ -23,13 +22,13 @@ public interface Relieve {
         Object iterator;
         Throwable error;
         Object last;
+        boolean busy;
 
-        volatile int pressure;
         volatile Object current = CURRENT;
 
         @Override
         public Object invoke() {
-            return cancel(this);
+            return ((IFn) iterator).invoke();
         }
 
         @Override
@@ -38,67 +37,71 @@ public interface Relieve {
         }
     }
 
-    static Object cancel(It it) {
-        return ((IFn) it.iterator).invoke();
-    }
-
-    static Object transfer(It it) {
+    static Object transfer(Process process) {
         for(;;) {
-            Object x = it.current;
+            Object x = process.current;
             if (x == CURRENT) {
-                if (it.last == CURRENT) {
-                    it.terminator.invoke();
-                    return clojure.lang.Util.sneakyThrow(it.error);
+                if (process.last == CURRENT) {
+                    process.terminator.invoke();
+                    return clojure.lang.Util.sneakyThrow(process.error);
                 } else {
-                    x = it.last;
-                    it.last = CURRENT;
-                    ((it.error != null) ? it.notifier : it.terminator).invoke();
+                    x = process.last;
+                    process.last = CURRENT;
+                    ((process.error != null) ? process.notifier : process.terminator).invoke();
                     return x;
                 }
             }
-            if (CURRENT.compareAndSet(it, x, CURRENT)) return x;
+            if (CURRENT.compareAndSet(process, x, CURRENT)) return x;
         }
     }
 
-    static void pull(It it) {
+    static void pull(Process process) {
         IFn rf;
         Object p;
         IFn signal = Util.NOP;
-        do if ((rf = it.reducer) == null) {
-            while (!CURRENT.compareAndSet(it, it.last = it.current, CURRENT));
-            if (it.last == CURRENT) signal = it.error == null ? it.terminator : it.notifier;
+        Object it = process.iterator;
+        while (process.busy = !process.busy) if ((rf = process.reducer) == null) {
+            while (!CURRENT.compareAndSet(process, process.last = process.current, CURRENT));
+            if (process.last == CURRENT) signal = process.error == null ? process.terminator : process.notifier;
         } else try {
-            Object x = ((IDeref) it.iterator).deref();
-            while (!CURRENT.compareAndSet(it, p = it.current, (p == CURRENT) ? x : rf.invoke(p, x)));
-            if (p == CURRENT) signal = it.notifier;
+            Object x = ((IDeref) it).deref();
+            while (!CURRENT.compareAndSet(process, p = process.current, (p == CURRENT) ? x : rf.invoke(p, x)));
+            if (p == CURRENT) signal = process.notifier;
         } catch (Throwable e) {
-            it.error = e;
-            it.invoke();
-        } while (0 == PRESSURE.decrementAndGet(it));
+            process.error = e;
+            ((IFn) it).invoke();
+        }
         signal.invoke();
     }
 
-    static It spawn(IFn r, IFn f, IFn n, IFn t) {
-        It it = new It();
-        it.reducer = r;
-        it.notifier = n;
-        it.terminator = t;
-        it.iterator = f.invoke(
-                new AFn() {
-                    @Override
-                    public Object invoke() {
-                        if (0 == PRESSURE.incrementAndGet(it)) pull(it);
-                        return null;
-                    }},
-                new AFn() {
-                    @Override
-                    public Object invoke() {
-                        it.reducer = null;
-                        if (0 == PRESSURE.incrementAndGet(it)) pull(it);
-                        return null;
-                    }});
-        if (0 == PRESSURE.decrementAndGet(it)) pull(it);
-        return it;
+    static Process run(IFn r, IFn f, IFn n, IFn t) {
+        Process process = new Process();
+        synchronized (process) {
+            process.busy = true;
+            process.reducer = r;
+            process.notifier = n;
+            process.terminator = t;
+            process.iterator = f.invoke(
+                    new AFn() {
+                        @Override
+                        public Object invoke() {
+                            synchronized (process) {
+                                pull(process);
+                                return null;
+                            }
+                        }},
+                    new AFn() {
+                        @Override
+                        public Object invoke() {
+                            synchronized (process) {
+                                process.reducer = null;
+                                pull(process);
+                                return null;
+                            }
+                        }});
+            pull(process);
+            return process;
+        }
     }
 
 }

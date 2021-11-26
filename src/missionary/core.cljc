@@ -2,7 +2,7 @@
   (:refer-clojure :exclude [reduce reductions eduction group-by])
   (:require [missionary.impl :as i]
             [cloroutine.core :refer [cr] :include-macros true])
-  (:import (missionary.impl Reduce Reductions GroupBy))
+  (:import (missionary.impl Reduce Reductions GroupBy Relieve))
   #?(:cljs (:require-macros [missionary.core :refer [sp ap amb> amb= ?? ?! holding reactor]])))
 
 
@@ -553,7 +553,7 @@ Returns a discrete flow subscribing to given `org.reactivestreams.Publisher`.
 "} subscribe [pub] (fn [n t] (i/subscribe pub n t)))
 
 
-(defn
+(def
   ^{:static true
     :arglists '([rf flow])
     :doc "
@@ -574,7 +574,7 @@ Example :
         (reduce conj)))
 #_=> [24 79 67 61 99 37]
 ```
-"} relieve [rf f] (fn [n t] (i/relieve rf f n t)))
+"} relieve (fn [rf f] (fn [n t] (Relieve/run rf f n t))))
 
 
 (defn
