@@ -1,6 +1,7 @@
 package missionary.impl;
 
 import clojure.lang.*;
+import missionary.Cancelled;
 
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
@@ -259,11 +260,9 @@ public interface Ambiguous {
 
         @Override
         public Object poll() {
-            if (choice == null ? token == null :
-                    choice.token == null || (choice.type == Choice.SWITCH && choice.ready == null && !choice.done))
-                throw new ExceptionInfo("Process cancelled.", RT.map(
-                        Keyword.intern(null, "cancelled"), Keyword.intern("missionary", "ap")));
-            return null;
+            return choice == null ? token == null :
+                    choice.token == null || (choice.type == Choice.SWITCH && choice.ready == null && !choice.done) ?
+                clojure.lang.Util.sneakyThrow(new Cancelled("Process cancelled.")) : null;
         }
 
         @Override

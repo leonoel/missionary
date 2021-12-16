@@ -1,6 +1,7 @@
 package missionary.impl;
 
 import clojure.lang.*;
+import missionary.Cancelled;
 
 import java.util.Iterator;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
@@ -53,9 +54,7 @@ public final class Dataflow extends AFn implements Event.Emitter {
             IPersistentSet set = (IPersistentSet) s;
             if (!(set.contains(e))) break;
             if (STATE.compareAndSet(this, s, set.count() == 1 ? null : set.disjoin(e))) {
-                e.failure.invoke(new ExceptionInfo("Dataflow variable derefence cancelled.", RT.map(
-                        Keyword.intern(null, "cancelled"),
-                        Keyword.intern("missionary", "dfv-deref"))));
+                e.failure.invoke(new Cancelled("Dataflow variable derefence cancelled."));
                 break;
             }
         }

@@ -1,6 +1,7 @@
 package missionary.impl;
 
 import clojure.lang.*;
+import missionary.Cancelled;
 
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
@@ -18,9 +19,7 @@ public final class Never extends AFn {
     public Object invoke() {
         IFn f = failure;
         if (f != null && FAILURE.compareAndSet(this, f, null))
-            f.invoke(new ExceptionInfo("Never cancelled.", RT.map(
-                    Keyword.intern(null, "cancelled"),
-                    Keyword.intern("missionary", "never"))));
+            f.invoke(new Cancelled("Never cancelled."));
         return null;
     }
 }

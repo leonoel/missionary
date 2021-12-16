@@ -1,6 +1,7 @@
 package missionary.impl;
 
 import clojure.lang.*;
+import missionary.Cancelled;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Supplier;
@@ -10,9 +11,8 @@ public interface Fiber {
         Fiber THREAD = new Fiber() {
             @Override
             public Object poll() {
-                if (Thread.currentThread().isInterrupted())
-                    throw new ExceptionInfo("Thread interrupted.", PersistentArrayMap.EMPTY);
-                return null;
+                return Thread.currentThread().isInterrupted() ?
+                        clojure.lang.Util.sneakyThrow(new Cancelled("Thread interrupted.")) : null;
             }
 
             @Override

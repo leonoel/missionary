@@ -1,6 +1,7 @@
 package missionary.impl;
 
 import clojure.lang.*;
+import missionary.Cancelled;
 
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
@@ -61,9 +62,7 @@ public final class Mailbox extends AFn implements Event.Emitter {
             IPersistentSet set = (IPersistentSet) s;
             if (!(set.contains(e))) break;
             if (STATE.compareAndSet(this, s, set.count() == 1 ? null : set.disjoin(e))) {
-                e.failure.invoke(new ExceptionInfo("Mailbox fetch cancelled.", RT.map(
-                        Keyword.intern(null, "cancelled"),
-                        Keyword.intern("missionary", "mbx-fetch"))));
+                e.failure.invoke(new Cancelled("Mailbox fetch cancelled."));
                 break;
             }
         }

@@ -1,6 +1,7 @@
 package missionary.impl;
 
 import clojure.lang.*;
+import missionary.Cancelled;
 
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
@@ -49,9 +50,7 @@ public final class Sleep extends AFn {
                     if (ss.equals(item)) break; else n = p.assoc(s.time, ss);
                 }
                 if (PENDING.compareAndSet(this, p, n)) {
-                    s.failure.invoke(new ExceptionInfo("Sleep cancelled.", RT.map(
-                            Keyword.intern(null, "cancelled"),
-                            Keyword.intern("missionary", "sleep"))));
+                    s.failure.invoke(new Cancelled("Sleep cancelled."));
                     break;
                 }
             }

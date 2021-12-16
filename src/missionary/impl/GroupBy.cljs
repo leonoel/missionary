@@ -1,6 +1,5 @@
-(ns ^:no-doc missionary.impl.GroupBy)
-
-(def cancelled (ex-info "Group consumer cancelled." {:cancelled :missionary/group-by}))
+(ns ^:no-doc missionary.impl.GroupBy
+  (:import missionary.Cancelled))
 
 (declare sample cancel consume)
 
@@ -120,7 +119,7 @@
       (set! (.-key p) p)
       (transfer p) x)
     (do ((.-terminator g))
-        (throw cancelled))))
+        (throw (Cancelled. "Group consumer cancelled.")))))
 
 (defn run [k f n t]
   (let [p (->Process k n t nil nil nil (object-array 8) 0 true false)]

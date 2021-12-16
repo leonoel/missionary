@@ -1,7 +1,8 @@
 (ns missionary.core-test
   (:require
     [missionary.core :as m :include-macros true]
-    [missionary.tck :refer [if-try deftask defflow] :include-macros true]))
+    [missionary.tck :refer [if-try deftask defflow] :include-macros true])
+  (:import missionary.Cancelled))
 
 (def =? (partial partial =))
 (def fine! #(throw (ex-info "this is fine." {:fine true})))
@@ -18,7 +19,7 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
 (deftask sleep-failure
   {:cancel  0
    :timeout 10
-   :failure (comp :cancelled ex-data)}
+   :failure (partial instance? Cancelled)}
   (m/sleep 100))
 
 (deftask semaphore
@@ -36,7 +37,7 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
 (deftask rendezvous
   {:cancel 150
    :timeout 200
-   :failure (comp :cancelled ex-data)}
+   :failure (partial instance? Cancelled)}
   (m/sp
     (let [rdv (m/rdv)]
       (m/? (->> (m/sp (while true
@@ -51,7 +52,7 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
 (deftask mailbox
   {:cancel 150
    :timeout 200
-   :failure (comp :cancelled ex-data)}
+   :failure (partial instance? Cancelled)}
   (m/sp
     (let [mbx (m/mbx)]
       (m/? (->> (m/sp (while true

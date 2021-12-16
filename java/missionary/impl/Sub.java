@@ -1,6 +1,7 @@
 package missionary.impl;
 
 import clojure.lang.*;
+import missionary.Cancelled;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
@@ -79,10 +80,7 @@ public final class Sub extends AFn implements IDeref, Subscriber<Object> {
                     Object x = current;
                     if (x == null) {
                         terminator.invoke();
-                        throw new ExceptionInfo("Subscription cancelled.", RT.map(
-                                Keyword.intern(null, "cancelled"),
-                                Keyword.intern("missionary", "subscribe")
-                        ));
+                        clojure.lang.Util.sneakyThrow(new Cancelled("Subscription cancelled."));
                     } else {
                         current = null;
                         notifier.invoke();

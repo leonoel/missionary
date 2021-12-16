@@ -1,6 +1,7 @@
 package missionary.impl;
 
 import clojure.lang.*;
+import missionary.Cancelled;
 
 import java.util.Iterator;
 
@@ -38,9 +39,7 @@ public final class Enumerate extends AFn implements IDeref {
         Iterator i = iterator;
         if (i == null) {
             terminator.invoke();
-            throw new ExceptionInfo("Enumeration cancelled.", RT.map(
-                    Keyword.intern(null, "cancelled"),
-                    Keyword.intern("missionary", "enumerate")));
+            clojure.lang.Util.sneakyThrow(new Cancelled("Seed cancelled."));
         }
         Object x = i.next();
         more(i);

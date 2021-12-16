@@ -1,6 +1,7 @@
 package missionary.impl;
 
 import clojure.lang.*;
+import missionary.Cancelled;
 
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
@@ -76,9 +77,7 @@ public final class Sequential extends AFn implements Fiber {
 
     @Override
     public Object poll() {
-        if (token == null) throw new ExceptionInfo("Process cancelled.", RT.map(
-                Keyword.intern(null, "cancelled"), Keyword.intern("missionary", "sp")));
-        return null;
+        return token == null ? clojure.lang.Util.sneakyThrow(new Cancelled("Process cancelled.")) : null;
     }
 
     @Override

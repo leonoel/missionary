@@ -1,4 +1,5 @@
-(ns ^:no-doc missionary.impl)
+(ns ^:no-doc missionary.impl
+  (:import missionary.Cancelled))
 
 (defn nop [])
 
@@ -41,8 +42,7 @@
         #(when-not bound
            (when (contains? watch !)
              (set! watch (disj! watch !))
-             (f! (ex-info "Dataflow variable dereference cancelled."
-                          {:cancelled :missionary/dfv-deref}))))))))
+             (f! (Cancelled. "Dataflow variable dereference cancelled."))))))))
 
 (defn dataflow []
   (->Dataflow false nil (transient #{})))
@@ -64,8 +64,7 @@
           (set! writers (assoc writers ! t))
           #(when (contains? writers !)
              (set! writers (dissoc writers !))
-             (f! (ex-info "Rendez-vous give cancelled."
-                          {:cancelled :missionary/rdv-give})))))))
+             (f! (Cancelled. "Rendez-vous give cancelled.")))))))
   (-invoke [_ s! f!]
     (if-some [[[! t]] (seq writers)]
       (do (set! writers (dissoc writers !))
@@ -74,8 +73,7 @@
         (set! readers (conj readers !))
         #(when (contains? readers !)
            (set! readers (disj readers !))
-           (f! (ex-info "Rendez-vous take cancelled."
-                        {:cancelled :missionary/rdv-take})))))))
+           (f! (Cancelled. "Rendez-vous take cancelled.")))))))
 
 (defn rendezvous []
   (->Rendezvous #{} {}))
@@ -100,7 +98,7 @@
           (set! readers (conj readers !))
           #(when (contains? readers !)
              (set! readers (disj readers !))
-             (f! (ex-info "Mailbox fetch cancelled." {:cancelled :missionary/mbx-fetch}))))
+             (f! (Cancelled. "Mailbox fetch cancelled."))))
         (let [tmp enqueue]
           (set! enqueue dequeue)
           (set! dequeue (.reverse tmp))
@@ -128,7 +126,7 @@
         (set! readers (conj readers !))
         #(when (contains? readers !)
            (set! readers (disj readers !))
-           (f! (ex-info "Semaphore acquire cancelled." {:cancelled :missionary/sem-acquire}))))
+           (f! (Cancelled. "Semaphore acquire cancelled."))))
       (do (set! available (dec available))
           (s! nil) nop))))
 
@@ -200,7 +198,7 @@
   (when (.-pending s)
     (set! (.-pending s) false)
     (js/clearTimeout (.-handler s))
-    ((.-failure s) (ex-info "Sleep cancelled." {:cancelled :missionary/sleep}))))
+    ((.-failure s) (Cancelled. "Sleep cancelled."))))
 
 (defn sleep [d x s f]
   (let [slp (->Sleep f nil true)]
@@ -225,7 +223,7 @@
   (-invoke [_]
     (when alive
       (set! alive false)
-      (f (ex-info "Never cancelled." {:cancelled :missionary/never})))))
+      (f (Cancelled. "Never cancelled.")))))
 
 (defn never [f] (->Never f true))
 
@@ -260,7 +258,7 @@
   Fiber
   (poll [_]
     (when (nil? token)
-      (throw (ex-info "Process cancelled." {:cancelled :missionary/sp}))))
+      (throw (Cancelled. "Process cancelled."))))
   (task [_ t]
     (let [c (t resume rethrow)]
       (if (nil? token)
@@ -329,7 +327,7 @@
                      (nil? (.-ready c))
                      (not (.-done c))))
             (nil? token))
-      (throw (ex-info "Process cancelled." {:cancelled :missionary/ap}))))
+      (throw (Cancelled. "Process cancelled."))))
   (task [_ t]
     (ap-swap _ (t resume rethrow)) nop)
   (flow-concat [_ f]
@@ -527,8 +525,7 @@
     (let [x (.next i)]
       (enumerate-pull e) x)
     (do ((.-terminator e))
-        (throw (ex-info "Enumeration cancelled"
-                        {:cancelled :missionary/enumerate})))))
+        (throw (Cancelled. "Seed cancelled")))))
 
 (defn enumerate [coll n t]
   (doto (->Enumerate (iter coll) n t) (enumerate-pull)))

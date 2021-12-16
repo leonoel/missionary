@@ -1,6 +1,7 @@
 package missionary.impl;
 
 import clojure.lang.*;
+import missionary.Cancelled;
 
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
@@ -47,9 +48,7 @@ public final class Rendezvous extends AFn implements Event.Emitter {
                 IPersistentSet set = (IPersistentSet) s;
                 if (!(set.contains(e))) break;
                 if (STATE.compareAndSet(Rendezvous.this, s, set.count() == 1 ? null : set.disjoin(e))) {
-                    e.failure.invoke(new ExceptionInfo("Rendez-vous give cancelled.", RT.map(
-                            Keyword.intern(null, "cancelled"),
-                            Keyword.intern("missionary", "rdv-give"))));
+                    e.failure.invoke(new Cancelled("Rendez-vous give cancelled."));
                     break;
                 }
             }
@@ -89,9 +88,7 @@ public final class Rendezvous extends AFn implements Event.Emitter {
             IPersistentSet set = (IPersistentSet) s;
             if (!(set.contains(e))) break;
             if (STATE.compareAndSet(this, s, set.count() == 1 ? null : set.disjoin(e))) {
-                e.failure.invoke(new ExceptionInfo("Rendez-vous take cancelled.", RT.map(
-                        Keyword.intern(null, "cancelled"),
-                        Keyword.intern("missionary", "rdv-take"))));
+                e.failure.invoke(new Cancelled("Rendez-vous take cancelled."));
                 break;
             }
         }

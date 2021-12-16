@@ -1,12 +1,9 @@
 package missionary.impl;
 
 import clojure.lang.*;
+import missionary.Cancelled;
 
 public interface GroupBy {
-
-    Throwable CANCELLED = new ExceptionInfo("Group consumer cancelled.", RT.map(
-            Keyword.intern(null, "cancelled"),
-            Keyword.intern("missionary", "group-by")));
 
     class Process extends AFn implements IDeref {
 
@@ -136,7 +133,7 @@ public interface GroupBy {
         Process p = g.process;
         if (p == null) {
             g.terminator.invoke();
-            return clojure.lang.Util.sneakyThrow(CANCELLED);
+            return clojure.lang.Util.sneakyThrow(new Cancelled("Group consumer cancelled."));
         } else synchronized (p) {
             Object v = p.value;
             p.value = p;

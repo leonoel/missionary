@@ -1,6 +1,7 @@
 package missionary.impl;
 
 import clojure.lang.*;
+import missionary.Cancelled;
 
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
@@ -59,9 +60,7 @@ public final class Semaphore extends AFn implements Event.Emitter {
             IPersistentSet set = (IPersistentSet) s;
             if (!(set.contains(e))) break;
             if (STATE.compareAndSet(this, s, set.count() == 1 ? null : set.disjoin(e))) {
-                e.failure.invoke(new ExceptionInfo("Semaphore acquire cancelled.", RT.map(
-                        Keyword.intern(null, "cancelled"),
-                        Keyword.intern("missionary", "sem-acquire"))));
+                e.failure.invoke(new Cancelled("Semaphore acquire cancelled."));
                 break;
             }
         }
