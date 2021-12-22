@@ -108,6 +108,8 @@ Tutorials
 
 How-to guides: [cookbook](https://github.com/leonoel/missionary/wiki)
 
+Explanations
+* [re:Clojure 2021](https://www.youtube.com/watch?v=tV-DoiGdUIo)
 
 ## Community
 
