@@ -27,11 +27,10 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
    :success nil?}
   (m/sp
     (let [sem (m/sem 7)]
-      (m/? (->> (m/sp (while true (m/holding sem (m/? (m/sleep 0)))))
-                (repeat 100)
-                (apply m/join vector)
-                (m/timeout 100)
-                (m/attempt)))
+      (m/? (m/timeout
+             (->> (m/sp (while true (m/holding sem (m/? (m/sleep 0)))))
+               (repeat 100)
+               (apply m/join vector)) 100))
       (dotimes [_ 7] (m/? sem)))))
 
 (deftask rendezvous
@@ -40,13 +39,12 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
    :failure (partial instance? Cancelled)}
   (m/sp
     (let [rdv (m/rdv)]
-      (m/? (->> (m/sp (while true
-                        (m/? (m/compel (m/join vector rdv (rdv false))))
-                        (m/? (m/sleep 0))))
-                (repeat 100)
-                (apply m/join vector)
-                (m/timeout 100)
-                (m/attempt)))
+      (m/? (m/timeout
+             (->> (m/sp (while true
+                          (m/? (m/compel (m/join vector rdv (rdv false))))
+                          (m/? (m/sleep 0))))
+               (repeat 100)
+               (apply m/join vector)) 100))
       (m/? rdv))))
 
 (deftask mailbox
@@ -55,14 +53,13 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
    :failure (partial instance? Cancelled)}
   (m/sp
     (let [mbx (m/mbx)]
-      (m/? (->> (m/sp (while true
-                        (mbx false)
-                        (m/? (m/compel mbx))
-                        (m/? (m/sleep 0))))
-                (repeat 100)
-                (apply m/join)
-                (m/timeout 100)
-                (m/attempt)))
+      (m/? (m/timeout
+             (->> (m/sp (while true
+                          (mbx false)
+                          (m/? (m/compel mbx))
+                          (m/? (m/sleep 0))))
+               (repeat 100)
+               (apply m/join)) 100))
       (m/? mbx))))
 
 (deftask dataflow

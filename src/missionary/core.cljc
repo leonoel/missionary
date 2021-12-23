@@ -133,21 +133,26 @@ Returns a task running given `task` completing with a zero-argument function and
   (fn [s f] (task (i/absolver s f) f)))
 
 
-(defn
+(def
   ^{:static true
-    :arglists '([delay task])
+    :arglists '([task delay] [task delay value])
     :doc "
-Returns a task running given `task` and cancelling it if not completed within given `delay` (in milliseconds).
+Returns a task running given `task` and completing with its result if available within specified `delay` (in
+milliseconds). Otherwise, input is cancelled and the process succeeds with `value`, or `nil` if not provided.
 
 ```clojure
-(? (timeout 100 (sleep (rand-int 200))))
-#_=> nil       ;; or exception, after 100 milliseconds
+(m/? (m/timeout (m/sleep 20 :a) 25 :b)) ;; :a after 20ms
+(m/? (m/timeout (m/sleep 20 :a) 15 :b)) ;; :b after 15ms
+(m/? (m/timeout (m/sleep 20 :a) 15))    ;; nil after 15ms
 ```
-"} timeout [delay task]
-  (->> task
+"} timeout
+  (fn timeout
+    ([task delay] (timeout task delay nil))
+    ([task delay value]
+     (-> task
        (attempt)
-       (race (sleep delay #(throw (ex-info "Task timed out." {::delay delay, ::task task}))))
-       (absolve)))
+       (race (sleep delay #(-> value)))
+       (absolve)))))
 
 
 (defn
