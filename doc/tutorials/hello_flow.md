@@ -53,10 +53,14 @@ In the previous example, pulling a value from the flow passed to `?>` transfers 
 
 We can use it to implement debounce operators. A debounced flow is a flow emitting only values that are not followed by another one within a given delay.
 ```clojure
+(import 'missionary.Cancelled)
+```
+
+```clojure
 (defn debounce [delay flow]
   (m/ap (let [x (m/?< flow)]                          ;; pull a value preemptively
     (try (m/? (m/sleep delay x))                      ;; emit this value after given delay
-         (catch Exception _ (m/?> m/none))))))        ;; emit nothing if cancelled
+         (catch Cancelled _ (m/amb>))))))             ;; emit nothing if cancelled
 ```
 
 To test it, we need a flow of values emitting at various intervals.
