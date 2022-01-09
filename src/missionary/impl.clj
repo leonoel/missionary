@@ -3,8 +3,8 @@
     (java.io Writer)
     (org.reactivestreams Publisher)
     (missionary.impl
-      Enumerate RaceJoin Sleep Never Thunk Dataflow Mailbox Rendezvous Semaphore Watch
-      Observe Transform Pub Sub Buffer Zip)))
+      Enumerate RaceJoin Sleep Never Thunk Dataflow Mailbox Rendezvous Semaphore
+      Transform Pub Sub Buffer Zip)))
 
 (defn nop [])
 
@@ -47,12 +47,6 @@
 
 (defmethod print-method Enumerate [o w] (print-object o w))
 (defn enumerate [c n t] (Enumerate. c n t))
-
-(defmethod print-method Watch [o w] (print-object o w))
-(defn watch [r n t] (Watch. r n t))
-
-(defmethod print-method Observe [o w] (print-object o w))
-(defn observe [s n t] (Observe. s n t))
 
 (defmethod print-method Transform [o w] (print-object o w))
 (defn transform [x f n t] (Transform. x f n t))

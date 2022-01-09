@@ -311,7 +311,7 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
    :cancel  0}
   (m/reactor
     (let [r (atom [])
-          i (m/signal! (m/watch (atom 1)))]
+          i (m/signal! (m/cp 1))]
       (m/stream! (m/ap (m/?> i) (swap! r conj (m/?> i)))) r)))
 
 (deftask reactor-delayed

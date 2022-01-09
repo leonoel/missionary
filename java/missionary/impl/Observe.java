@@ -30,31 +30,23 @@ public interface Observe {
         synchronized (ps) {
             cb = ps.notifier;
             if (cb != null) {
-                ps.notifier = null;
                 if (ps.value != ps) cb = null;
-                try {
-                    ((IFn) ps.unsub).invoke();
-                    ps.value = new Cancelled("Observe cancelled.");
-                } catch (Throwable e) {
-                    ps.value = e;
-                }
+                ps.value = ps.notifier = null;
             }
         }
         if (cb != null) cb.invoke();
     }
 
     static Object transfer(Process ps) {
-        IFn n;
-        Object x;
-        synchronized (ps) {
-            n = ps.notifier;
-            x = ps.value;
-            ps.value = ps;
-        }
-        if (n == null) {
+        if (ps.notifier == null) {
             ps.terminator.invoke();
-            return clojure.lang.Util.sneakyThrow((Throwable) x);
-        } else return x;
+            ((IFn) ps.unsub).invoke();
+            return clojure.lang.Util.sneakyThrow(new Cancelled("Observe cancelled."));
+        } else synchronized (ps) {
+            Object x = ps.value;
+            ps.value = ps;
+            return x;
+        }
     }
 
     static Object run(IFn sub, IFn n, IFn t) {
@@ -69,16 +61,23 @@ public interface Observe {
                     IFn cb;
                     synchronized (ps) {
                         cb = ps.notifier;
-                        if (cb == null) throw new Error("Can't process event - observer is terminated.");
-                        if (ps.value != ps) throw new Error("Can't process event - observer is not ready.");
-                        ps.value = x;
+                        if (cb != null) {
+                            if (ps.value != ps) throw new Error("Can't process event - observer is not ready.");
+                            ps.value = x;
+                        }
                     }
-                    return cb.invoke();
+                    return cb == null ? null : cb.invoke();
                 }
             });
         } catch (Throwable e) {
-            ps.value = e;
+            ps.value = null;
             ps.notifier = null;
+            ps.unsub = new AFn() {
+                @Override
+                public Object invoke() {
+                    return clojure.lang.Util.sneakyThrow(e);
+                }
+            };
             n.invoke();
         }
         return ps;
