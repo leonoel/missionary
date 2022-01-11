@@ -19,12 +19,13 @@ public interface GroupBy {
         Object input;
         Group[] table;
         int load;
+        boolean live;
         boolean busy;
         boolean done;
 
         @Override
         public Object invoke() {
-            return ((IFn) input).invoke();
+            return kill(this);
         }
 
         @Override
@@ -53,6 +54,13 @@ public interface GroupBy {
         public Object deref() {
             return consume(this);
         }
+    }
+
+    static Object kill(Process p) {
+        if (p.live) {
+            p.live = false;
+            return ((IFn) p.input).invoke();
+        } else return null;
     }
 
     static Object sample(Process p) {
@@ -116,7 +124,7 @@ public interface GroupBy {
 
     static Object cancel(Group g) {
         Process p = g.process;
-        if (p != null) synchronized (p) {
+        if (p != null) if (p.live) synchronized (p) {
             g.process = null;
             Object k = g.key;
             Group[] table = p.table;
@@ -175,9 +183,8 @@ public interface GroupBy {
         p.keyfn = k;
         p.notifier = n;
         p.terminator = t;
-        p.key = p;
-        p.value = p;
-        p.busy = true;
+        p.key = p.value = p;
+        p.live = p.busy = true;
         p.table = new Group[8];
         p.input = f.invoke(new AFn() {
             @Override

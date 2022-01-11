@@ -707,7 +707,7 @@ consuming values matching a key. Upstream values are dispatched in constant time
 
 Cancelling a group consumer makes it fail immediately. If a value is subsequently found for the same grouping, the
 key-group pair is produced again, including in the special case where the consumer is cancelled while a transfer was
-pending.
+pending. Cancelling a group consumer has no effect when the main process is cancelled.
 
 If upstream fails, or if the key function throws, then upstream is cancelled and flushed and the error is propagated
 downstream.

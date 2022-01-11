@@ -1,15 +1,16 @@
 (ns ^:no-doc missionary.impl.GroupBy
   (:import missionary.Cancelled))
 
-(declare sample cancel consume)
+(declare kill sample cancel consume)
 
 (deftype Process [keyfn notifier terminator
                   key value input table
                   ^number load
+                  ^boolean live
                   ^boolean busy
                   ^boolean done]
   IFn
-  (-invoke [_] (input))
+  (-invoke [p] (kill p))
   IDeref
   (-deref [p] (sample p)))
 
@@ -18,6 +19,11 @@
   (-invoke [g] (cancel g))
   IDeref
   (-deref [g] (consume g)))
+
+(defn kill [^Process p]
+  (when (.-live p)
+    (set! (.-live p) false)
+    ((.-input p))))
 
 (defn step [^number i ^number m]
   (if (== i m) 0 (inc i)))
@@ -64,17 +70,18 @@
 
 (defn cancel [^Group g]
   (when-some [^Process p (.-process g)]
-    (set! (.-process g) nil)
-    (let [k (.-key g)
-          t (.-table p)
-          m (dec (alength t))]
-      (loop [i (bit-and (hash k) m)]
-        (if (identical? (aget t i) g)
-          (do (delete p i m)
-              ((if (= k (.-key p))
-                 (.-notifier p)
-                 (.-notifier g))))
-          (recur (step i m)))))))
+    (when (.-live p)
+      (set! (.-process g) nil)
+      (let [k (.-key g)
+            t (.-table p)
+            m (dec (alength t))]
+        (loop [i (bit-and (hash k) m)]
+          (if (identical? (aget t i) g)
+            (do (delete p i m)
+                ((if (= k (.-key p))
+                   (.-notifier p)
+                   (.-notifier g))))
+            (recur (step i m))))))))
 
 (defn sample [^Process p]
   (let [k (.-key p)]
@@ -122,7 +129,7 @@
         (throw (Cancelled. "Group consumer cancelled.")))))
 
 (defn run [k f n t]
-  (let [p (->Process k n t nil nil nil (object-array 8) 0 true false)]
+  (let [p (->Process k n t nil nil nil (object-array 8) 0 true true false)]
     (set! (.-key p) p)
     (set! (.-value p) p)
     (set! (.-input p)
