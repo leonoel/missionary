@@ -1,50 +1,45 @@
-(ns missionary.impl.Relieve)
+(ns ^:no-doc missionary.impl.Relieve)
 
 (declare transfer)
-(deftype Process
-  [reducer notifier terminator
-   iterator current last error
-   ^boolean busy]
+(deftype Process [reducer notifier terminator iterator current ^boolean busy ^boolean done]
   IFn
   (-invoke [_] (iterator))
   IDeref
   (-deref [p] (transfer p)))
 
-(defn nop [])
+(defn transfer [^Process ps]
+  (let [x (.-current ps)]
+    (set! (.-current ps) ps)
+    (when (nil? (.-reducer ps))
+      ((.-terminator ps)))
+    (if (nil? (.-notifier ps))
+      (throw x) x)))
 
-(defn transfer [^Process p]
-  (let [x (.-current p)]
-    (if (identical? nop x)
-      (let [x (.-last p)
-            e (.-error p)]
-        (if (identical? nop x)
-          (do ((.-terminator p)) (throw e))
-          (do (set! (.-last p) nop)
-              ((if (identical? nop e)
-                 (.-terminator p) (.-notifier p))) x)))
-      (do (set! (.-current p) nop) x))))
-
-(defn pull [^Process p]
-  (loop [s nop]
-    (if (set! (.-busy p) (not (.-busy p)))
-      (let [c (.-current p)]
-        (recur
-          (if-some [rf (.-reducer p)]
-            (try (let [x @(.-iterator p)]
-                   (if (identical? nop c)
-                     (do (set! (.-current p) x) (.-notifier p))
-                     (do (set! (.-current p) (rf c x)) s)))
-                 (catch :default e
-                   (set! (.-error p) e)
-                   ((.-iterator p)) s))
-            (do (set! (.-last p) c)
-                (set! (.-current p) nop)
-                (if (identical? nop c)
-                  (if (identical? nop (.-error p))
-                    (.-terminator p) (.-notifier p))
-                  s))))) (s))))
+(defn ready [^Process ps]
+  (loop [cb nil]
+    (if (set! (.-busy ps) (not (.-busy ps)))
+      (recur (if (.-done ps)
+               (do (set! (.-reducer ps) nil)
+                   (if (identical? ps (.-current ps))
+                     (.-terminator ps) cb))
+               (if-some [n (.-notifier ps)]
+                 (let [r (.-current ps)]
+                   (try (let [x @(.-iterator ps)]
+                          (set! (.-current ps)
+                            (if (identical? r ps)
+                              x ((.-reducer ps) r x))))
+                        (catch :default e
+                          (set! (.-current ps) e)
+                          (set! (.-notifier ps) nil)
+                          ((.-iterator ps))))
+                   (if (identical? r ps) n cb))
+                 (do (try @(.-iterator ps) (catch :default _)) cb)))) cb)))
 
 (defn run [rf f n t]
-  (let [p (->Process rf n t nil nop nop nop true)]
-    (set! (.-iterator p) (f #(pull p) #(do (set! (.-reducer p) nil) (pull p))))
-    (pull p) p))
+  (let [ps (->Process rf n t nil nil true false)]
+    (set! (.-current ps) ps)
+    (set! (.-iterator ps)
+      (f #(when-some [cb (ready ps)] (cb))
+        #(do (set! (.-done ps) true)
+             (when-some [cb (ready ps)] (cb)))))
+    (when-some [cb (ready ps)] (cb)) ps))

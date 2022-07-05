@@ -4,12 +4,7 @@ import clojure.lang.AFn;
 import clojure.lang.IDeref;
 import clojure.lang.IFn;
 
-import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
-
 public interface Relieve {
-
-    AtomicReferenceFieldUpdater<Process, Object> CURRENT =
-            AtomicReferenceFieldUpdater.newUpdater(Process.class, Object.class, "current");
 
     class Process extends AFn implements IDeref {
         static {
@@ -20,11 +15,9 @@ public interface Relieve {
         IFn notifier;
         IFn terminator;
         Object iterator;
-        Throwable error;
-        Object last;
+        Object current;
         boolean busy;
-
-        volatile Object current = CURRENT;
+        boolean done;
 
         @Override
         public Object invoke() {
@@ -37,71 +30,77 @@ public interface Relieve {
         }
     }
 
-    static Object transfer(Process process) {
-        for(;;) {
-            Object x = process.current;
-            if (x == CURRENT) {
-                if (process.last == CURRENT) {
-                    process.terminator.invoke();
-                    return clojure.lang.Util.sneakyThrow(process.error);
-                } else {
-                    x = process.last;
-                    process.last = CURRENT;
-                    ((process.error != null) ? process.notifier : process.terminator).invoke();
-                    return x;
-                }
-            }
-            if (CURRENT.compareAndSet(process, x, CURRENT)) return x;
+    static Object transfer(Process ps) {
+        Object x;
+        IFn n, r;
+        synchronized (ps) {
+            n = ps.notifier;
+            r = ps.reducer;
+            x = ps.current;
+            ps.current = ps;
         }
+        if (r == null) ps.terminator.invoke();
+        return n == null ? clojure.lang.Util.sneakyThrow((Throwable) x) : x;
     }
 
-    static void pull(Process process) {
-        IFn rf;
-        Object p;
-        IFn signal = Util.NOP;
-        Object it = process.iterator;
-        while (process.busy = !process.busy) if ((rf = process.reducer) == null) {
-            while (!CURRENT.compareAndSet(process, process.last = process.current, CURRENT));
-            if (process.last == CURRENT) signal = process.error == null ? process.terminator : process.notifier;
-        } else try {
-            Object x = ((IDeref) it).deref();
-            while (!CURRENT.compareAndSet(process, p = process.current, (p == CURRENT) ? x : rf.invoke(p, x)));
-            if (p == CURRENT) signal = process.notifier;
-        } catch (Throwable e) {
-            process.error = e;
-            ((IFn) it).invoke();
+    static IFn ready(Process ps) {
+        IFn cb = null;
+        while (ps.busy = !ps.busy) if (ps.done) {
+            ps.reducer = null;
+            if (ps.current == ps) cb = ps.terminator;
+        } else {
+            IFn n = ps.notifier;
+            if (n == null) Util.discard(ps.iterator); else {
+                Object r = ps.current;
+                try {
+                    Object x = ((IDeref) ps.iterator).deref();
+                    ps.current = r == ps ? x : ps.reducer.invoke(r, x);
+                } catch (Throwable e) {
+                    ps.current = e;
+                    ps.notifier = null;
+                    ((IFn) ps.iterator).invoke();
+                }
+                if (r == ps) cb = n;
+            }
         }
-        signal.invoke();
+        return cb;
     }
 
     static Process run(IFn r, IFn f, IFn n, IFn t) {
-        Process process = new Process();
-        synchronized (process) {
-            process.busy = true;
-            process.reducer = r;
-            process.notifier = n;
-            process.terminator = t;
-            process.iterator = f.invoke(
+        IFn cb;
+        Process ps = new Process();
+        synchronized (ps) {
+            ps.busy = true;
+            ps.reducer = r;
+            ps.notifier = n;
+            ps.terminator = t;
+            ps.current = ps;
+            ps.iterator = f.invoke(
                     new AFn() {
                         @Override
                         public Object invoke() {
-                            synchronized (process) {
-                                pull(process);
-                                return null;
+                            IFn cb;
+                            synchronized (ps) {
+                                cb = ready(ps);
                             }
+                            if (cb != null) cb.invoke();
+                            return null;
                         }},
                     new AFn() {
                         @Override
                         public Object invoke() {
-                            synchronized (process) {
-                                process.reducer = null;
-                                pull(process);
-                                return null;
+                            ps.done = true;
+                            IFn cb;
+                            synchronized (ps) {
+                                cb = ready(ps);
                             }
+                            if (cb != null) cb.invoke();
+                            return null;
                         }});
-            pull(process);
-            return process;
+            cb = ready(ps);
         }
+        if (cb != null) cb.invoke();
+        return ps;
     }
 
 }

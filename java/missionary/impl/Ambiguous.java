@@ -27,7 +27,7 @@ public interface Ambiguous {
         }
 
         @Override
-        public synchronized Object deref() {
+        public Object deref() {
             return transfer(this);
         }
     }
@@ -90,25 +90,24 @@ public interface Ambiguous {
         public Object invoke(Object cr, Object c) {
             Choice choice = (Choice) c;
             choice.coroutine = (IFn) cr;
-            ready(choice);
-            return null;
+            return ready(choice);
         }
     };
 
-    static void backtrack(Choice p, Branch b, Choice c) {
+    static IFn backtrack(Choice p, Branch b, Choice c) {
         try {
             c.iterator = NOP;
             b.choice = c;
             b.current = ((IDeref) p.iterator).deref();
-            p.coroutine.invoke(boot, c);
+            return (IFn) p.coroutine.invoke(boot, c);
         } catch (Throwable e) {
             c.done = true;
             b.current = e;
-            boot.invoke(p.coroutine, c);
+            return (IFn) boot.invoke(p.coroutine, c);
         }
     }
 
-    static void choose(Choice p) {
+    static IFn choose(Choice p) {
         Branch b = p.branch;
         Choice n = p.next;
         Choice c = new Choice();
@@ -117,10 +116,10 @@ public interface Ambiguous {
         c.branch = b;
         c.live = p.live;
         p.next = n.prev = c;
-        backtrack(p, b, c);
+        return backtrack(p, b, c);
     }
 
-    static void branch(Choice p) {
+    static IFn branch(Choice p) {
         p.parallelism = Numbers.dec(p.parallelism);
         Branch parent = p.branch;
         Processor prev = (Processor) parent.current;
@@ -141,7 +140,7 @@ public interface Ambiguous {
         }
         curr.child = b.prev = b.next = b;
         c.prev = c.next = c;
-        backtrack(p, b, c);
+        return backtrack(p, b, c);
     }
 
     static Process root(Branch b) {
@@ -204,13 +203,14 @@ public interface Ambiguous {
         (y.next = xx).prev = y;
     }
 
-    static void discard(Branch b) {
+    static IFn discard(Branch b) {
         Object parent = b.parent;
         Branch prev = b.prev;
         Branch next = b.next;
         b.prev = null;
         b.choice = null;
         b.current = null;
+        IFn cb = null;
         if (parent instanceof Branch) {
             Branch br = (Branch) parent;
             if (b == prev) {
@@ -218,7 +218,7 @@ public interface Ambiguous {
                 br.current = null;
                 if (c.busy && c.done) {
                     c.busy = c.done = false;
-                    choose(c);
+                    cb = choose(c);
                 }
             } else {
                 prev.next = next;
@@ -242,7 +242,7 @@ public interface Ambiguous {
                 c.parallelism = Numbers.inc(c.parallelism);
                 if (c.busy && c.done) {
                     c.busy = c.done = false;
-                    branch(c);
+                    cb = branch(c);
                 }
             } else {
                 prev.next = next;
@@ -253,76 +253,92 @@ public interface Ambiguous {
             Process ps = (Process) parent;
             if (b == prev) {
                 ps.child = null;
-                ps.terminator.invoke();
+                cb = ps.terminator;
             } else {
                 prev.next = next;
                 next.prev = prev;
                 if (ps.child == b) ps.child = prev;
             }
         }
+        return cb;
     }
 
-    static void ack(Choice c) {
+    static IFn ack(Choice c) {
+        IFn cb = null;
         if (c.busy && c.done) {
             c.busy = c.done = false;
-            if (Numbers.isNeg(c.parallelism)) choose(c);
-            else branch(c);
+            cb = Numbers.isNeg(c.parallelism) ? choose(c) : branch(c);
         }
+        return cb;
     }
 
-    static Branch done(Branch b) {
-        Branch q = b.queue;
+    static IFn done(Branch b) {
         Choice c = b.choice;
         Choice p = c.prev;
         c.prev = null;
         b.queue = null;
-        if (p == c) discard(b); else {
+        if (p == c) return discard(b); else {
             Choice n = c.next;
             n.prev = p;
             p.next = n;
             b.choice = p;
             b.current = null;
-            ack(p);
+            return ack(p);
         }
-        return q;
     }
 
+    static IFn all(Branch n) {
+        IFn cb = null;
+        while (n != null) {
+            Branch b = n;
+            n = b.queue;
+            cb = done(b);
+        }
+        return cb;
+    }
+    
     static Object transfer(Process ps) {
-        Branch b = ps.head;
-        Object x = b.current;
-        if (b.choice.done) {
-            ps.notifier = null;
-            kill(ps);
-            b = done(b);
-            while (b != null) b = done(b);
-            b = ps.tail;
-            while (b != null) b = done(b);
-            ps.head = ps.tail = null;
-            clojure.lang.Util.sneakyThrow((Throwable) x);
-        }
-        Branch next = done(b);
-        if (next == null) {
-            Branch prev = ps.tail;
-            if (prev == null) ps.head = null;
-            else {
-                do {
-                    Branch swap = prev.queue;
-                    prev.queue = next;
-                    next = prev;
-                    prev = swap;
-                } while (prev != null);
-                ps.tail = null;
-                ps.head = next;
-                ps.notifier.invoke();
+        Object x;
+        IFn cb;
+        synchronized (ps) {
+            Branch b = ps.head;
+            Branch q = b.queue;
+            x = b.current;
+            if (b.choice.done) {
+                ps.notifier = null;
+                kill(ps);
+                cb = done(b);
+                if (cb == null) cb = all(q);
+                if (cb == null) cb = all(ps.tail);
+                ps.head = ps.tail = null;
+            } else {
+                cb = done(b);
+                if (q == null) {
+                    Branch prev = ps.tail;
+                    if (prev == null) ps.head = null;
+                    else {
+                        ps.tail = null;
+                        do {
+                            Branch swap = prev.queue;
+                            prev.queue = q;
+                            q = prev;
+                            prev = swap;
+                        } while (prev != null);
+                        ps.head = q;
+                        cb = ps.notifier;
+                    }
+                } else {
+                    ps.head = q;
+                    cb = ps.notifier;
+                }
             }
-        } else {
-            ps.head = next;
-            ps.notifier.invoke();
         }
-        return x;
+        if (cb != null) cb.invoke();
+        return ps.notifier == null ? clojure.lang.Util.sneakyThrow((Throwable) x) : x;
     }
 
-    static void ready(Choice c) {
+    static IFn ready(Choice c) {
+        IFn cb = null;
         if (c.busy = !c.busy) for(;;) {
             Branch b = c.branch;
             Number par = c.parallelism;
@@ -342,9 +358,9 @@ public interface Ambiguous {
                     b.current = x;
                     Process ps = root(b);
                     IFn n = ps.notifier;
-                    if (n == null) done(b); else if (ps.head == null) {
+                    if (n == null) cb = done(b); else if (ps.head == null) {
                         ps.head = b;
-                        n.invoke();
+                        cb = n;
                     } else {
                         b.queue = ps.tail;
                         ps.tail = b;
@@ -360,14 +376,14 @@ public interface Ambiguous {
                         Processor pr = (Processor) curr;
                         do move(b, (pr = pr.next).child); while (pr != b.current);
                     }
-                    discard(b);
+                    cb = discard(b);
                 } else {
                     Choice n = c.next;
                     n.prev = p;
                     p.next = n;
                     if (c == b.choice) {
                         b.choice = p;
-                        if (curr == null) ack(p); else if (curr instanceof Processor) {
+                        if (curr == null) cb = ack(p); else if (curr instanceof Processor) {
                             Processor pr = (Processor) curr;
                             Branch pivot = pr.child;
                             b.current = pivot;
@@ -380,11 +396,11 @@ public interface Ambiguous {
                 break;
             } else if (Numbers.isPos(par)) {
                 c.busy = false;
-                branch(c);
+                cb = branch(c);
                 break;
             } else if (Numbers.isNeg(par)) if (c == b.choice) if (curr == null) {
                 c.busy = false;
-                choose(c);
+                cb = choose(c);
                 break;
             } else {
                 c.done = true;
@@ -399,6 +415,7 @@ public interface Ambiguous {
                 break;
             }
         }
+        return cb;
     }
 
     static Object suspend(Branch b, Number par, IFn flow) {
@@ -407,40 +424,44 @@ public interface Ambiguous {
         c.iterator = flow.invoke(new AFn() {
             @Override
             public Object invoke() {
+                IFn cb;
                 Branch b = c.branch;
                 synchronized (root(b)) {
-                    ready(c);
-                    return null;
+                    cb = ready(c);
                 }
+                return cb == null ? null : cb.invoke();
             }
             @Override
             public Object invoke(Object x) {
+                IFn cb;
                 Branch b = c.branch;
                 synchronized (root(b)) {
                     b.current = x;
-                    ready(c);
-                    return null;
+                    cb = ready(c);
                 }
+                return cb == null ? null : cb.invoke();
             }
         }, new AFn() {
             @Override
             public Object invoke() {
+                IFn cb;
                 Branch b = c.branch;
                 synchronized (root(b)) {
                     c.done = true;
-                    ready(c);
-                    return null;
+                    cb = ready(c);
                 }
+                return cb == null ? null : cb.invoke();
             }
             @Override
             public Object invoke(Object x) {
+                IFn cb;
                 Branch b = c.branch;
                 synchronized (root(b)) {
                     c.done = true;
                     b.current = x;
-                    ready(c);
-                    return null;
+                    cb = ready(c);
                 }
+                return cb == null ? null : cb.invoke();
             }
         });
         if (!c.live) ((IFn) c.iterator).invoke();
@@ -460,19 +481,21 @@ public interface Ambiguous {
 
     static Object run(IFn cr, IFn n, IFn t) {
         Process ps = new Process();
+        Branch b = new Branch();
+        Choice c = new Choice();
+        c.iterator = NOP;
+        c.live = true;
+        c.branch = b;
+        b.parent = ps;
+        ps.notifier = n;
+        ps.terminator = t;
+        ps.child = b.prev = b.next = b;
+        b.choice = c.prev = c.next = c;
+        IFn cb;
         synchronized (ps) {
-            Branch b = new Branch();
-            Choice c = new Choice();
-            c.iterator = NOP;
-            c.live = true;
-            c.branch = b;
-            b.parent = ps;
-            ps.notifier = n;
-            ps.terminator = t;
-            ps.child = b.prev = b.next = b;
-            b.choice = c.prev = c.next = c;
-            boot.invoke(cr, c);
-            return ps;
+            cb = (IFn) boot.invoke(cr, c);
         }
+        if (cb != null) cb.invoke();
+        return ps;
     }
 }

@@ -26,72 +26,81 @@ public interface Reductions {
         }
 
         @Override
-        public synchronized Object deref() {
+        public Object deref() {
             return transfer(this);
         }
     }
 
-    static Object transfer(Process p) {
-        try {
-            IFn f = p.reducer;
-            Object r = p.result;
-            r = r == p ? f.invoke() : f.invoke(r, ((IDeref) p.input).deref());
-            if (r instanceof Reduced) {
-                ((IFn) p.input).invoke();
-                p.reducer = null;
-                r = ((Reduced) r).deref();
+    static Object transfer(Process ps) {
+        IFn cb;
+        synchronized (ps) {
+            try {
+                IFn f = ps.reducer;
+                Object r = ps.result;
+                r = r == ps ? f.invoke() : f.invoke(r, ((IDeref) ps.input).deref());
+                if (r instanceof Reduced) {
+                    ((IFn) ps.input).invoke();
+                    ps.reducer = null;
+                    r = ((Reduced) r).deref();
+                }
+                ps.result = r;
+            } catch (Throwable e) {
+                ((IFn) ps.input).invoke();
+                ps.notifier = null;
+                ps.reducer = null;
+                ps.result = e;
             }
-            return p.result = r;
-        } catch (Throwable e) {
-            ((IFn) p.input).invoke();
-            p.reducer = null;
-            throw e;
-        } finally {
-            ready(p);
+            cb = ready(ps);
         }
+        if (cb != null) cb.invoke();
+        return ps.notifier == null ? clojure.lang.Util.sneakyThrow((Throwable) ps.result) : ps.result;
     }
 
-    static void ready(Process p) {
-        while (p.busy = !p.busy) if (p.done) {
-            p.terminator.invoke();
+    static IFn ready(Process ps) {
+        IFn cb = null;
+        while (ps.busy = !ps.busy) if (ps.done) {
+            cb = ps.terminator;
             break;
-        } else if (p.reducer == null) try {
-            ((IDeref) p.input).deref();
+        } else if (ps.reducer == null) try {
+            ((IDeref) ps.input).deref();
         } catch (Throwable ignored) {
         } else {
-            p.notifier.invoke();
+            cb = ps.notifier;
             break;
         }
+        return cb;
     }
 
     static Process run(IFn r, IFn f, IFn n, IFn t) {
-        Process p = new Process();
-        p.busy = true;
-        p.result = p;
-        p.reducer = r;
-        p.notifier = n;
-        p.terminator = t;
-        p.input = f.invoke(
+        Process ps = new Process();
+        ps.busy = true;
+        ps.result = ps;
+        ps.reducer = r;
+        ps.notifier = n;
+        ps.terminator = t;
+        ps.input = f.invoke(
                 new AFn() {
                     @Override
                     public Object invoke() {
-                        synchronized (p) {
-                            ready(p);
-                            return null;
+                        IFn cb;
+                        synchronized (ps) {
+                            cb = ready(ps);
                         }
+                        return cb == null ? null : cb.invoke();
                     }
                 },
                 new AFn() {
                     @Override
                     public Object invoke() {
-                        synchronized (p) {
-                            p.done = true;
-                            ready(p);
-                            return null;
+                        ps.done = true;
+                        IFn cb;
+                        synchronized (ps) {
+                            cb = ready(ps);
                         }
+                        return cb == null ? null : cb.invoke();
                     }});
         n.invoke();
-        return p;
+        return ps;
     }
 
 }

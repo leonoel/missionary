@@ -30,98 +30,92 @@ public interface Sample {
         }
 
         @Override
-        public synchronized Object deref() {
+        public Object deref() {
             return transfer(this);
         }
     }
 
-    static void terminate(Process p) {
-        if (--p.alive == 0) p.terminator.invoke();
-    }
-
-    static void ready(Process p) {
-        Object[] args = p.args;
-        Object[] inputs = p.inputs;
+    static IFn ready(Process ps) {
+        IFn cb = null;
+        Object[] args = ps.args;
+        Object[] inputs = ps.inputs;
         int sampled = inputs.length - 1;
-        while (p.busy = !p.busy)
-            if (p.done) {
-                for (int i = 0; i != sampled; i++) {
-                    Object input = inputs[i];
-                    ((IFn) input).invoke();
-                    if (args[i] == args) Util.discard(input);
-                    else args[i] = args;
-                }
-                terminate(p);
-                break;
+        while (ps.busy = !ps.busy) if (ps.done) {
+            for (int i = 0; i != sampled; i++) {
+                Object input = inputs[i];
+                ((IFn) input).invoke();
+                if (args[i] == args) Util.discard(input);
+                else args[i] = args;
             }
-            else if (args[sampled] == args)
-                Util.discard(inputs[sampled]);
-            else {
-                p.notifier.invoke();
-                break;
-            }
+            cb = --ps.alive == 0 ? ps.terminator : null;
+            break;
+        } else if (args[sampled] == args) Util.discard(inputs[sampled]); else {
+            cb = ps.notifier;
+            break;
+        }
+        return cb;
     }
 
-    static Object transfer(Process p) {
-        IFn c = p.combinator;
-        Object[] args = p.args;
-        Object[] inputs = p.inputs;
+    static Object transfer(Process ps) {
+        IFn cb;
+        Object x;
+        IFn c = ps.combinator;
+        Object[] args = ps.args;
+        Object[] inputs = ps.inputs;
         int sampled = inputs.length - 1;
         Object sampler = inputs[sampled];
-        try {
+        synchronized (ps) {
             try {
-                if (c == null) throw new Error("Undefined continuous flow.");
-                for (int i = 0; i != sampled; i++) if (args[i] == args) {
-                    IDeref input = (IDeref) inputs[i];
-                    Object x;
-                    do {
-                        args[i] = null;
-                        x = input.deref();
-                    } while (args[i] == args);
-                    args[i] = x;
+                try {
+                    if (c == null) throw new Error("Undefined continuous flow.");
+                    for (int i = 0; i != sampled; i++) if (args[i] == args) {
+                        IDeref input = (IDeref) inputs[i];
+                        do {
+                            args[i] = null;
+                            x = input.deref();
+                        } while (args[i] == args);
+                        args[i] = x;
+                    }
+                } catch (Throwable e) {
+                    Util.discard(sampler);
+                    throw e;
                 }
+                args[sampled] = ((IDeref) sampler).deref();
+                x = Util.apply(c, args);
             } catch (Throwable e) {
-                Util.discard(sampler);
-                throw e;
+                x = e;
+                ps.notifier = null;
+                ((IFn) sampler).invoke();
+                args[sampled] = args;
             }
-            args[sampled] = ((IDeref) sampler).deref();
-            return Util.apply(c, args);
-        } catch (Throwable e) {
-            ((IFn) sampler).invoke();
-            args[sampled] = args;
-            throw e;
-        } finally {
-            ready(p);
+            cb = ready(ps);
         }
-    }
-
-    static void dirty(Process p, int i) {
-        Object[] args = p.args;
-        if (args[i] == args) Util.discard(p.inputs[i]);
-        else args[i] = args;
+        if (cb != null) cb.invoke();
+        return ps.notifier == null ? clojure.lang.Util.sneakyThrow((Throwable) x) : x;
     }
 
     static Object run(Object c, Object f, Object fs, Object n, Object t) {
         int arity = RT.count(fs) + 1;
         Object[] inputs = new Object[arity];
         Object[] args = new Object[arity];
-        Process process = new Process();
-        process.combinator = (IFn) c;
-        process.notifier = (IFn) n;
-        process.terminator = (IFn) t;
-        process.inputs = inputs;
-        process.args = args;
-        process.alive = arity;
+        Process ps = new Process();
+        ps.combinator = (IFn) c;
+        ps.notifier = (IFn) n;
+        ps.terminator = (IFn) t;
+        ps.inputs = inputs;
+        ps.args = args;
+        ps.alive = arity;
         IFn done = new AFn() {
             @Override
             public Object invoke() {
-                synchronized (process) {
-                    terminate(process);
-                    return null;
+                boolean last;
+                synchronized (ps) {
+                    last = --ps.alive == 0;
                 }
+                return last ? ps.terminator.invoke() : null;
             }
         };
-        synchronized (process) {
+        synchronized (ps) {
             int i = 0;
             IFn prev = (IFn) f;
             Iterator flows = RT.iter(fs);
@@ -130,36 +124,40 @@ public interface Sample {
                 inputs[i] = prev.invoke(new AFn() {
                     @Override
                     public Object invoke() {
-                        synchronized (process) {
-                            dirty(process, index);
-                            return null;
+                        Object[] args = ps.args;
+                        synchronized (ps) {
+                            if (args[index] == args) Util.discard(ps.inputs[index]);
+                            else args[index] = args;
                         }
+                        return null;
                     }
                 }, done);
-                if (args[i] == null) process.combinator = null;
+                if (args[i] == null) ps.combinator = null;
                 prev = (IFn) flows.next();
                 i++;
             }
             inputs[i] = prev.invoke(new AFn() {
                 @Override
                 public Object invoke() {
-                    synchronized (process) {
-                        ready(process);
-                        return null;
+                    IFn cb;
+                    synchronized (ps) {
+                        cb = ready(ps);
                     }
+                    return cb == null ? null : cb.invoke();
                 }
             }, new AFn() {
                 @Override
                 public Object invoke() {
-                    synchronized(process) {
-                        process.done = true;
-                        ready(process);
-                        return null;
+                    ps.done = true;
+                    IFn cb;
+                    synchronized (ps) {
+                        cb = ready(ps);
                     }
+                    return cb == null ? null : cb.invoke();
                 }
             });
         }
-        return process;
+        return ps;
     }
 
 }

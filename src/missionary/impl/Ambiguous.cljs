@@ -6,7 +6,7 @@
 
 (deftype Process [notifier terminator head tail child]
   IFn
-  (-invoke [this] (kill this))
+  (-invoke [this] (kill this) nil)
   IDeref
   (-deref [this] (transfer this)))
 
@@ -161,7 +161,7 @@
           (do (set! (.-next prev) next)
               (set! (.-prev next) prev)
               (when (identical? b (.-current br))
-                (set! (.-current br) prev)))))
+                (set! (.-current br) prev)) nil)))
       (if (instance? Processor parent)
         (let [pr ^Processor parent]
           (if (identical? b prev)
@@ -185,15 +185,15 @@
             (do (set! (.-next prev) next)
                 (set! (.-prev next) prev)
                 (when (identical? b (.-child pr))
-                  (set! (.-child pr) prev)))))
+                  (set! (.-child pr) prev)) nil)))
         (let [ps ^Process parent]
           (if (identical? b prev)
             (do (set! (.-child ps) nil)
-                ((.-terminator ps)))
+                (.-terminator ps))
             (do (set! (.-next prev) next)
                 (set! (.-prev next) prev)
                 (when (identical? b (.-child ps))
-                  (set! (.-child ps) prev)))))))))
+                  (set! (.-child ps) prev)) nil)))))))
 
 (defn ack [^Choice c]
   (when (.-busy c)
@@ -204,8 +204,7 @@
         (choose c) (branch c)))))
 
 (defn done [^Branch b]
-  (let [q (.-queue b)
-        c (.-choice b)
+  (let [c (.-choice b)
         p (.-prev c)]
     (set! (.-prev c) nil)
     (set! (.-queue b) nil)
@@ -216,36 +215,40 @@
         (set! (.-next p) n)
         (set! (.-choice b) p)
         (set! (.-current b) nil)
-        (ack p))) q))
+        (ack p)))))
+
+(defn all [^Branch n]
+  (loop [n n cb nil]
+    (if (nil? n)
+      cb (recur (.-queue n)
+           (done n)))))
 
 (defn transfer [^Process ps]
   (let [b (.-head ps)
+        q (.-queue b)
         x (.-current b)]
-    (when (.-done (.-choice b))
-      (set! (.-notifier ps) nil)
-      (kill ps)
-      (loop [b (done b)]
-        (when-not (nil? b)
-          (recur (done b))))
-      (loop [b (.-tail ps)]
-        (when-not (nil? b)
-          (recur (done b))))
-      (set! (.-head ps) nil)
-      (set! (.-tail ps) nil)
-      (throw x))
-    (if-some [next (done b)]
-      (do (set! (.-head ps) next)
-          ((.-notifier ps)))
-      (if-some [prev (.-tail ps)]
-        (do (set! (.-tail ps) nil)
-            (set! (.-head ps)
-              (loop [prev prev
-                     next nil]
-                (let [swap (.-queue prev)]
-                  (set! (.-queue prev) next)
-                  (if (nil? swap) prev (recur swap prev)))))
-            ((.-notifier ps)))
-        (set! (.-head ps) nil))) x))
+    (when-some [cb (if (.-done (.-choice b))
+                     (do (set! (.-notifier ps) nil)
+                         (kill ps)
+                         (let [cb (done b)
+                               cb (if (nil? cb) (all q) cb)
+                               cb (if (nil? cb) (all (.-tail ps)) cb)]
+                           (set! (.-head ps) nil)
+                           (set! (.-tail ps) nil) cb))
+                     (let [cb (done b)]
+                       (if (nil? q)
+                         (if-some [prev (.-tail ps)]
+                           (do (set! (.-tail ps) nil)
+                               (set! (.-head ps)
+                                 (loop [prev prev
+                                        next nil]
+                                   (let [swap (.-queue prev)]
+                                     (set! (.-queue prev) next)
+                                     (if (nil? swap) prev (recur swap prev)))))
+                               (.-notifier ps))
+                           (do (set! (.-head ps) nil) cb))
+                         (do (set! (.-head ps) q) (.-notifier ps)))))]
+      (cb)) (if (nil? (.-notifier ps)) (throw x) x)))
 
 (defn ready [^Choice c]
   (when (set! (.-busy c) (not (.-busy c)))
@@ -266,9 +269,9 @@
                 (set! (.-current b) x)
                 (if-some [n (.-notifier ps)]
                   (if (nil? (.-head ps))
-                    (do (set! (.-head ps) b) (n))
+                    (do (set! (.-head ps) b) n)
                     (do (set! (.-queue b) (.-tail ps))
-                        (set! (.-tail ps) b)))
+                        (set! (.-tail ps) b) nil))
                   (done b)))))
           (if (.-done c)
             (let [p (.-prev c)]
@@ -299,16 +302,16 @@
                               (when-not (identical? pr curr)
                                 (move pivot (.-child pr)))))
                           (set! (.-prev pr) pr)
-                          (set! (.-next pr) pr))))))))
+                          (set! (.-next pr) pr) nil)))))))
             (if (pos? par)
               (do (set! (.-busy c) false) (branch c))
               (if (neg? par)
                 (if (identical? c (.-choice b))
                   (if (nil? curr)
                     (do (set! (.-busy c) false) (choose c))
-                    (do (set! (.-done c) true) (walk (.-next ^Branch curr))))
-                  (do (set! (.-done c) true) (cancel (.-next c))))
-                (set! (.-done c) true)))))))))
+                    (do (set! (.-done c) true) (walk (.-next ^Branch curr)) nil))
+                  (do (set! (.-done c) true) (cancel (.-next c)) nil))
+                (do (set! (.-done c) true) nil)))))))))
 
 (defn suspend [^Branch b par flow]
   (let [c (.-choice b)]
@@ -317,18 +320,18 @@
       (flow
         (fn
           ([]
-           (ready c))
+           (when-some [cb (ready c)] (cb)))
           ([x]
            (set! (.-current (.-branch c)) x)
-           (ready c)))
+           (when-some [cb (ready c)] (cb))))
         (fn
           ([]
            (set! (.-done c) true)
-           (ready c))
+           (when-some [cb (ready c)] (cb)))
           ([x]
            (set! (.-done c) true)
            (set! (.-current (.-branch c)) x)
-           (ready c)))))
+           (when-some [cb (ready c)] (cb))))))
     (when-not (.-live c)
       ((.-iterator c))) b))
 
@@ -352,4 +355,4 @@
       (set! (.-prev c))
       (set! (.-next c))
       (set! (.-choice b)))
-    (boot cr c) ps))
+    (when-some [cb (boot cr c)] (cb)) ps))
