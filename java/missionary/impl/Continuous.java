@@ -6,10 +6,9 @@ import clojure.lang.IFn;
 import missionary.Cancelled;
 
 import static missionary.impl.Fiber.fiber;
-import static missionary.impl.Util.NOP;
 
 public interface Continuous {
-    class Process extends AFn implements Fiber, IDeref {
+    class Process extends AFn implements IDeref, Fiber {
 
         static {
             Util.printDefault(Process.class);
@@ -17,16 +16,19 @@ public interface Continuous {
 
         IFn notifier;
         IFn terminator;
+        IFn coroutine;
         Choice choice;
+        boolean live;
+        int pending;
 
         @Override
-        public synchronized Object invoke() {
+        public Object invoke() {
             kill(this);
             return null;
         }
 
         @Override
-        public synchronized Object deref() {
+        public Object deref() {
             return transfer(this);
         }
 
@@ -47,193 +49,243 @@ public interface Continuous {
 
         @Override
         public Object check() {
-            return choice.live ? null : clojure.lang.Util.sneakyThrow(new Cancelled("Process cancelled."));
+            return live ? null : clojure.lang.Util.sneakyThrow(new Cancelled("Process cancelled."));
         }
 
         @Override
         public Object unpark() {
-            return ((IDeref) choice.prev.iterator).deref();
+            return sample(choice);
         }
+
     }
 
-    class Choice {
+    class Choice implements Fiber {
         Process process;
         Choice prev;
         Choice next;
-        IFn coroutine;
+        IFn backtrack;
         Object iterator;
-        boolean live;
         boolean busy;
         boolean done;
+
+        @Override
+        public Object park(IFn task) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Object swich(IFn flow) {
+            return suspend(process, flow);
+        }
+
+        @Override
+        public Object fork(Number par, IFn flow) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Object check() {
+            return clojure.lang.Util.sneakyThrow(new Cancelled("Process cancelled."));
+        }
+
+        @Override
+        public Object unpark() {
+            return sample(this);
+        }
+
     }
 
-    IFn boot = new AFn() {
+    IFn getset = new AFn() {
         @Override
-        public Object invoke(Object c, Object p) {
-            Process ps = (Process) p;
-            Choice curr = new Choice();
-            Choice prev = curr.prev = ps.choice;
-            Choice next = curr.next = prev.next;
-            curr.busy = true;
-            curr.process = ps;
-            curr.iterator = NOP;
-            curr.live = prev.live;
-            curr.coroutine = (IFn) c;
-            ps.choice = prev.next = next.prev = curr;
+        public Object invoke(Object c, Object d) {
+            Process ps = (Process) d;
+            IFn cr = ps.coroutine;
+            ps.coroutine = (IFn) c;
+            return cr;
+        }
+    };
+
+    IFn discard = new AFn() {
+        @Override
+        public Object invoke(Object c, Object d) {
+            IFn cr = (IFn) c;
+            Fiber f = fiber.get();
+            fiber.set((Choice) d);
+            try {
+                Object x = cr.invoke();
+                if (x instanceof Choice) {
+                    Choice ch = (Choice) x;
+                    ch.backtrack = cr;
+                    ((IFn) ch.iterator).invoke();
+                    ready(ch);
+                }
+            } catch (Throwable e) {}
+            fiber.set(f);
             return null;
         }
     };
 
-    static void cancel(Choice c) {
-        Process ps = c.process;
-        for(;;) {
-            if (!c.live) break;
-            c.live = false;
-            ((IFn) c.iterator).invoke();
-            Choice t = ps.choice;
-            if (t == null) break;
-            do c = c.next; while (c.prev == null);
-            if (c == t.next) break;
-        }
-    }
-
     static void kill(Process ps) {
-        Choice c = ps.choice;
-        if (c != null) cancel(c.next);
-    }
-
-    static void done(Process ps) {
-        Choice c = ps.choice;
-        Choice p = c.prev;
-        c.prev = null;
-        if (p == c) {
-            ps.choice = null;
-            ps.terminator.invoke();
-        } else {
-            Choice n = c.next;
-            n.prev = p;
-            p.next = n;
-            ps.choice = p;
-            ack(p);
-        }
-    }
-
-    static void dirty(Process ps) {
-        IFn n = ps.notifier;
-        ps.choice.coroutine.invoke(boot, ps);
-        if (n == null) {
-            Fiber prev = fiber.get();
-            fiber.set(ps);
-            try {
-                while (ps.choice.coroutine.invoke() == ps);
-            } catch (Throwable e) {}
-            fiber.set(prev);
-            done(ps);
-        } else n.invoke();
-    }
-
-    static void ack(Choice c) {
-        if (c.busy && c.done) {
-            c.busy = c.done = false;
-            dirty(c.process);
-        }
-    }
-
-    static void ready(Choice c) {
-        if (c.busy = !c.busy) {
-            IFn cr = c.coroutine;
-            Process ps = c.process;
-            if (c.done) {
-                Choice p = c.prev;
-                c.prev = null;
-                if (c == p) {
-                    ps.choice = null;
-                    ps.terminator.invoke();
-                } else {
-                    Choice n = c.next;
-                    n.prev = p;
-                    p.next = n;
-                    if (c == ps.choice) {
-                        ps.choice = p;
-                        ack(p);
-                    }
-                }
-            } else if (cr == null) {
-                c.busy = false;
-                Util.discard(c.iterator);
-            } else if (c == ps.choice) {
-                c.busy = false;
-                dirty(ps);
-            } else {
-                c.done = true;
-                cancel(c.next);
+        synchronized (ps) {
+            if (ps.live) {
+                ps.live = false;
+                Choice ch = ps.choice;
+                if (ch != null) ((IFn) ch.next.iterator).invoke();
             }
+        }
+    }
+
+    static void top(Choice ch) {
+        if (!ch.process.live) ((IFn) ch.iterator).invoke();
+    }
+
+    static void done(Choice ch) {
+        Process ps = ch.process;
+        ps.pending--;
+        Choice p = ch.prev;
+        if (p != null) {
+            ch.prev = null;
+            if (ch == p) ps.choice = null; else {
+                Choice n = ch.next;
+                n.prev = p;
+                p.next = n;
+                if (ch == ps.choice) ps.choice = p;
+                else if (p == ps.choice) top(n);
+            }
+            ch.next = null;
+        }
+    }
+
+    static Object sample(Choice ch) {
+        try {
+            Object x;
+            for(;;) {
+                x = ((IDeref) ch.iterator).deref();
+                if (ch.busy = !ch.busy) {
+                    if (ch.done) {
+                        done(ch);
+                        break;
+                    }
+                } else break;
+            }
+            return x;
+        } catch (Throwable e) {
+            if (ch.busy = !ch.busy) if (ch.done) done(ch);
+            throw e;
+        }
+    }
+
+    static void detach(Choice ch) {
+        Process ps = ch.process;
+        Choice c;
+        while ((c = ps.choice) != ch) {
+            Choice p = c.prev;
+            Choice n = c.next;
+            c.prev = null;
+            c.next = null;
+            ps.choice = p;
+            p.next = n;
+            n.prev = p;
+            ((IFn) c.iterator).invoke();
+        }
+    }
+
+    static void ready(Choice ch) {
+        if (ch.busy = !ch.busy) if (ch.done) done(ch);
+        else if (ch.prev == null) ch.backtrack.invoke(discard, ch);
+        else {
+            Process ps = ch.process;
+            Choice cur = ps.choice;
+            detach(ch);
+            IFn cr = (IFn) ch.backtrack.invoke(getset, ps);
+            if (cr != null) discard.invoke(cr, cur);
         }
     }
 
     static Object transfer(Process ps) {
-        Fiber prev = fiber.get();
-        fiber.set(ps);
-        try {
-            Object x;
-            do x = ps.choice.coroutine.invoke(); while (x == ps);
-            return x;
-        } catch (Throwable e) {
-            ps.notifier = null;
-            kill(ps);
-            throw e;
-        } finally {
-            fiber.set(prev);
-            done(ps);
+        Object x;
+        IFn cb;
+        synchronized (ps) {
+            Fiber f = fiber.get();
+            fiber.set(ps);
+            try {
+                while ((x = ps.coroutine.invoke()) instanceof Choice) {
+                    Choice c = (Choice) x;
+                    c.backtrack = (IFn) ps.coroutine.invoke(getset, ps);
+                    if (c.done || c.busy) {
+                        ready(c);
+                        ((IFn) c.iterator).invoke();
+                        throw new Error("Undefined continuous flow.");
+                    } else c.busy = true;
+                    Choice p = ps.choice;
+                    ps.choice = c;
+                    if (p == null) {
+                        c.prev = c;
+                        c.next = c;
+                        top(c);
+                    } else {
+                        Choice n = p.next;
+                        c.prev = p;
+                        c.next = n;
+                        p.next = c;
+                        n.prev = c;
+                    }
+                }
+            } catch (Throwable e) {
+                Choice ch = ps.choice;
+                if (ch != null) {
+                    detach(ch = ch.next);
+                    ch.prev = null;
+                    ch.next = null;
+                    ps.choice = null;
+                    ((IFn) ch.iterator).invoke();
+                }
+                ps.notifier = null;
+                x = e;
+            }
+            fiber.set(f);
+            ps.coroutine = null;
+            cb = ps.pending == 0 ? ps.terminator : Util.NOP;
         }
+        cb.invoke();
+        return ps.notifier == null ? clojure.lang.Util.sneakyThrow((Throwable) x) : x;
     }
 
     static Object suspend(Process ps, IFn flow) {
-        Choice c = ps.choice;
-        c.iterator = flow.invoke(new AFn() {
+        Choice ch = new Choice();
+        IFn n = new AFn() {
             @Override
             public Object invoke() {
-                synchronized (c.process) {
-                    ready(c);
-                    return null;
+                IFn cb;
+                synchronized (ch.process) {
+                    IFn cr = ps.coroutine;
+                    ready(ch);
+                    cb = ps.coroutine == null ? ps.pending == 0 ? ps.terminator
+                            : Util.NOP : cr == null ? ps.notifier : Util.NOP;
                 }
+                return cb.invoke();
             }
-        }, new AFn() {
+        };
+        IFn t = new AFn() {
             @Override
             public Object invoke() {
-                synchronized (c.process) {
-                    c.done = true;
-                    ready(c);
-                    return null;
-                }
+                ch.done = true;
+                return n.invoke();
             }
-        });
-        c.coroutine.invoke(boot, ps);
-        if (c.done) {
-            ready(c);
-            throw new Error("Undefined continuous flow.");
-        }
-        if (c.busy) {
-            c.busy = false;
-            c.coroutine = null;
-            ((IFn) c.iterator).invoke();
-            throw new Error("Undefined continuous flow.");
-        }
-        if (!c.live) ((IFn) c.iterator).invoke();
-        return ps;
+        };
+        ch.busy = true;
+        ch.process = ps;
+        ch.iterator = flow.invoke(n, t);
+        ps.pending++;
+        return ch;
     }
 
     static Process run(IFn cr, IFn n, IFn t) {
         Process ps = new Process();
-        Choice c = new Choice();
-        c.busy = c.live = true;
-        c.prev = c.next = c;
-        c.process = ps;
-        c.coroutine = cr;
-        c.iterator = NOP;
-        ps.choice = c;
+        ps.live = true;
         ps.notifier = n;
         ps.terminator = t;
+        ps.coroutine = cr;
         n.invoke();
         return ps;
     }

@@ -2,143 +2,164 @@
   (:require [missionary.impl.Fiber :refer [Fiber fiber]])
   (:import missionary.Cancelled))
 
-(declare ack kill transfer suspend)
+(declare kill transfer suspend sample ready)
 
-(deftype Process [notifier terminator choice]
+(deftype Process [notifier terminator coroutine choice ^boolean live ^number pending]
   IFn
-  (-invoke [this] (kill this))
+  (-invoke [this] (kill this) nil)
   IDeref
   (-deref [this] (transfer this))
   Fiber
   (park [_ _] (throw (js/Error. "Unsupported operation.")))
   (fork [_ _ _] (throw (js/Error. "Unsupported operation.")))
   (swich [this flow] (suspend this flow))
-  (check [_] (when-not (.-live choice) (throw (Cancelled. "Process cancelled."))))
-  (unpark [_] @(.-iterator (.-prev choice))))
+  (check [_] (when-not live (throw (Cancelled. "Process cancelled."))))
+  (unpark [_] (sample choice)))
 
-(deftype Choice [process prev next coroutine iterator ^boolean live ^boolean busy ^boolean done])
+(deftype Choice [process prev next backtrack iterator ^boolean busy ^boolean done]
+  Fiber
+  (park [_ _] (throw (js/Error. "Unsupported operation.")))
+  (fork [_ _ _] (throw (js/Error. "Unsupported operation.")))
+  (swich [_ flow] (suspend process flow))
+  (check [_] (throw (Cancelled. "Process cancelled.")))
+  (unpark [this] (sample this)))
 
-(defn nop [])
+(defn getset [c ^Process ps]
+  (let [cr (.-coroutine ps)]
+    (set! (.-coroutine ps) c) cr))
 
-(defn boot [cr ^Process ps]
-  (let [prev (.-choice ps)
-        next (.-next prev)]
-    (->> (->Choice ps prev next cr nop (.-live prev) true false)
-      (set! (.-choice ps))
-      (set! (.-next prev))
-      (set! (.-prev next)))
-    nil))
-
-(defn cancel [^Choice c]
-  (let [ps (.-process c)]
-    (loop [c c]
-      (when (.-live c)
-        (set! (.-live c) false)
-        ((.-iterator c))
-        (when-some [t (.-choice ps)]
-          (let [c (loop [c c]
-                    (let [c (.-next c)]
-                      (if (nil? (.-prev c))
-                        (recur c) c)))]
-            (when-not (identical? c (.-next t))
-              (recur c))))))))
+(defn discard [cr ^Choice ch]
+  (let [f fiber]
+    (set! fiber ch)
+    (try (let [x (cr)]
+           (when (instance? Choice x)
+             (let [ch ^Choice x]
+               (set! (.-backtrack ch) cr)
+               ((.-iterator ch))
+               (ready ch))))
+         (catch :default _))
+    (set! fiber f) nil))
 
 (defn kill [^Process ps]
-  (when-some [c (.-choice ps)]
-    (cancel (.-next c))))
+  (when (.-live ps)
+    (set! (.-live ps) false)
+    (when-some [ch (.-choice ps)]
+      ((.-iterator (.-next ch))))))
 
-(defn done [^Process ps]
-  (let [c (.-choice ps)
-        p (.-prev c)]
-    (set! (.-prev c) nil)
-    (if (identical? p c)
-      (do (set! (.-choice ps) nil)
-          ((.-terminator ps)))
-      (let [n (.-next c)]
-        (set! (.-prev n) p)
-        (set! (.-next p) n)
-        (set! (.-choice ps) p)
-        (ack p)))))
+(defn top [^Choice ch]
+  (when-not (.-live (.-process ch))
+    ((.-iterator ch))))
 
-(defn dirty [^Process ps]
-  (let [n (.-notifier ps)]
-    ((.-coroutine (.-choice ps)) boot ps)
-    (if (nil? n)
-      (let [prev fiber]
-        (set! fiber ps)
-        (try (while (identical? ((.-coroutine (.-choice ps))) ps))
-             (catch :default _))
-        (set! fiber prev)
-        (done ps)) (n))))
+(defn done [^Choice ch]
+  (let [ps (.-process ch)]
+    (set! (.-pending ps) (dec (.-pending ps)))
+    (when-some [p (.-prev ch)]
+      (set! (.-prev ch) nil)
+      (if (identical? ch p)
+        (set! (.-choice ps) nil)
+        (let [n (.-next ch)]
+          (set! (.-prev n) p)
+          (set! (.-next p) n)
+          (if (identical? ch (.-choice ps))
+            (set! (.-choice ps) p)
+            (when (identical? p (.-choice ps))
+              (top n)))))
+      (set! (.-next ch) nil))))
 
-(defn ack [^Choice c]
-  (when (.-busy c)
-    (when (.-done c)
-      (set! (.-busy c) false)
-      (set! (.-done c) false)
-      (dirty (.-process c)))))
+(defn sample [^Choice ch]
+  (try
+    (loop []
+      (let [x @(.-iterator ch)]
+        (if (set! (.-busy ch) (not (.-busy ch)))
+          (if (.-done ch)
+            (do (done ch) x)
+            (recur)) x)))
+    (catch :default e
+      (when (set! (.-busy ch) (not (.-busy ch)))
+        (when (.-done ch) (done ch)))
+      (throw e))))
 
-(defn ready [^Choice c]
-  (when (set! (.-busy c) (not (.-busy c)))
-    (let [ps (.-process c)
-          cr (.-coroutine c)]
-      (if (.-done c)
-        (let [p (.-prev c)]
-          (set! (.-prev c) nil)
-          (if (identical? c p)
-            (do (set! (.-choice ps) nil)
-                ((.-terminator ps)))
-            (let [n (.-next c)]
-              (set! (.-prev n) p)
-              (set! (.-next p) n)
-              (when (identical? c (.-choice ps))
-                (set! (.-choice ps) p)
-                (ack p)))))
-        (if (nil? cr)
-          (do (set! (.-busy c) false)
-              (try @(.-iterator c) (catch :default _)))
-          (if (identical? c (.-choice ps))
-            (do (set! (.-busy c) false)
-                (dirty ps))
-            (do (set! (.-done c) true)
-                (cancel (.-next c)))))))))
+(defn detach [^Choice ch]
+  (let [ps (.-process ch)]
+    (loop []
+      (let [c (.-choice ps)]
+        (when-not (identical? c ch)
+          (let [p (.-prev c)
+                n (.-next c)]
+            (set! (.-prev c) nil)
+            (set! (.-next c) nil)
+            (set! (.-choice ps) p)
+            (set! (.-next p) n)
+            (set! (.-prev n) p)
+            ((.-iterator c))
+            (recur)))))))
+
+(defn ready [^Choice ch]
+  (when (set! (.-busy ch) (not (.-busy ch)))
+    (if (.-done ch)
+      (done ch)
+      (if (nil? (.-prev ch))
+        ((.-backtrack ch) discard ch)
+        (let [ps (.-process ch)
+              cur (.-choice ps)]
+          (detach ch)
+          (when-some [cr ((.-backtrack ch) getset ps)]
+            (discard cr cur)))))))
 
 (defn transfer [^Process ps]
-  (let [prev fiber]
+  (let [f fiber]
     (set! fiber ps)
-    (try (loop []
-           (let [x ((.-coroutine (.-choice ps)))]
-             (if (identical? x ps) (recur) x)))
-         (catch :default e
-           (set! (.-notifier ps) nil)
-           (cancel (.-next (.-choice ps)))
-           (throw e))
-         (finally
-           (set! fiber prev)
-           (done ps)))))
+    (let [x (try
+              (loop []
+                (let [x ((.-coroutine ps))]
+                  (if (instance? Choice x)
+                    (let [c ^Choice x]
+                      (set! (.-backtrack c) ((.-coroutine ps) getset ps))
+                      (if (or (.-done c) (.-busy c))
+                        (do (ready c)
+                            ((.-iterator c))
+                            (throw (js/Error. "Undefined continuous flow.")))
+                        (set! (.-busy c) true))
+                      (let [p (.-choice ps)]
+                        (set! (.-choice ps) c)
+                        (if (nil? p)
+                          (do (set! (.-prev c) c)
+                              (set! (.-next c) c)
+                              (top c))
+                          (let [n (.-next p)]
+                            (set! (.-prev c) p)
+                            (set! (.-next c) n)
+                            (set! (.-next p) c)
+                            (set! (.-prev n) c))))
+                      (recur)) x)))
+              (catch :default e
+                (when-some [ch (.-choice ps)]
+                  (let [ch (.-next ch)]
+                    (detach ch)
+                    (set! (.-prev ch) nil)
+                    (set! (.-next ch) nil)
+                    (set! (.-choice ps) nil)
+                    ((.-iterator ch))))
+                (set! (.-notifier ps) nil) e))]
+      (set! fiber f)
+      (set! (.-coroutine ps) nil)
+      (when (zero? (.-pending ps))
+        ((.-terminator ps)))
+      (if (nil? (.-notifier ps))
+        (throw x) x))))
 
 (defn suspend [^Process ps flow]
-  (let [c (.-choice ps)]
-    (set! (.-iterator c)
-      (flow (fn [] (ready c) nil)
-        (fn [] (set! (.-done c) true)
-          (ready c) nil)))
-    ((.-coroutine c) boot ps)
-    (when (.-done c)
-      (ready c)
-      (throw (js/Error. "Undefined continuous flow.")))
-    (when (.-busy c)
-      (set! (.-busy c) false)
-      (set! (.-coroutine c) nil)
-      ((.-iterator c))
-      (throw (js/Error. "Undefined continuous flow.")))
-    (when-not (.-live c) ((.-iterator c))) ps))
+  (let [ch (->Choice ps nil nil nil nil true false)
+        n #(let [cr (.-coroutine ps)]
+             (ready ch)
+             (if (nil? (.-coroutine ps))
+               (when (zero? (.-pending ps))
+                 ((.-terminator ps)))
+               (when (nil? cr)
+                 ((.-notifier ps)))))
+        t #(do (set! (.-done ch) true) (n))]
+    (set! (.-iterator ch) (flow n t))
+    (set! (.-pending ps) (inc (.-pending ps))) ch))
 
 (defn run [cr n t]
-  (let [ps (->Process n t nil)
-        c (->Choice ps nil nil cr nop true true false)]
-    (->> c
-      (set! (.-next c))
-      (set! (.-prev c))
-      (set! (.-choice ps)))
-    (n) ps))
+  (n) (->Process n t cr nil true 0))
