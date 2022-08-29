@@ -1,62 +1,70 @@
-(ns ^:no-doc missionary.impl.Latest)
+(ns ^:no-doc missionary.impl.Latest
+  (:require [missionary.impl.Heap :as h]))
 
-(declare transfer)
+(declare kill transfer)
 
-(deftype Process [combinator notifier terminator args inputs ^boolean race ^number alive]
+(deftype Process [combinator notifier terminator value args inputs dirty ^number alive]
   IFn
-  (-invoke [_]
-    (dotimes [i (alength inputs)]
-      ((aget inputs i))))
+  (-invoke [ps] (kill ps))
   IDeref
-  (-deref [p] (transfer p)))
+  (-deref [ps] (transfer ps)))
+
+(defn kill [^Process ps]
+  (let [inputs (.-inputs ps)]
+    (dotimes [i (alength inputs)]
+      ((aget inputs i)))))
 
 (defn transfer [^Process ps]
-  (let [args (.-args ps)
+  (let [c (.-combinator ps)
+        args (.-args ps)
         inputs (.-inputs ps)
-        c (.-combinator ps)
-        x (try (when (nil? c) (throw (js/Error. "Undefined continuous flow.")))
-               (dotimes [i (alength inputs)]
-                 (when (identical? (aget args i) args)
-                   (let [input (aget inputs i)]
-                     (loop []
-                       (aset args i nil)
-                       (let [x @input]
-                         (if (identical? (aget args i) args)
-                           (recur) (aset args i x)))))))
-               (.apply c nil args)
+        dirty (.-dirty ps)
+        x (.-value ps)
+        x (try (set! (.-value ps) ps)
+               (when (nil? args) (throw (js/Error. "Undefined continuous flow.")))
+               (loop [pass (not (identical? x ps))]
+                 (let [i (h/dequeue dirty)
+                       p (aget args i)]
+                   (aset args i @(aget inputs i))
+                   (let [pass (if pass (= p (aget args i)) pass)]
+                     (if (pos? (h/size dirty))
+                       (recur pass)
+                       (if pass x (.apply c nil args))))))
                (catch :default e
-                 (set! (.-notifier ps) nil)
-                 (dotimes [i (alength inputs)]
-                   (let [it (aget inputs i)]
-                     (it)
-                     (if (identical? (aget args i) args)
-                       (try @it (catch :default _))
-                       (aset args i args)))) e))]
-    (set! (.-race ps) true)
+                 (kill ps)
+                 (loop []
+                   (when (pos? (h/size dirty))
+                     (try @(aget inputs (h/dequeue dirty))
+                          (catch :default _)) (recur)))
+                 (set! (.-notifier ps) nil) e))]
+    (set! (.-value ps) x)
     (when (zero? (.-alive ps))
       ((.-terminator ps)))
     (if (nil? (.-notifier ps))
       (throw x) x)))
-
-(defn dirty [^Process p ^number i]
-  (let [args (.-args p)]
-    (if (identical? (aget args i) args)
-      (try @(aget (.-inputs p) i)
-           (catch :default _))
-      (do (aset args i args)
-          (when (.-race p)
-            (set! (.-race p) false)
-            ((.-notifier p)))))))
 
 (defn run [c fs n t]
   (let [it (iter fs)
         arity (count fs)
         args (object-array arity)
         inputs (object-array arity)
-        ps (->Process c n t args inputs false arity)
+        dirty (h/create arity)
+        ps (->Process c n t nil nil inputs dirty arity)
         done #(when (zero? (set! (.-alive ps) (dec (.-alive ps))))
-                (when (.-race ps) ((.-terminator ps))))]
+                (when-not (identical? (.-value ps) ps)
+                  ((.-terminator ps))))]
+    (set! (.-value ps) ps)
     (dotimes [index arity]
-      (aset inputs index ((.next it) #(dirty ps index) done))
-      (when (nil? (aget args index)) (set! (.-combinator ps) nil)))
-    (n) ps))
+      (aset inputs index
+        ((.next it)
+         #(do (h/enqueue dirty index)
+              (when (== 1 (h/size dirty))
+                (when-not (identical? (.-value ps) ps)
+                  (if-some [n (.-notifier ps)]
+                    (n) (loop []
+                          (try @(aget inputs (h/dequeue dirty))
+                               (catch :default _))
+                          (when (pos? (h/size dirty))
+                            (recur))))))) done)))
+    (when (== (h/size dirty) arity)
+      (set! (.-args ps) args)) (n) ps))

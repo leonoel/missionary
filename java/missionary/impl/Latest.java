@@ -18,15 +18,15 @@ public interface Latest {
         IFn combinator;
         IFn notifier;
         IFn terminator;
+        Object value;
         Object[] args;
         Object[] inputs;
-        boolean race;
+        int[] dirty;
         int alive;
 
         @Override
         public Object invoke() {
-            for (Object it : inputs)
-                ((IFn) it).invoke();
+            kill(this);
             return null;
         }
 
@@ -36,90 +36,94 @@ public interface Latest {
         }
     }
 
+    static void kill(Process ps) {
+        for (Object it : ps.inputs)
+            ((IFn) it).invoke();
+    }
+
     static Object transfer(Process ps) {
-        Object x;
         IFn c = ps.combinator;
         Object[] args = ps.args;
         Object[] inputs = ps.inputs;
-        int arity = inputs.length;
+        int[] dirty = ps.dirty;
+        Object x = ps.value;
         synchronized (ps) {
             try {
-                if (c == null) throw new Error("Undefined continuous flow.");
-                for (int i = 0; i != arity; i++) if (args[i] == args) {
-                    IDeref input = (IDeref) inputs[i];
-                    do {
-                        args[i] = null;
-                        x = input.deref();
-                    } while (args[i] == args);
-                    args[i] = x;
-                }
-                x = Util.apply(c, args);
+                ps.value = ps;
+                if (args == null) throw new Error("Undefined continuous flow.");
+                boolean pass = x != ps;
+                do {
+                    int i = Heap.dequeue(dirty);
+                    Object p = args[i];
+                    args[i] = ((IDeref) inputs[i]).deref();
+                    if (pass) pass = clojure.lang.Util.equiv(p, args[i]);
+                } while (0 < Heap.size(dirty));
+                if (!pass) x = Util.apply(c, args);
             } catch (Throwable e) {
-                x = e;
+                kill(ps);
+                while (0 < Heap.size(dirty)) try {
+                    ((IDeref) inputs[Heap.dequeue(dirty)]).deref();
+                } catch (Throwable f) {}
                 ps.notifier = null;
-                for (int i = 0; i != arity; i++) {
-                    Object it = inputs[i];
-                    ((IFn) it).invoke();
-                    if (args[i] == args) Util.discard(it);
-                    else args[i] = args;
-                }
+                x = e;
             }
-            ps.race = true;
+            ps.value = x;
         }
         if (ps.alive == 0) ps.terminator.invoke();
         return ps.notifier == null ? clojure.lang.Util.sneakyThrow((Throwable) x) : x;
     }
 
-    static void dirty(Process ps, int i) {
-        Object[] args = ps.args;
-        boolean first = false;
-        synchronized (ps) {
-            if (args[i] == args) Util.discard(ps.inputs[i]); else {
-                args[i] = args;
-                if (first = ps.race) ps.race = false;
-            }
-        }
-        if (first) ps.notifier.invoke();
-    }
-
-    static Object run(Object c, Object fs, Object n, Object t) {
+    static Process run(IFn c, Object fs, IFn n, IFn t) {
         int arity = RT.count(fs);
+        Iterator it = RT.iter(fs);
         Object[] args = new Object[arity];
         Object[] inputs = new Object[arity];
+        int[] dirty = Heap.create(arity);
         Process ps = new Process();
-        (ps.notifier = (IFn) n).invoke();
-        ps.terminator = (IFn) t;
-        ps.combinator = (IFn) c;
+        ps.notifier = n;
+        ps.terminator = t;
+        ps.combinator = c;
+        ps.value = ps;
         ps.alive = arity;
-        ps.args = args;
         ps.inputs = inputs;
+        ps.dirty = dirty;
         IFn done = new AFn() {
             @Override
             public Object invoke() {
                 boolean last;
                 synchronized (ps) {
-                    last = --ps.alive == 0 && ps.race;
+                    last = --ps.alive == 0 && ps.value != ps;
                 }
                 if (last) ps.terminator.invoke();
                 return null;
             }
         };
         synchronized (ps) {
-            int i = 0;
-            Iterator flows = RT.iter(fs);
-            while (flows.hasNext()) {
+            for(int i = 0; i < arity; i++) {
                 int index = i;
-                inputs[i] = ((IFn) flows.next()).invoke(new AFn() {
+                inputs[i] = ((IFn) it.next()).invoke(new AFn() {
                     @Override
                     public Object invoke() {
-                        dirty(ps, index);
+                        boolean race;
+                        synchronized (ps) {
+                            Heap.enqueue(dirty, index);
+                            race = Heap.size(dirty) == 1 && ps.value != ps;
+                        }
+                        if (race) {
+                            IFn n = ps.notifier;
+                            if (n == null) synchronized (ps) {
+                                do try {
+                                    ((IDeref) inputs[Heap.dequeue(dirty)]).deref();
+                                } catch (Throwable f) {} while (0 < Heap.size(dirty));
+                            } else n.invoke();
+                        }
                         return null;
                     }
                 }, done);
-                if (args[i] == null) ps.combinator = null;
-                i++;
             }
         }
+        if (Heap.size(dirty) == arity) ps.args = args;
+        n.invoke();
         return ps;
     }
 }
