@@ -100,9 +100,7 @@
   (concat (lc/push true) (apply lc/call 1 events) (lc/drop 0)))
 
 (defn cancel [& events]
-  (concat (apply lc/call 0 events) (lc/drop 0)))
-
-(def dispose (cancel))
+  (concat (lc/copy 0) (apply lc/call 0 events) (lc/drop 0)))
 
 (defn cancelled [id & programs]
   (concat

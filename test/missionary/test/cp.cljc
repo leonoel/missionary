@@ -13,7 +13,7 @@
     (l/transfer
       (l/terminated :main))
     (l/check #{1})
-    l/dispose))
+    (lc/drop 0)))
 
 (deftest pure-failure
   (lc/run [(cp (throw err))]
@@ -22,7 +22,7 @@
     (l/crash
       (l/terminated :main))
     (l/check #{err})
-    l/dispose))
+    (lc/drop 0)))
 
 (deftest ident-success
   (lc/run [(cp (?< (l/flow :input)))]
@@ -36,7 +36,7 @@
         (lc/push 0))
       (l/terminated :main))
     (l/check #{0})
-    l/dispose))
+    (lc/drop 0)))
 
 (deftest ident-failure
   (lc/run [(cp (?< (l/flow :input)))]
@@ -50,7 +50,7 @@
         (lc/push err))
       (l/terminated :main))
     (l/check #{err})
-    l/dispose))
+    (lc/drop 0)))
 
 (deftest ident-duplicate
   (lc/run [(cp (l/detect :result (?< (l/flow :input))))]
@@ -73,7 +73,7 @@
         (lc/push 0))
       (l/terminated :main))
     (l/check #{0})
-    l/dispose))
+    (lc/drop 0)))
 
 (deftest lazy-switch
   (lc/run [(cp (?< (?< (l/flow :parent))))]
