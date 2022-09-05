@@ -9,6 +9,11 @@ import missionary.Cancelled;
 public interface Watch {
 
     class Process extends AFn implements IDeref {
+
+        static {
+            Util.printDefault(Process.class);
+        }
+
         IFn notifier;
         IFn terminator;
         IRef reference;

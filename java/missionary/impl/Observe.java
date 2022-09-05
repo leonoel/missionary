@@ -8,6 +8,11 @@ import missionary.Cancelled;
 public interface Observe {
 
     class Process extends AFn implements IDeref {
+
+        static {
+            Util.printDefault(Process.class);
+        }
+
         IFn notifier;
         IFn terminator;
         Object unsub;
