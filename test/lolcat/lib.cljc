@@ -105,4 +105,5 @@
 (defn cancelled [id & programs]
   (concat
     (check #{[:cancelled id]})
-    (apply concat programs)))
+    (apply concat programs)
+    (lc/push nil)))

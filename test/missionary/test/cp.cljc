@@ -107,4 +107,5 @@
     (l/check #{2})
     (l/terminate)
     (l/terminate
-      (l/terminated :main))))
+      (l/terminated :main))
+    (lc/drop 0)))
