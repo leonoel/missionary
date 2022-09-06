@@ -31,3 +31,23 @@
                         (lc/push #(do))))
               (l/signal :f :x (l/notified :main))
               (l/signal-error :f :x))))))
+
+;; unsubscribe fn is called after cancellation
+;; we don't know when exactly should the unsubscription happen
+(t/deftest cancellation
+  (t/is (= []
+           (lc/run []
+             (l/store
+              (lc/push (m/observe lc/event))
+              (l/spawn :main
+                       (concat
+                        (lc/drop 0)
+                        (lc/push #(lc/event :unsub))))
+              (l/cancel :main
+                        (l/notified :main))
+              (l/crash :main
+                       (l/terminated :main)
+                       (concat
+                        (l/check #{:unsub})
+                        (lc/push nil)))
+              (l/check #(instance? Cancelled %)))))))
