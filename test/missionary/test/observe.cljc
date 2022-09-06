@@ -19,3 +19,15 @@
               (l/crash :main
                 (l/terminated :main))
               (l/check #(instance? Cancelled %)))))))
+
+(t/deftest overflow
+  (t/is (= []
+           (lc/run []
+             (l/store
+              (lc/push (m/observe lc/event))
+              (l/spawn :main
+                       (concat
+                        (l/insert :f)
+                        (lc/push #(do))))
+              (l/signal :f :x (l/notified :main))
+              (l/signal-error :f :x))))))

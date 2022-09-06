@@ -34,7 +34,7 @@
         (l/notified :main))
       (l/transfer :main
         (l/spawned :input
-          (l/signal :input))
+          (l/notify :input))
         (l/transferred :input
           (l/terminate :input)
           (lc/push 0))
@@ -49,7 +49,7 @@
         (l/notified :main))
       (l/crash :main
         (l/spawned :input
-          (l/signal :input))
+          (l/notify :input))
         (l/crashed :input
           (l/terminate :input)
           (lc/push err))
@@ -64,12 +64,12 @@
         (l/notified :main))
       (l/transfer :main
         (l/spawned :input
-          (l/signal :input))
+          (l/notify :input))
         (l/transferred :input
           (lc/push 0))
         (l/detected :result))
       (l/check #{0})
-      (l/signal :input
+      (l/notify :input
         (l/notified :main))
       (l/transfer :main
         (l/transferred :input
@@ -86,15 +86,15 @@
         (l/notified :main))                                 ;; [{:main cp-iterator}]
       (l/transfer :main
         (l/spawned :parent
-          (l/signal :parent))
+          (l/notify :parent))
         (l/transferred :parent
           (lc/push (l/flow :child1)))
         (l/spawned :child1
-          (l/signal :child1))
+          (l/notify :child1))
         (l/transferred :child1
           (lc/push 1)))
       (l/check #{1})
-      (l/signal :parent
+      (l/notify :parent
         (l/notified :main))
       (l/transfer :main
         (l/transferred :parent
@@ -102,7 +102,7 @@
         (l/cancelled :child1
           (l/terminate :child1))
         (l/spawned :child2
-          (l/signal :child2))
+          (l/notify :child2))
         (l/transferred :child2
           (lc/push 2)))
       (l/check #{2})

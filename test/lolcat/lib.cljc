@@ -45,27 +45,34 @@
 
 (def transfer (partial transfer-with deref))
 
-(defn deref-error [it]
-  ((try (let [x @it] #(throw (ex-info "Not an error." {:value x})))
+(defn capture-error [f & args]
+  ((try (let [x (apply f args)] #(throw (ex-info "Not an error." {:value x})))
         (catch #?(:clj Throwable :cljs :default) e #(do e)))))
 
-(def crash (partial transfer-with deref-error))
+(def crash (partial transfer-with (partial capture-error deref)))
 
-(defn signal [id & events]
-  (concat                                                   ;; [{id f}]
-    (lc/copy 0)                                             ;; [{id f} {id f}]
-    (change get id)                                         ;; [{id f} f
-    (lc/push false)                                         ;; [{id f} f false]
-    (apply lc/call 1 events)                                ;; [{id f} nil]
-    (lc/drop 0)))                                           ;; [{id f}]
+(defn signal [id arg & events]
+  (concat
+   (lc/copy 0)
+   (change get id)
+   (lc/push arg)
+   (apply lc/call 1 events)
+   (lc/drop 0)))
+
+(defn signal-error [id arg & events]
+  (concat
+   (lc/push capture-error)
+   (lc/copy 1)
+   (change get id)
+   (lc/push arg)
+   (apply lc/call 2 events)
+   (lc/drop 0)))
+
+(defn notify [id & events]
+  (apply signal id false events))
 
 (defn terminate [id & events]
-  (concat
-    (lc/copy 0)
-    (change get id)
-    (lc/push true)
-    (apply lc/call 1 events)
-    (lc/drop 0)))
+  (apply signal id true events))
 
 (defn cancel [id & events]
   (concat
