@@ -37,14 +37,15 @@ instructions and compose with `clojure.core/concat`. Primitive instructions are 
         :copy (context update :stack stack-copy (:offset inst))
         :drop (context update :stack stack-drop (:offset inst))
         :call (let [{:keys [events stack]} (context identity)
-                    index (doto (- (count stack) (:arity inst))
-                            (-> pos? (assert "Stack exhausted.")))]
+                    f (dec (count stack))
+                    a (doto (- f (:arity inst))
+                        (-> neg? not (assert "Stack exhausted.")))]
                 (context assoc
                   :events (seq (:events inst))
-                  :stack (subvec stack 0 (dec index)))
+                  :stack (subvec stack 0 a))
                 (context update :stack conj
-                  (try (let [x (apply (nth stack (dec index))
-                                 (subvec stack index))]
+                  (try (let [x (apply (peek stack)
+                                 (subvec stack a f))]
                          (rethrow!) x)
                        (catch #?(:clj Throwable :cljs :default) e
                          (rethrow!) (throw e))))
@@ -138,7 +139,7 @@ Return a program consuming n values and producing the tail of this list.
     [{:op :drop :offset n}]))
 
 (def ^{:doc "
-Return a program consuming (inc n) values and calling the head as a clojure function, passing the tail as arguments,
+Return a program consuming (inc n) values and calling the last as a clojure function, passing the rest as arguments,
 and producing the returned value. The function must call `event` as a side effect successively for each program
 provided as extra arguments.
 (= (run [inc 1] (call 1)) [2])

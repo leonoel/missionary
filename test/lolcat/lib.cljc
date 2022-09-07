@@ -9,38 +9,34 @@
 (defn check [pred]
   (concat
     (lc/push #(when-not (pred %) (throw (ex-info "Predicate failed." {:predicate pred :value %}))))
-    swap (lc/call 1) (lc/drop 0)))
+    (lc/call 1) (lc/drop 0)))
 
 (defn change [f & args]
   (concat
-    (lc/push f) swap
     (apply lc/push args)
+    (lc/push f)
     (lc/call (inc (count args)))))
 
 (defn insert [id]
   (concat                                                   ;; [{} value]
-    (lc/push assoc)                                         ;; [{} value assoc]
-    (lc/copy 2)                                             ;; [{} value assoc {}]
-    (lc/drop 3)                                             ;; [value assoc {}]
-    (lc/push id)                                            ;; [value assoc {} id]
-    (lc/copy 3)                                             ;; [value assoc {} id value]
-    (lc/drop 4)                                             ;; [assoc {} id value]
+    (lc/push id)                                            ;; [{} value id]
+    swap                                                    ;; [{} id value]
+    (lc/push assoc)                                         ;; [{} id value assoc]
     (lc/call 3)))                                           ;; [{id value}]
 
 (defn spawn [id & events]
-  (concat
-    (lc/push
-      #(lc/event [:notified id])
-      #(lc/event [:terminated id]))
+  (concat                                                   ;; [{} flow]
+    (lc/push #(lc/event [:notified id])) swap               ;; [{} notifier flow]
+    (lc/push #(lc/event [:terminated id])) swap             ;; [{} notifier terminator flow]
     (apply lc/call 2 events)                                ;; [{} iterator]
     (insert id)))                                           ;; [{id iterator}]
 
 (defn transfer-with [f id & events]
   (concat                                                   ;; [{id iterator}]
-    (lc/push f get)                                         ;; [{id iterator} deref get]
-    (lc/copy 2)                                             ;; [{id iterator} deref get {id iterator}]
-    (lc/push id)                                            ;; [{id iterator} deref get {id iterator} id]
-    (lc/call 2)                                             ;; [{id iterator} deref iterator]
+    (lc/copy 0)                                             ;; [{id iterator} {id iterator}]
+    (lc/push id get)                                        ;; [{id iterator} {id iterator} id get]
+    (lc/call 2)                                             ;; [{id iterator} iterator]
+    (lc/push f)                                             ;; [{id iterator} iterator f]
     (apply lc/call 1 events)))                              ;; [{id iterator} result]
 
 (def transfer (partial transfer-with deref))
@@ -53,20 +49,20 @@
 
 (defn signal [id arg & events]
   (concat
-   (lc/copy 0)
-   (change get id)
-   (lc/push arg)
-   (apply lc/call 1 events)
-   (lc/drop 0)))
+    (lc/copy 0)
+    (change get id)
+    (lc/push arg) swap
+    (apply lc/call 1 events)
+    (lc/drop 0)))
 
 (defn signal-error [id arg & events]
   (concat
-   (lc/push capture-error)
-   (lc/copy 1)
-   (change get id)
-   (lc/push arg)
-   (apply lc/call 2 events)
-   (lc/drop 0)))
+    (lc/copy 0)
+    (change get id)
+    (lc/push arg)
+    (lc/push capture-error)
+    (apply lc/call 2 events)
+    (lc/drop 0)))
 
 (defn notify [id & events]
   (apply signal id false events))
@@ -103,9 +99,8 @@
 
 (defn spawned [id & programs]
   (concat                                                   ;; [{} [:spawned id #((if % t n))]]
-    (lc/push peek)                                          ;; [{} [:spawned id #((if % t n))] peek]
-    (lc/copy 1)                                             ;; [{} [:spawned id #((if % t n))] peek [:spawned id #((if % t n))]]
-    (lc/call 1)                                             ;; [{} [:spawned id #((if % t n))] #((if % t n))]
+    (lc/copy 0)                                             ;; [{} [:spawned id #((if % t n))] [:spawned id #((if % t n))]]
+    (change peek)                                           ;; [{} [:spawned id #((if % t n))] #((if % t n))]
     swap                                                    ;; [{} #((if % t n)) [:spawned id #((if % t n))]]
     (change pop)                                            ;; [{} #((if % t n)) [:spawned id]]
     (check #{[:spawned id]})                                ;; [{} #((if % t n))]
@@ -132,7 +127,7 @@
 
 (defn detected [id & programs]
   (concat
-    (lc/push peek) (lc/copy 1) (lc/call 1) swap
+    (lc/copy 0) (change peek) swap
     (change pop) (check #{[:detected id]})
     (apply concat programs)))
 
