@@ -5,6 +5,11 @@ import clojure.lang.*;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
 public final class Transform extends AFn implements IDeref {
+
+    static {
+        Util.printDefault(Transform.class);
+    }
+
     static final AtomicIntegerFieldUpdater<Transform> PRESSURE =
             AtomicIntegerFieldUpdater.newUpdater(Transform.class, "pressure");
 
