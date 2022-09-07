@@ -18,13 +18,6 @@
   (t/is (= swap (-rotn 2)))
   (t/is (= -rot (-rotn 3))))
 
-(defn transfer-with [f id & events]
-  (concat dup (lc/push id get)          ;; store store id get
-    (lc/call 2)                         ;; store store[id]
-    (lc/push f)                         ;; store store[id] f
-    (apply lc/call 1 events)            ;; store f(store[id])
-    ))
-
 (defn bi [f g]
   (concat dup (lc/push f) (lc/call 1) swap (lc/push g) (lc/call 1)))
 
