@@ -1,10 +1,36 @@
 (ns lolcat.lib
-  (:require [lolcat.core :as lc])
+  (:require [lolcat.core :as lc]
+            [clojure.test :as t])
   #?(:clj (:import (clojure.lang IFn IDeref))))
 
 (def dup (lc/copy 0))
 
 (def swap (concat (lc/copy 1) (lc/drop 2)))
+
+(def -rot                               ; x y z -- z x y
+  (concat (lc/copy 2) (lc/copy 2) (lc/drop 3) (lc/drop 3)))
+
+(defn -rotn [n]
+  (let [x (dec n)]
+    (into [] (comp cat cat) [(repeat x (lc/copy x)) (repeat x (lc/drop n))])))
+
+(t/deftest -rotn-test
+  (t/is (= swap (-rotn 2)))
+  (t/is (= -rot (-rotn 3))))
+
+(defn transfer-with [f id & events]
+  (concat dup (lc/push id get)          ;; store store id get
+    (lc/call 2)                         ;; store store[id]
+    (lc/push f)                         ;; store store[id] f
+    (apply lc/call 1 events)            ;; store f(store[id])
+    ))
+
+(defn bi [f g]
+  (concat dup (lc/push f) (lc/call 1) swap (lc/push g) (lc/call 1)))
+
+(t/deftest bi-test
+  (t/is (= [[1 2] 3]
+           (lc/run [[1 2 3]] (bi pop peek)))))
 
 (defn check [pred]
   (concat
@@ -18,11 +44,7 @@
     (lc/call (inc (count args)))))
 
 (defn insert [id]
-  (concat                                                   ;; [{} value]
-    (lc/push id)                                            ;; [{} value id]
-    swap                                                    ;; [{} id value]
-    (lc/push assoc)                                         ;; [{} id value assoc]
-    (lc/call 3)))                                           ;; [{id value}]
+  (concat (lc/push id) swap (lc/push assoc) (lc/call 3)))
 
 (defn spawn [id & events]
   (concat                                                   ;; [{} flow]
@@ -98,13 +120,10 @@
     ((lc/event [:transferred id]))))
 
 (defn spawned [id & programs]
-  (concat                                                   ;; [{} [:spawned id #((if % t n))]]
-    (lc/copy 0)                                             ;; [{} [:spawned id #((if % t n))] [:spawned id #((if % t n))]]
-    (change peek)                                           ;; [{} [:spawned id #((if % t n))] #((if % t n))]
-    swap                                                    ;; [{} #((if % t n)) [:spawned id #((if % t n))]]
-    (change pop)                                            ;; [{} #((if % t n)) [:spawned id]]
-    (check #{[:spawned id]})                                ;; [{} #((if % t n))]
-    (insert id)                                             ;; [{id #((if % t n))}]
+  (concat                               ;; [{} [:spawned id #()]]
+    (bi peek pop)                       ;; [{} #() [:spawned id]]
+    (check #{[:spawned id]})            ;; [{} #()]
+    (insert id)
     (apply concat programs)
     (lc/push (->It id))))
 
@@ -145,3 +164,4 @@
     (lc/push {})
     (apply concat programs)
     (lc/drop 0)))
+
