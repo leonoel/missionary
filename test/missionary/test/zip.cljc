@@ -34,20 +34,7 @@
               (l/terminate :x
                 (l/cancelled :y))
               (l/terminate :y
-                (l/terminated :main))))))
-  ;; this is the current behavior, which is non-compliant
-  #_(t/testing "produces 1 last value after :x terminating"
-    (t/is (= []
-            (lc/run []
-              (l/store
-                (lc/push (m/zip vector (l/flow :x) (l/flow :y)))
-                (l/spawn :main
-                  (l/spawned :x)
-                  (l/spawned :y))
-                (l/notify :x)
-                (l/terminate :x
-                  (l/cancelled :y)
-                  (l/transferred :y (lc/push :y1)))))))))
+                (l/terminated :main)))))))
 
 (def err (ex-info "" {}))
 (def f-called (concat (l/check #{:f}) (lc/push nil)))
