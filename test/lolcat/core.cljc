@@ -24,34 +24,34 @@ instructions and compose with `clojure.core/concat`. Primitive instructions are 
 (def ^:no-doc eval-inst!
   (letfn [(stack-copy [stack offset]
             (let [index (- (count stack) offset)]
-              (assert (pos? index) "Stack exhausted.")
               (conj stack (nth stack (dec index)))))
           (stack-drop [stack offset]
             (let [index (- (count stack) offset)]
-              (assert (pos? index) "Stack exhausted.")
               (into (subvec stack 0 (dec index))
-                (subvec stack index))))]
+                (subvec stack index))))
+          (call-attempt [stack arity]
+            (let [f (dec (count stack))
+                  r (try (constantly (apply (peek stack) (subvec stack (- f arity) f)))
+                         (catch #?(:clj Throwable :cljs :default) e
+                           #(throw (ex-info "Call failure." {:arity arity :stack stack} e))))
+                  {:keys [stack events]} (context identity)]
+              (rethrow!)
+              (when (some? events)
+                (throw (ex-info "Missing events." {:stack stack :events events})))
+              (conj stack (r))))]
     (fn [inst]
       (case (:op inst)
         :push (context update :stack conj (:value inst))
         :copy (context update :stack stack-copy (:offset inst))
         :drop (context update :stack stack-drop (:offset inst))
         :call (let [{:keys [events stack]} (context identity)
-                    f (dec (count stack))
-                    a (doto (- f (:arity inst))
-                        (-> neg? not (assert "Stack exhausted.")))]
+                    arity (:arity inst)]
                 (context assoc
                   :events (seq (:events inst))
-                  :stack (subvec stack 0 a))
-                (context update :stack conj
-                  (try (let [x (apply (peek stack)
-                                 (subvec stack a f))]
-                         (rethrow!) x)
-                       (catch #?(:clj Throwable :cljs :default) e
-                         (rethrow!) (throw e))))
-                (when-some [events (:events (context identity))]
-                  (throw (ex-info "Missing events." {:events events})))
-                (context assoc :events events))))))
+                  :stack (subvec stack 0 (- (count stack) (inc arity))))
+                (context assoc
+                  :events events
+                  :stack (call-attempt stack arity)))))))
 
 (def ^{:doc "
 Return a pair containing the number of values respectively consumed and produced by the composition of given programs.
@@ -89,13 +89,12 @@ Produce given value, evaluate the program, consume a value and return it to the 
   (fn [x]
     (assert (context identity) "Undefined context.")
     (try (rethrow!)
-         (let [[evt & evts] (doto (:events (context identity))
-                              (when-not (throw (ex-info "Spurious event." {:value x}))))]
-           (context update :stack conj x)
-           (context assoc :events evts)
-           (run! eval-inst! evt)
+         (let [{:keys [stack events]} (context identity)]
+           (when (nil? events)
+             (throw (ex-info "Spurious event." {:stack stack :event x})))
+           (context assoc :stack (conj stack x) :events (next events))
+           (run! eval-inst! (first events))
            (let [stack (:stack (context identity))]
-             (assert (pos? (count stack)) "Stack exhausted.")
              (context assoc :stack (pop stack))
              (peek stack)))
          (catch #?(:clj Throwable :cljs :default) e
@@ -107,11 +106,17 @@ Transform the right end of given vector by evaluating the composition of given p
 "} run
   (fn [v & ps]
     (assert (vector? v))
-    (let [p (context identity)]
-      (context {} {:stack v})
-      (try (run! eval-inst! (apply concat ps))
-           (:stack (context identity))
-           (finally (context {} p))))))
+    (let [program (apply concat ps)
+          provided (count v)
+          [required] (balance program)]
+      (when (< provided required)
+        (throw (ex-info (str "Insufficient data - provided " provided ", required " required)
+                 {:stack v :program program})))
+      (let [p (context identity)]
+        (context {} {:stack v})
+        (try (run! eval-inst! program)
+             (:stack (context identity))
+             (finally (context {} p)))))))
 
 (def ^{:doc "
 Return a program consuming nothing and producing given values.
