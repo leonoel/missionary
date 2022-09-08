@@ -4,8 +4,6 @@
             [missionary.core :as m]
             [clojure.test :as t]))
 
-;; rf throws
-
 (t/deftest simple-with-cancel
   (t/is (= []
           (lc/run []
