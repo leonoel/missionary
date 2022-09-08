@@ -33,6 +33,41 @@
               (l/cancel :main
                 (l/cancelled :input)))))))
 
-;; TODO
-;; input terminates
-;; input crashes
+(t/deftest input-terminates
+  (t/is (= []
+          (lc/run []
+            (l/store
+              (lc/push (m/buffer 2 (l/flow :input)))
+              (l/spawn :main
+                (l/spawned :input))
+              (l/terminate :input
+                (l/terminated :main))))))
+  (t/testing "but there's still value to transfer"
+    (t/is (= []
+            (lc/run []
+              (l/store
+                (lc/push (m/buffer 2 (l/flow :input)))
+                (l/spawn :main
+                  (l/spawned :input))
+                (l/notify :input
+                  (l/transferred :input (lc/push 1))
+                  (l/notified :main))
+                (l/terminate :input)
+                (l/transfer :main
+                  (l/terminated :main))
+                (l/check #{1})))))))
+
+(def err (ex-info "" {}))
+
+(t/deftest input-crashes
+  (t/is (= []
+          (lc/run []
+            (l/store
+              (lc/push (m/buffer 2 (l/flow :input)))
+              (l/spawn :main
+                (l/spawned :input))
+              (l/notify :input
+                (l/crashed :input (lc/push err))
+                (l/notified :main))
+              (l/crash :main)
+              (l/check #{err}))))))
