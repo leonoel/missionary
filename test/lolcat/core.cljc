@@ -21,6 +21,10 @@ instructions and compose with `clojure.core/concat`. Primitive instructions are 
      (let [e (:error (context identity))]
        (context dissoc :error) (throw e))))
 
+(def is-inst? (comp ::inst meta))
+(defn ->push [x] ^::inst {:op :push :value x})
+(defn- normalize-instruction [inst] (cond-> inst (not (is-inst? inst)) ->push))
+
 (def ^:no-doc eval-inst!
   (letfn [(stack-copy [stack offset]
             (let [index (- (count stack) offset)]
@@ -40,18 +44,19 @@ instructions and compose with `clojure.core/concat`. Primitive instructions are 
                 (throw (ex-info "Missing events." {:stack stack :events events})))
               (conj stack (r))))]
     (fn [inst]
-      (case (:op inst)
-        :push (context update :stack conj (:value inst))
-        :copy (context update :stack stack-copy (:offset inst))
-        :drop (context update :stack stack-drop (:offset inst))
-        :call (let [{:keys [events stack]} (context identity)
-                    arity (:arity inst)]
-                (context assoc
-                  :events (seq (:events inst))
-                  :stack (subvec stack 0 (- (count stack) (inc arity))))
-                (context assoc
-                  :events events
-                  :stack (call-attempt stack arity)))))))
+      (let [inst (normalize-instruction inst)]
+        (case (:op inst)
+          :push (context update :stack conj (:value inst))
+          :copy (context update :stack stack-copy (:offset inst))
+          :drop (context update :stack stack-drop (:offset inst))
+          :call (let [{:keys [events stack]} (context identity)
+                      arity (:arity inst)]
+                  (context assoc
+                    :events (seq (:events inst))
+                    :stack (subvec stack 0 (- (count stack) (inc arity))))
+                  (context assoc
+                    :events events
+                    :stack (call-attempt stack arity))))))))
 
 (def ^{:doc "
 Return a pair containing the number of values respectively consumed and produced by the composition of given programs.
@@ -79,8 +84,9 @@ Return a pair containing the number of values respectively consumed and produced
               :call (-> r
                       (apply-stack-effect (inc (:arity inst)) 0)
                       (events-stack-effect (:events inst))
-                      (apply-stack-effect 0 1))))]
-    (fn [& ps] (reduce insts-stack-effect [0 0] ps))))
+                      (apply-stack-effect 0 1))
+              (throw (ex-info "who?" {:inst inst}))))]
+    (fn [& ps] (reduce insts-stack-effect [0 0] (map (partial map normalize-instruction) ps)))))
 
 (def ^{:doc "
 Must be called as a side effect of the evaluation of a `call` instruction providing the event definition as a program.
@@ -93,7 +99,7 @@ Produce given value, evaluate the program, consume a value and return it to the 
            (when (nil? events)
              (throw (ex-info "Spurious event." {:stack stack :event x})))
            (context assoc :stack (conj stack x) :events (next events))
-           (run! eval-inst! (first events))
+           (run! eval-inst! (map normalize-instruction (first events)))
            (let [stack (:stack (context identity))]
              (context assoc :stack (pop stack))
              (peek stack)))
@@ -106,7 +112,7 @@ Transform the right end of given vector by evaluating the composition of given p
 "} run
   (fn [v & ps]
     (assert (vector? v))
-    (let [program (apply concat ps)
+    (let [program (into [] (comp cat (map normalize-instruction)) ps)
           provided (count v)
           [required] (balance program)]
       (when (< provided required)
@@ -124,7 +130,7 @@ Return a program consuming nothing and producing given values.
 "} push
   (fn
     ([] [])
-    ([x] [{:op :push :value x}])
+    ([x] [^::inst {:op :push :value x}])
     ([x & xs] (into (push x) (mapcat push) xs))))
 
 (def ^{:doc "
@@ -133,7 +139,7 @@ Return a program consuming (inc n) values and producing this list appended with 
 "} copy
   (fn [n]
     (assert (nat-int? n))
-    [{:op :copy :offset n}]))
+    [^::inst {:op :copy :offset n}]))
 
 (def ^{:doc "
 Return a program consuming n values and producing the tail of this list.
@@ -141,7 +147,7 @@ Return a program consuming n values and producing the tail of this list.
 "} drop
   (fn [n]
     (assert (nat-int? n))
-    [{:op :drop :offset n}]))
+    [^::inst {:op :drop :offset n}]))
 
 (def ^{:doc "
 Return a program consuming (inc n) values and calling the last as a clojure function, passing the rest as arguments,
@@ -152,4 +158,4 @@ provided as extra arguments.
 "} call
   (fn [n & ps]
     (assert (nat-int? n))
-    [{:op :call :arity n :events ps}]))
+    [^::inst {:op :call :arity n :events ps}]))
