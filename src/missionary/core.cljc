@@ -725,7 +725,7 @@ Example :
   ^{:static true
     :arglists '([f & flows])
     :doc "
-Returns a discrete flow running given discrete `flows` is parallel and emitting the result of applying `f` to the set of first values emitted by each upstream flow, followed by the result of applying `f` to the set of second values and so on, until any upstream flow terminates, at which point the flow will be cancelled.
+Returns a discrete flow running given discrete `flows` concurrently and emitting the result of applying `f` to the set of first values emitted by each upstream flow, followed by the result of applying `f` to the set of second values and so on, until any upstream flow terminates, at which point the flow will cancel all other upstream flows and wait for their termination.
 
 Cancelling propagates to every upstream flow. If any upstream flow fails or if `f` throws, the flow is cancelled.
 
