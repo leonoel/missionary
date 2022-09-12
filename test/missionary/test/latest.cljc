@@ -4,17 +4,19 @@
             [missionary.core :as m]
             [clojure.test :as t]))
 
+(defn latest-init [flow]
+  (concat
+    (lc/push flow)
+    (l/spawn :main
+      (l/spawned :x (l/notify :x))
+      (l/spawned :y (l/notify :y))
+      (l/notified :main))))
+
 (t/deftest simple-with-cancel
   (t/is (= []
           (lc/run []
             (l/store
-              (lc/push (m/latest vector (l/flow :x) (l/flow :y)))
-              (l/spawn :main
-                (l/spawned :x
-                  (l/notify :x))
-                (l/spawned :y
-                  (l/notify :y))
-                (l/notified :main))
+              (latest-init (m/latest vector (l/flow :x) (l/flow :y)))
               (l/transfer :main
                 (l/transferred :x (lc/push :x1))
                 (l/transferred :y (lc/push :y1)))
@@ -27,13 +29,7 @@
   (t/is (= []
           (lc/run []
             (l/store
-              (lc/push (m/latest vector (l/flow :x) (l/flow :y)))
-              (l/spawn :main
-                (l/spawned :x
-                  (l/notify :x))
-                (l/spawned :y
-                  (l/notify :y))
-                (l/notified :main))
+              (latest-init (m/latest vector (l/flow :x) (l/flow :y)))
               (l/transfer :main
                 (l/transferred :x (lc/push :x1))
                 (l/transferred :y (lc/push :y1)))
@@ -53,14 +49,10 @@
   (def r> (concat (lc/push r->) (lc/call 0))))
 
 (t/deftest consecutive-notify-causes-retransfer
- (t/is (= []
+  (t/is (= []
           (lc/run []
             (l/store
-              (lc/push (m/latest vector (l/flow :x) (l/flow :y)))
-              (l/spawn :main
-                (l/spawned :x (l/notify :x))
-                (l/spawned :y (l/notify :y))
-                (l/notified :main))
+              (latest-init (m/latest vector (l/flow :x) (l/flow :y)))
               (l/transfer :main
                 (l/transferred :x (l/notify :x) (lc/push :x1))
                 (l/transferred :x (lc/push :x2))
@@ -73,11 +65,7 @@
   (t/is (= []
           (lc/run []
             (l/store
-              (lc/push (m/latest vector (l/flow :x) (l/flow :y)))
-              (l/spawn :main
-                (l/spawned :x (l/notify :x))
-                (l/spawned :y (l/notify :y))
-                (l/notified :main))
+              (latest-init (m/latest vector (l/flow :x) (l/flow :y)))
               (l/crash :main
                 (l/crashed :x (lc/push err))
                 (l/cancelled :x)
@@ -91,11 +79,7 @@
   (t/is (= []
           (lc/run []
             (l/store
-              (lc/push (m/latest (fn [& _] (lc/event :f) (throw err)) (l/flow :x) (l/flow :y)))
-              (l/spawn :main
-                (l/spawned :x (l/notify :x))
-                (l/spawned :y (l/notify :y))
-                (l/notified :main))
+              (latest-init (m/latest (fn [& _] (lc/event :f) (throw err)) (l/flow :x) (l/flow :y)))
               (l/crash :main
                 (l/transferred :x (lc/push :x1))
                 (l/transferred :y (lc/push :y1))
