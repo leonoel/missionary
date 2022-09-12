@@ -87,3 +87,16 @@
                 (l/cancelled :x)
                 (l/cancelled :y))
               (l/check #{err}))))))
+
+(t/deftest input-terminates
+  (t/is (= []
+          (lc/run []
+            (l/store
+              (latest-init (m/latest vector (l/flow :x) (l/flow :y)))
+              (l/transfer :main
+                (l/transferred :x (lc/push :x1))
+                (l/transferred :y (lc/push :y1)))
+              (l/check #{[:x1 :y1]})
+              (l/terminate :x)
+              (l/terminate :y
+                (l/terminated :main)))))))
