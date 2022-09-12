@@ -4,6 +4,7 @@
   #?(:clj (:import (clojure.lang IFn IDeref))))
 
 (def dup (lc/copy 0))
+(def lose (lc/drop 0))
 
 (def swap (concat (lc/copy 1) (lc/drop 2)))
 
