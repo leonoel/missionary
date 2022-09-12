@@ -6,9 +6,9 @@
 
 (t/deftest simple-with-cancel
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/reductions + 1 (l/flow :input)))
+              (m/reductions + 1 (l/flow :input))
               (l/spawn :main
                 ;; reductions is in charge of input, so it spawns it
                 (l/spawned :input)
@@ -18,12 +18,12 @@
               (l/notify :input
                 (l/notified :main))
               (l/transfer :main
-                (l/transferred :input (lc/push 2)))
+                (l/transferred :input 2))
               (l/check #{3})
               (l/notify :input
                 (l/notified :main))
               (l/transfer :main
-                (l/transferred :input (lc/push 3)))
+                (l/transferred :input 3))
               (l/check #{6})
               (l/cancel :main
                 ;; reductions is in charge of input, so it cancels it
@@ -31,9 +31,9 @@
 
 (t/deftest init-terminates-before-main-transfers
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/reductions + 1 (l/flow :input)))
+              (m/reductions + 1 (l/flow :input))
               (l/spawn :main
                 (l/spawned :input)
                 (l/notified :main))
@@ -47,9 +47,9 @@
 
 (t/deftest terminate
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/reductions + 1 (l/flow :input)))
+              (m/reductions + 1 (l/flow :input))
               (l/spawn :main
                 (l/spawned :input)
                 (l/notified :main))
@@ -62,9 +62,9 @@
 
 (t/deftest reducer-throws
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/reductions (fn [_ _] (throw err)) 1 (l/flow :input)))
+              (m/reductions (fn [_ _] (throw err)) 1 (l/flow :input))
               (l/spawn :main
                 (l/spawned :input)
                 (l/notified :main))
@@ -73,15 +73,15 @@
               (l/notify :input
                 (l/notified :main))
               (l/crash :main
-                (l/transferred :input (lc/push 2))
+                (l/transferred :input 2)
                 (l/cancelled :input))
               (l/check #{err}))))))
 
 (t/deftest crash-input
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/reductions + 1 (l/flow :input)))
+              (m/reductions + 1 (l/flow :input))
               (l/spawn :main
                 (l/spawned :input)
                 (l/notified :main))
@@ -90,14 +90,14 @@
               (l/notify :input
                 (l/notified :main))
               (l/crash :main
-                (l/crashed :input (lc/push err))
+                (l/crashed :input err)
                 (l/cancelled :input))
               (l/check #{err})))))
   (t/testing "transfer init value after being notified from input"
     (t/is (= []
-            (lc/run []
+            (lc/run
               (l/store
-                (lc/push (m/reductions + 1 (l/flow :input)))
+                (m/reductions + 1 (l/flow :input))
                 (l/spawn :main
                   (l/spawned :input)
                   (l/notified :main))
@@ -106,6 +106,6 @@
                   (l/notified :main))
                 (l/check #{1})
                 (l/crash :main
-                  (l/crashed :input (lc/push err))
+                  (l/crashed :input err)
                   (l/cancelled :input))
                 (l/check #{err})))))))

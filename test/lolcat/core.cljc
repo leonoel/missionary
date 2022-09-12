@@ -1,9 +1,18 @@
 (ns ^{:doc "
-Base functionality for lolcat, a minimalist concatenative language based on clojure. Lolcat programs are sequences of
-instructions and compose with `clojure.core/concat`. Primitive instructions are provided by constructors `push`, `copy`,
-`drop` and `call`.
+Base functionality for lolcat, a minimalist concatenative language based on clojure. A lolcat program is a sequence of
+instructions, which can be either :
+* an instance of copy
+* an instance of drop
+* an instance of call
+* an instance of word
+* any other value
 "} lolcat.core
   (:refer-clojure :exclude [drop]))
+
+(defrecord Copy [offset])
+(defrecord Drop [offset])
+(defrecord Call [arity events])
+(defrecord Word [f args])
 
 (def ^:no-doc context
   #?(:clj
@@ -21,10 +30,6 @@ instructions and compose with `clojure.core/concat`. Primitive instructions are 
      (let [e (:error (context identity))]
        (context dissoc :error) (throw e))))
 
-(def is-inst? (comp ::inst meta))
-(defn ->push [x] ^::inst {:op :push :value x})
-(defn- normalize-instruction [inst] (cond-> inst (not (is-inst? inst)) ->push))
-
 (def ^:no-doc eval-inst!
   (letfn [(stack-copy [stack offset]
             (let [index (- (count stack) offset)]
@@ -33,30 +38,44 @@ instructions and compose with `clojure.core/concat`. Primitive instructions are 
             (let [index (- (count stack) offset)]
               (into (subvec stack 0 (dec index))
                 (subvec stack index))))
-          (call-attempt [stack arity]
+          (call-attempt [words stack arity]
             (let [f (dec (count stack))
                   r (try (constantly (apply (peek stack) (subvec stack (- f arity) f)))
                          (catch #?(:clj Throwable :cljs :default) e
-                           #(throw (ex-info "Call failure." {:arity arity :stack stack} e))))
-                  {:keys [stack events]} (context identity)]
+                           #(throw (ex-info "Call failure."
+                                     {:arity arity
+                                      :stack stack
+                                      :words words} e))))
+                  {:keys [words stack events]} (context identity)]
               (rethrow!)
               (when (some? events)
-                (throw (ex-info "Missing events." {:stack stack :events events})))
+                (throw (ex-info "Missing events." {:words words :stack stack :events events})))
               (conj stack (r))))]
     (fn [inst]
-      (let [inst (normalize-instruction inst)]
-        (case (:op inst)
-          :push (context update :stack conj (:value inst))
-          :copy (context update :stack stack-copy (:offset inst))
-          :drop (context update :stack stack-drop (:offset inst))
-          :call (let [{:keys [events stack]} (context identity)
-                      arity (:arity inst)]
-                  (context assoc
-                    :events (seq (:events inst))
-                    :stack (subvec stack 0 (- (count stack) (inc arity))))
-                  (context assoc
-                    :events events
-                    :stack (call-attempt stack arity))))))))
+      (cond
+        (instance? Copy inst)
+        (context update :stack stack-copy (:offset inst))
+
+        (instance? Drop inst)
+        (context update :stack stack-drop (:offset inst))
+
+        (instance? Call inst)
+        (let [{:keys [events stack words]} (context identity)
+              arity (:arity inst)]
+          (context assoc
+            :events (seq (:events inst))
+            :stack (subvec stack 0 (- (count stack) (inc arity))))
+          (context assoc
+            :events events
+            :stack (call-attempt words stack arity)))
+
+        (instance? Word inst)
+        (let [{:keys [f args]} inst]
+          (context update :words conj f)
+          (run! eval-inst! (apply f args))
+          (context update :words pop))
+
+        :push (context update :stack conj inst)))))
 
 (def ^{:doc "
 Return a pair containing the number of values respectively consumed and produced by the composition of given programs.
@@ -67,26 +86,34 @@ Return a pair containing the number of values respectively consumed and produced
                (- produced (min 0 d))]))
           (events-stack-effect [r events]
             (reduce event-stack-effect r events))
-          (event-stack-effect [r insts]
+          (event-stack-effect [r inst]
             (-> r
               (apply-stack-effect 0 1)
-              (insts-stack-effect insts)
+              (inst-stack-effect inst)
               (apply-stack-effect 1 0)))
           (insts-stack-effect [r insts]
             (reduce inst-stack-effect r insts))
           (inst-stack-effect [r inst]
-            (case (:op inst)
-              :push (apply-stack-effect r 0 1)
-              :copy (let [consumed (inc (:offset inst))]
-                      (apply-stack-effect r consumed (inc consumed)))
-              :drop (let [produced (:offset inst)]
-                      (apply-stack-effect r (inc produced) produced))
-              :call (-> r
-                      (apply-stack-effect (inc (:arity inst)) 0)
-                      (events-stack-effect (:events inst))
-                      (apply-stack-effect 0 1))
-              (throw (ex-info "who?" {:inst inst}))))]
-    (fn [& ps] (reduce insts-stack-effect [0 0] (map (partial map normalize-instruction) ps)))))
+            (cond
+              (instance? Copy inst)
+              (let [consumed (inc (:offset inst))]
+                (apply-stack-effect r consumed (inc consumed)))
+
+              (instance? Drop inst)
+              (let [produced (:offset inst)]
+                (apply-stack-effect r (inc produced) produced))
+
+              (instance? Call inst)
+              (-> r
+                (apply-stack-effect (inc (:arity inst)) 0)
+                (events-stack-effect (:events inst))
+                (apply-stack-effect 0 1))
+
+              (instance? Word inst)
+              (insts-stack-effect r (apply (:f inst) (:args inst)))
+
+              :push (apply-stack-effect r 0 1)))]
+    (fn [& insts] (insts-stack-effect [0 0] insts))))
 
 (def ^{:doc "
 Must be called as a side effect of the evaluation of a `call` instruction providing the event definition as a program.
@@ -95,11 +122,11 @@ Produce given value, evaluate the program, consume a value and return it to the 
   (fn [x]
     (assert (context identity) "Undefined context.")
     (try (rethrow!)
-         (let [{:keys [stack events]} (context identity)]
+         (let [{:keys [words stack events]} (context identity)]
            (when (nil? events)
-             (throw (ex-info "Spurious event." {:stack stack :event x})))
+             (throw (ex-info "Spurious event." {:words words :stack stack :event x})))
            (context assoc :stack (conj stack x) :events (next events))
-           (run! eval-inst! (map normalize-instruction (first events)))
+           (eval-inst! (first events))
            (let [stack (:stack (context identity))]
              (context assoc :stack (pop stack))
              (peek stack)))
@@ -108,30 +135,17 @@ Produce given value, evaluate the program, consume a value and return it to the 
            (throw (#?(:clj Error. :cljs js/Error.) "crashed"))))))
 
 (def ^{:doc "
-Transform the right end of given vector by evaluating the composition of given programs.
+Evaluate given instructions.
 "} run
-  (fn [v & ps]
-    (assert (vector? v))
-    (let [program (into [] (comp cat (map normalize-instruction)) ps)
-          provided (count v)
-          [required] (balance program)]
-      (when (< provided required)
-        (throw (ex-info (str "Insufficient data - provided " provided ", required " required)
-                 {:stack v :program program})))
+  (fn [& insts]
+    (let [[required] (apply balance insts)]
+      (when (pos? required)
+        (throw (ex-info (str "Insufficient data - required " required) {:insts insts})))
       (let [p (context identity)]
-        (context {} {:stack v})
-        (try (run! eval-inst! program)
+        (context {} {:words [] :stack []})
+        (try (run! eval-inst! insts)
              (:stack (context identity))
              (finally (context {} p)))))))
-
-(def ^{:doc "
-Return a program consuming nothing and producing given values.
-(= (run [] (push x y z)) [x y z])
-"} push
-  (fn
-    ([] [])
-    ([x] [^::inst {:op :push :value x}])
-    ([x & xs] (into (push x) (mapcat push) xs))))
 
 (def ^{:doc "
 Return a program consuming (inc n) values and producing this list appended with a copy of the head.
@@ -139,7 +153,7 @@ Return a program consuming (inc n) values and producing this list appended with 
 "} copy
   (fn [n]
     (assert (nat-int? n))
-    [^::inst {:op :copy :offset n}]))
+    (->Copy n)))
 
 (def ^{:doc "
 Return a program consuming n values and producing the tail of this list.
@@ -147,15 +161,21 @@ Return a program consuming n values and producing the tail of this list.
 "} drop
   (fn [n]
     (assert (nat-int? n))
-    [^::inst {:op :drop :offset n}]))
+    (->Drop n)))
 
 (def ^{:doc "
 Return a program consuming (inc n) values and calling the last as a clojure function, passing the rest as arguments,
 and producing the returned value. The function must call `event` as a side effect successively for each program
 provided as extra arguments.
 (= (run [inc 1] (call 1)) [2])
-(= (run [event x] (call 1 (concat (drop 0) (push y)))) [y])
+(= (run [event x] (call 1 (list (drop 0) (push y)))) [y])
 "} call
   (fn [n & ps]
     (assert (nat-int? n))
-    [^::inst {:op :call :arity n :events ps}]))
+    (->Call n ps)))
+
+(defn word [f & args]
+  (->Word f args))
+
+(defmacro defword [sym args & body]
+  `(def ~sym (partial word (fn ~sym ~args ~@body))))

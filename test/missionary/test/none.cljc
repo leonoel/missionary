@@ -6,9 +6,9 @@
 
 (t/deftest none
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-             (lc/push m/none)
-             (l/spawn :main
-                      (l/terminated :main))
-             (l/cancel :main))))))
+              m/none
+              (l/spawn :main
+                (l/terminated :main))
+              (l/cancel :main))))))

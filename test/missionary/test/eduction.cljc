@@ -6,9 +6,9 @@
 
 (t/deftest cancel
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/eduction (map inc) (l/flow :input)))
+              (m/eduction (map inc) (l/flow :input))
               (l/spawn :main
                 ;; eduction is in charge of input, so it spawns it
                 (l/spawned :input))
@@ -16,7 +16,7 @@
                 ;; as input notifies of a value eduction transfers is and applies xf,
                 ;; notifying of new value
                 (l/transferred :input
-                  (lc/push 0))
+                  0)
                 (l/notified :main))
               (l/transfer :main)
               (l/check #{1})
@@ -26,9 +26,9 @@
 
 (t/deftest terminate
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/eduction (map inc) (l/flow :input)))
+              (m/eduction (map inc) (l/flow :input))
               (l/spawn :main
                 (l/spawned :input))
               (l/terminate :input
@@ -39,15 +39,15 @@
 
 (t/deftest crash-input
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/eduction (map inc) (l/flow :input)))
+              (m/eduction (map inc) (l/flow :input))
               (l/spawn :main
                 (l/spawned :input))
               (l/notify :input
                 ;; input crashing means we have to cancel it and notify of new value
                 (l/crashed :input
-                  (lc/push err))
+                  err)
                 (l/cancelled :input)
                 (l/notified :main))
               (l/crash :main)
@@ -57,14 +57,14 @@
 
 (t/deftest transducer-throws
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/eduction (map (fn [_] (throw err))) (l/flow :input)))
+              (m/eduction (map (fn [_] (throw err))) (l/flow :input))
               (l/spawn :main
                 (l/spawned :input))
               (l/notify :input
                 (l/transferred :input
-                  (lc/push 0))
+                  0)
                 ;; the eduction's xf throws, so it cancels input
                 (l/cancelled :input)
                 (l/notified :main))
@@ -73,14 +73,14 @@
 
 (t/deftest transducer-terminates-early
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/eduction (take 1) (l/flow :input)))
+              (m/eduction (take 1) (l/flow :input))
               (l/spawn :main
                 (l/spawned :input))
               (l/notify :input
                 (l/transferred :input
-                  (lc/push 0))
+                  0)
                 ;; the xf terminates (via `reduced`), so it cancels input
                 (l/cancelled :input)
                 (l/notified :main))
@@ -89,14 +89,14 @@
 
 (t/deftest transducer-returns-multiple-values
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/eduction cat (l/flow :input)))
+              (m/eduction cat (l/flow :input))
               (l/spawn :main
                 (l/spawned :input))
               (l/notify :input
                 (l/transferred :input
-                  (lc/push [1 2]))
+                  [1 2])
                 (l/notified :main))
               (l/transfer :main
                 ;; we get a new notification, since `cat` returned 2 values
@@ -107,19 +107,19 @@
 
 (t/deftest transducer-swallows-values
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/eduction (filter odd?) (l/flow :input)))
+              (m/eduction (filter odd?) (l/flow :input))
               (l/spawn :main
                 (l/spawned :input))
               (l/notify :input
                 (l/transferred :input
-                  (lc/push 0))
+                  0)
                 ;; xf filters this value, so we don't notify from main
                 )
               (l/notify :input
                 (l/transferred :input
-                  (lc/push 1))
+                  1)
                 ;; xf keeps value, so we notify
                 (l/notified :main))
               (l/transfer :main)
@@ -127,14 +127,14 @@
 
 (t/deftest transducer-produces-on-completion
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/eduction (partition-all 2) (l/flow :input)))
+              (m/eduction (partition-all 2) (l/flow :input))
               (l/spawn :main
                 (l/spawned :input))
               (l/notify :input
                 (l/transferred :input
-                  (lc/push 1)))
+                  1))
               (l/terminate :input
                 ;; input terminated, so partition-all completes with [1],
                 ;; so it notifies of the last value

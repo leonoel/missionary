@@ -3,107 +3,100 @@
             [clojure.test :as t])
   #?(:clj (:import (clojure.lang IFn IDeref))))
 
-(def dup (lc/copy 0))
-(def lose (lc/drop 0))
+(lc/defword compose [& insts] insts)
 
-(def swap (concat (lc/copy 1) (lc/drop 2)))
+(lc/defword dup [] [(lc/copy 0)])
+(lc/defword lose [] [(lc/drop 0)])
 
-(def -rot                               ; x y z -- z x y
-  (concat (lc/copy 2) (lc/copy 2) (lc/drop 3) (lc/drop 3)))
+(lc/defword swap [] [(lc/copy 1) (lc/drop 2)])
 
-(defn -rotn [n]
+(lc/defword -rot []                               ; x y z -- z x y
+  [(lc/copy 2) (lc/copy 2) (lc/drop 3) (lc/drop 3)])
+
+(lc/defword -rotn [n]
   (let [x (dec n)]
-    (into [] (comp cat cat) [(repeat x (lc/copy x)) (repeat x (lc/drop n))])))
+    (into [] cat [(repeat x (lc/copy x)) (repeat x (lc/drop n))])))
 
 (t/deftest -rotn-test
-  (t/is (= swap (-rotn 2)))
-  (t/is (= -rot (-rotn 3))))
+  (t/is (= [2 1] (lc/run 1 2 (-rotn 2))))
+  (t/is (= [3 1 2] (lc/run 1 2 3 (-rotn 3)))))
 
-(defn bi [f g]
-  (concat dup (lc/push f) (lc/call 1) swap (lc/push g) (lc/call 1)))
+(lc/defword bi [f g]
+  [(dup) f (lc/call 1) (swap) g (lc/call 1)])
 
 (t/deftest bi-test
-  (t/is (= [[1 2] 3]
-           (lc/run [[1 2 3]] (bi pop peek)))))
+  (t/is (= [[1 2] 3] (lc/run [1 2 3] (bi pop peek)))))
 
-(defn check [pred]
-  (concat
-    (lc/push #(when-not (pred %) (throw (ex-info "Predicate failed." {:predicate pred :value %}))))
-    (lc/call 1) (lc/drop 0)))
+(lc/defword check [pred]
+  [#(when-not (pred %) (throw (ex-info "Predicate failed." {:predicate pred :value %})))
+   (lc/call 1) (lc/drop 0)])
 
-(defn change [f & args]
-  (concat
-    (apply lc/push args)
-    (lc/push f)
-    (lc/call (inc (count args)))))
+(lc/defword change [f & args]
+  (-> []
+    (into args)
+    (conj f (lc/call (inc (count args))))))
 
-(defn insert [id]
-  (concat (lc/push id) swap (lc/push assoc) (lc/call 3)))
+(lc/defword insert [id]
+  [id (swap) assoc (lc/call 3)])
 
-(defn spawn [id & events]
-  (concat                                                   ;; [{} flow]
-    (lc/push #(lc/event [:notified id])) swap               ;; [{} notifier flow]
-    (lc/push #(lc/event [:terminated id])) swap             ;; [{} notifier terminator flow]
-    (apply lc/call 2 events)                                ;; [{} iterator]
-    (insert id)))                                           ;; [{id iterator}]
+(lc/defword spawn [id & events]                             ;; [{} flow]
+  [#(lc/event [:notified id]) (swap)                        ;; [{} notifier flow]
+   #(lc/event [:terminated id]) (swap)                      ;; [{} notifier terminator flow]
+   (apply lc/call 2 events)                                 ;; [{} iterator]
+   (insert id)])                                            ;; [{id iterator}]
 
-(defn transfer-with [f id & events]
-  (concat                                                   ;; [{id iterator}]
-    (lc/copy 0)                                             ;; [{id iterator} {id iterator}]
-    (lc/push id get)                                        ;; [{id iterator} {id iterator} id get]
-    (lc/call 2)                                             ;; [{id iterator} iterator]
-    (lc/push f)                                             ;; [{id iterator} iterator f]
-    (apply lc/call 1 events)))                              ;; [{id iterator} result]
+(defn transfer-with [f id & events]                         ;; [{id iterator}]
+  [(lc/copy 0)                                              ;; [{id iterator} {id iterator}]
+   id get                                                   ;; [{id iterator} {id iterator} id get]
+   (lc/call 2)                                              ;; [{id iterator} iterator]
+   f                                                        ;; [{id iterator} iterator f]
+   (apply lc/call 1 events)])                               ;; [{id iterator} result]
 
-(def transfer (partial transfer-with deref))
+(lc/defword transfer [id & events]
+  (apply transfer-with deref id events))
 
 (defn capture-error [f & args]
   ((try (let [x (apply f args)] #(throw (ex-info "Not an error." {:value x})))
         (catch #?(:clj Throwable :cljs :default) e #(do e)))))
 
-(def crash (partial transfer-with (partial capture-error deref)))
+(lc/defword crash [id & events]
+  (apply transfer-with (partial capture-error deref) id events))
 
-(defn signal [id arg & events]
-  (concat
-    (lc/copy 0)
-    (change get id)
-    (lc/push arg) swap
-    (apply lc/call 1 events)
-    (lc/drop 0)))
+(lc/defword signal [id arg & events]
+  [(lc/copy 0)
+   (change get id)
+   arg (swap)
+   (apply lc/call 1 events)
+   (lc/drop 0)])
 
-(defn signal-error [id arg & events]
-  (concat
-    (lc/copy 0)
-    (change get id)
-    (lc/push arg)
-    (lc/push capture-error)
-    (apply lc/call 2 events)
-    (lc/drop 0)))
+(lc/defword signal-error [id arg & events]
+  [(lc/copy 0)
+   (change get id)
+   arg capture-error
+   (apply lc/call 2 events)
+   (lc/drop 0)])
 
-(defn notify [id & events]
-  (apply signal id false events))
+(lc/defword notify [id & events]
+  [(apply signal id false events)])
 
-(defn terminate [id & events]
-  (apply signal id true events))
+(lc/defword terminate [id & events]
+  [(apply signal id true events)])
 
-(defn cancel [id & events]
-  (concat
-    (lc/copy 0)
-    (change get id)
-    (apply lc/call 0 events)
-    (lc/drop 0)))
+(lc/defword cancel [id & events]
+  [(lc/copy 0)
+   (change get id)
+   (apply lc/call 0 events)
+   (lc/drop 0)])
 
-(defn notified [id & events]
-  (concat
-    (check #{[:notified id]})
-    (apply concat events)
-    (lc/push nil)))
+(lc/defword notified [id & insts]
+  (-> [(check #{[:notified id]})]
+    (into insts)
+    (conj nil)))
 
-(defn terminated [id & events]
-  (concat
-    (check #{[:terminated id]})
-    (apply concat events)
-    (lc/push nil)))
+(lc/defword terminated [id & insts]
+  (-> [(check #{[:terminated id]})]
+    (into insts)
+    (conj nil)))
 
 (deftype It [id]
   IFn
@@ -113,49 +106,40 @@
   (#?(:clj deref :cljs -deref) [_]
     ((lc/event [:transferred id]))))
 
-(defn spawned [id & programs]
-  (concat                               ;; [{} [:spawned id #()]]
-    (bi peek pop)                       ;; [{} #() [:spawned id]]
-    (check #{[:spawned id]})            ;; [{} #()]
-    (insert id)
-    (apply concat programs)
-    (lc/push (->It id))))
+(lc/defword spawned [id & insts]                            ;; [{} [:spawned id #()]]
+  (-> [(bi peek pop)                                        ;; [{} #() [:spawned id]]
+       (check #{[:spawned id]})                             ;; [{} #()]
+       (insert id)]
+    (into insts)
+    (conj (->It id))))
 
-(defn transferred [id & programs]
-  (concat
-    (check #{[:transferred id]})
-    (apply concat programs)
-    (change constantly)))
+(lc/defword transferred [id & insts]
+  (-> [(check #{[:transferred id]})]
+    (into insts)
+    (conj (change constantly))))
 
 (defn throwing [e] #(throw e))
 
-(defn crashed [id & programs]
-  (concat
-    (check #{[:transferred id]})
-    (apply concat programs)
-    (change throwing)))
+(lc/defword crashed [id & insts]
+  (-> [(check #{[:transferred id]})]
+    (into insts)
+    (conj (change throwing))))
 
 (defn detect [id x]
   (lc/event [:detected id x]))
 
-(defn detected [id & programs]
-  (concat
-    (lc/copy 0) (change peek) swap
-    (change pop) (check #{[:detected id]})
-    (apply concat programs)))
+(lc/defword detected [id & insts]
+  (into [(lc/copy 0) (change peek) (swap) (change pop) (check #{[:detected id]})] insts))
 
 (defn flow [id]
   (fn [n t] (lc/event [:spawned id #((if % t n))])))
 
-(defn cancelled [id & programs]
-  (concat
-    (check #{[:cancelled id]})
-    (apply concat programs)
-    (lc/push nil)))
+(lc/defword cancelled [id & insts]
+  (-> [(check #{[:cancelled id]})]
+    (into insts)
+    (conj nil)))
 
-(defn store [& programs]
-  (concat
-    (lc/push {})
-    (apply concat programs)
-    (lc/drop 0)))
-
+(lc/defword store [& insts]
+  (-> [{}]
+    (into insts)
+    (conj (lc/drop 0))))

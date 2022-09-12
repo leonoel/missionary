@@ -7,9 +7,9 @@
 
 (t/deftest a-subject-that-is-immediately-ready
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/observe (fn [f] (f nil) #(do))))
+              (m/observe (fn [f] (f nil) #(do)))
               (l/spawn :main
                 (l/notified :main))
               (l/transfer :main)
@@ -22,13 +22,13 @@
 
 (t/deftest overflow
   (t/is (= []
-           (lc/run []
-             (l/store
-              (lc/push (m/observe lc/event))
+          (lc/run
+            (l/store
+              (m/observe lc/event)
               (l/spawn :main
-                       (concat
-                        (l/insert :f)
-                        (lc/push #(do))))
+                (l/compose
+                  (l/insert :f)
+                  #(do)))
               (l/signal :f :x (l/notified :main))
               (l/signal-error :f :x))))))
 
@@ -36,18 +36,18 @@
 ;; we don't know when exactly should the unsubscription happen
 (t/deftest cancellation
   (t/is (= []
-           (lc/run []
-             (l/store
-              (lc/push (m/observe lc/event))
+          (lc/run
+            (l/store
+              (m/observe lc/event)
               (l/spawn :main
-                       (concat
-                        (lc/drop 0)
-                        (lc/push #(lc/event :unsub))))
+                (l/compose
+                  (lc/drop 0)
+                  #(lc/event :unsub)))
               (l/cancel :main
-                        (l/notified :main))
+                (l/notified :main))
               (l/crash :main
-                       (l/terminated :main)
-                       (concat
-                        (l/check #{:unsub})
-                        (lc/push nil)))
+                (l/terminated :main)
+                (l/compose
+                  (l/check #{:unsub})
+                  nil))
               (l/check #(instance? Cancelled %)))))))

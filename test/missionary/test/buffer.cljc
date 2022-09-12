@@ -6,24 +6,24 @@
 
 (t/deftest simple-with-cancel
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/buffer 2 (l/flow :input)))
+              (m/buffer 2 (l/flow :input))
               (l/spawn :main
                 (l/spawned :input))
               (l/notify :input
-                (l/transferred :input (lc/push 0))
+                (l/transferred :input 0)
                 (l/notified :main))
               (l/notify :input
                 ;; buffer=2 and we have 1, so we transfer again
-                (l/transferred :input (lc/push 1)))
+                (l/transferred :input 1))
               (l/notify :input
                 ;; buffer full, no more transfer
                 )
               (l/transfer :main
                 (l/notified :main)
                 ;; buffer has space and we were notified, so we transfer again
-                (l/transferred :input (lc/push 2)))
+                (l/transferred :input 2))
               (l/check #{0})
               (l/transfer :main
                 (l/notified :main))
@@ -35,22 +35,22 @@
 
 (t/deftest input-terminates
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/buffer 2 (l/flow :input)))
+              (m/buffer 2 (l/flow :input))
               (l/spawn :main
                 (l/spawned :input))
               (l/terminate :input
                 (l/terminated :main))))))
   (t/testing "but there's still value to transfer"
     (t/is (= []
-            (lc/run []
+            (lc/run
               (l/store
-                (lc/push (m/buffer 2 (l/flow :input)))
+                (m/buffer 2 (l/flow :input))
                 (l/spawn :main
                   (l/spawned :input))
                 (l/notify :input
-                  (l/transferred :input (lc/push 1))
+                  (l/transferred :input 1)
                   (l/notified :main))
                 (l/terminate :input)
                 (l/transfer :main
@@ -61,13 +61,13 @@
 
 (t/deftest input-crashes
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
-              (lc/push (m/buffer 2 (l/flow :input)))
+              (m/buffer 2 (l/flow :input))
               (l/spawn :main
                 (l/spawned :input))
               (l/notify :input
-                (l/crashed :input (lc/push err))
+                (l/crashed :input err)
                 (l/notified :main))
               (l/crash :main)
               (l/check #{err}))))))

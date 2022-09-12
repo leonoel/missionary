@@ -8,34 +8,34 @@
 (t/deftest watch
   (let [!a (atom 0)]
     (t/is (= []
-             (lc/run []
-               (l/store
-                (lc/push (m/watch !a))
+            (lc/run
+              (l/store
+                (m/watch !a)
                 (l/spawn :main
-                         (l/notified :main))
+                  (l/notified :main))
                 (l/transfer :main)
                 (l/check #{0})
-                (lc/push #(swap! !a inc))
+                #(swap! !a inc)
                 (lc/call 0
-                         (l/notified :main))
+                  (l/notified :main))
                 (lc/drop 0)
                 (l/transfer :main)
                 (l/check #{1})
                 (l/cancel :main
-                          (l/notified :main))
+                  (l/notified :main))
                 (l/crash :main
-                         (l/terminated :main))
+                  (l/terminated :main))
                 (l/check #(instance? Cancelled %))))))))
 
 (t/deftest cancel-before-transfer
   (let [!a (atom 0)]
     (t/is (= []
-             (lc/run []
-               (l/store
-                (lc/push (m/watch !a))
+            (lc/run
+              (l/store
+                (m/watch !a)
                 (l/spawn :main
-                         (l/notified :main))
+                  (l/notified :main))
                 (l/cancel :main)
                 (l/crash :main
-                         (l/terminated :main))
+                  (l/terminated :main))
                 (l/check #(instance? Cancelled %))))))))

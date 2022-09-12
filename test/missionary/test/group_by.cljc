@@ -5,38 +5,34 @@
             [clojure.test :as t])
   (:import [missionary Cancelled]))
 
-(defn init [flow]
-  (concat
-    (lc/push flow)
-    (l/spawn :main
-      (l/spawned :input))))
+(lc/defword init [flow]
+  [flow (l/spawn :main
+          (l/spawned :input))])
 
-(defn spawn-group [k & events]
-  (concat l/dup (l/check (comp #{k} first)) (lc/push peek) (lc/call 1) (apply l/spawn k events)))
+(lc/defword spawn-group [k & events]
+  [(l/dup) (l/check (comp #{k} first)) peek (lc/call 1) (apply l/spawn k events)])
 
 (def key-fn (comp keyword str first))
 
-(defn group-transfer-new [v]
-  (concat
-    (l/notify :input
-      (l/transferred :input (lc/push v))
-      (l/notified :main))
-    (l/transfer :main)
-    (spawn-group (key-fn v) (l/notified (key-fn v)))
-    (l/transfer (key-fn v))
-    (l/check #{v})))
+(lc/defword group-transfer-new [v]
+  [(l/notify :input
+     (l/transferred :input v)
+     (l/notified :main))
+   (l/transfer :main)
+   (spawn-group (key-fn v) (l/notified (key-fn v)))
+   (l/transfer (key-fn v))
+   (l/check #{v})])
 
-(defn group-transfer [v]
-  (concat
-    (l/notify :input
-      (l/transferred :input (lc/push v))
-      (l/notified (key-fn v)))
-    (l/transfer (key-fn v))
-    (l/check #{v})))
+(lc/defword group-transfer [v]
+  [(l/notify :input
+     (l/transferred :input v)
+     (l/notified (key-fn v)))
+   (l/transfer (key-fn v))
+   (l/check #{v})])
 
 (t/deftest simple-with-cancel
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
               (init (m/group-by key-fn (l/flow :input)))
               (group-transfer-new "a1")
@@ -53,18 +49,17 @@
                 (l/terminated :main)))))))
 
 (def err (ex-info "" {}))
-(defn input-crash [e]
-  (concat
-    (l/notify :input
-      (l/crashed :input (lc/push e))
-      (l/cancelled :input)
-      (l/notified :main))
-    (l/crash :main)
-    (l/check #{e})))
+(lc/defword input-crash [e]
+  [(l/notify :input
+     (l/crashed :input e)
+     (l/cancelled :input)
+     (l/notified :main))
+   (l/crash :main)
+   (l/check #{e})])
 
 (t/deftest input-crashes
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
               (init (m/group-by key-fn (l/flow :input)))
               (group-transfer-new "a1")
@@ -77,7 +72,7 @@
 
 (t/deftest group-is-cancelled
   (t/is (= []
-          (lc/run []
+          (lc/run
             (l/store
               (init (m/group-by key-fn (l/flow :input)))
               (group-transfer-new "a1")
@@ -90,7 +85,7 @@
               ;; after termination, if a new value comes in, we get a new flow
               (group-transfer-new "a2")
               (l/notify :input
-                (l/transferred :input (lc/push "a3"))
+                (l/transferred :input "a3")
                 (l/notified :a))
               (l/cancel :a
                 (l/notified :main))
