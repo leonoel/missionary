@@ -17,9 +17,7 @@
    :extra-paths ["test"]
    :main-opts   ["-m" "cognitect.test-runner"]}
 
-  :clj-test-watch {:extra-deps {lambdaisland/kaocha {:mvn/version "1.69.1069"}
-                                io.aviso/pretty {:mvn/version "1.1.1"}
-                                pjstadig/humane-test-output {:mvn/version "0.11.0"}}
+  :clj-test-watch {:extra-deps {lambdaisland/kaocha {:mvn/version "1.69.1069"}}
                    :extra-paths ["test"]
                    :exec-fn missionary.test-dev/run}
   :cljs-test
