@@ -7,7 +7,8 @@ instructions, which can be either :
 * an instance of word
 * any other value
 "} lolcat.core
-  (:refer-clojure :exclude [drop]))
+  (:refer-clojure :exclude [drop])
+  #?(:cljs (:require-macros lolcat.core)))
 
 (defrecord Copy [offset])
 (defrecord Drop [offset])
