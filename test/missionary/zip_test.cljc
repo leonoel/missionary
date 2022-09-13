@@ -1,4 +1,4 @@
-(ns missionary.test.zip
+(ns missionary.test.zip-test
   (:require [lolcat.core :as lc]
             [lolcat.lib :as l]
             [missionary.core :as m]

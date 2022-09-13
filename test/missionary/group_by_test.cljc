@@ -1,4 +1,4 @@
-(ns missionary.test.group-by
+(ns missionary.test.group-by-test
   (:require [lolcat.core :as lc]
             [lolcat.lib :as l]
             [missionary.core :as m]
