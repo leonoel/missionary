@@ -4,15 +4,13 @@
             [missionary.core :as m]
             [clojure.test :as t]))
 
+(lc/defword init [flow] [flow (l/spawn :main (l/spawned :input) (l/notified :main))])
+
 (t/deftest simple-with-cancel
   (t/is (= []
           (lc/run
             (l/store
-              (m/reductions + 1 (l/flow :input))
-              (l/spawn :main
-                ;; reductions is in charge of input, so it spawns it
-                (l/spawned :input)
-                (l/notified :main))
+              (init (m/reductions + 1 (l/flow :input)))
               (l/transfer :main)
               (l/check #{1})
               (l/notify :input
@@ -33,15 +31,10 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/reductions + 1 (l/flow :input))
-              (l/spawn :main
-                (l/spawned :input)
-                (l/notified :main))
-              (l/terminate :input
-                ;; we don't terminate yet, since init wasn't transfered
-                )
-              (l/transfer :main
-                ;; now we do
+              (init (m/reductions + 1 (l/flow :input)))
+              ;; we don't terminate yet, since init wasn't transfered
+              (l/terminate :input)
+              (l/transfer :main  ;; now we do
                 (l/terminated :main))
               (l/check #{1}))))))
 
@@ -49,10 +42,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/reductions + 1 (l/flow :input))
-              (l/spawn :main
-                (l/spawned :input)
-                (l/notified :main))
+              (init (m/reductions + 1 (l/flow :input)))
               (l/transfer :main)
               (l/check #{1})
               (l/terminate :input
@@ -64,10 +54,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/reductions (fn [_ _] (throw err)) 1 (l/flow :input))
-              (l/spawn :main
-                (l/spawned :input)
-                (l/notified :main))
+              (init (m/reductions (fn [_ _] (throw err)) 1 (l/flow :input)))
               (l/transfer :main)
               (l/check #{1})
               (l/notify :input
@@ -81,10 +68,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/reductions + 1 (l/flow :input))
-              (l/spawn :main
-                (l/spawned :input)
-                (l/notified :main))
+              (init (m/reductions + 1 (l/flow :input)))
               (l/transfer :main)
               (l/check #{1})
               (l/notify :input
@@ -97,10 +81,7 @@
     (t/is (= []
             (lc/run
               (l/store
-                (m/reductions + 1 (l/flow :input))
-                (l/spawn :main
-                  (l/spawned :input)
-                  (l/notified :main))
+                (init (m/reductions + 1 (l/flow :input)))
                 (l/notify :input)
                 (l/transfer :main
                   (l/notified :main))

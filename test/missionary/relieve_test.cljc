@@ -4,13 +4,13 @@
             [missionary.core :as m]
             [clojure.test :as t]))
 
+(lc/defword init [flow] [flow (l/spawn :main (l/spawned :input))])
+
 (t/deftest simple-with-cancel
   (t/is (= []
           (lc/run
             (l/store
-              (m/relieve + (l/flow :input))
-              (l/spawn :main
-                (l/spawned :input))
+              (init (m/relieve + (l/flow :input)))
               (l/notify :input
                 (l/transferred :input 1)
                 (l/notified :main))
@@ -25,9 +25,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/relieve (fn [ac nx] (lc/event :reduced) (+ ac nx)) (l/flow :input))
-              (l/spawn :main
-                (l/spawned :input))
+              (init (m/relieve (fn [ac nx] (lc/event :reduced) (+ ac nx)) (l/flow :input)))
               (l/notify :input
                 (l/transferred :input 1)
                 (l/notified :main))
@@ -44,18 +42,14 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/relieve + (l/flow :input))
-              (l/spawn :main
-                (l/spawned :input))
+              (init (m/relieve + (l/flow :input)))
               (l/terminate :input
                 (l/terminated :main))))))
   (t/testing "but there's still value to transfer"
     (t/is (= []
             (lc/run
               (l/store
-                (m/relieve + (l/flow :input))
-                (l/spawn :main
-                  (l/spawned :input))
+                (init (m/relieve + (l/flow :input)))
                 (l/notify :input
                   (l/transferred :input 1)
                   (l/notified :main))
@@ -70,9 +64,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/relieve (fn [_ _] (throw err)) (l/flow :input))
-              (l/spawn :main
-                (l/spawned :input))
+              (init (m/relieve (fn [_ _] (throw err)) (l/flow :input)))
               (l/notify :input
                 (l/transferred :input :doesnt-matter)
                 (l/notified :main))

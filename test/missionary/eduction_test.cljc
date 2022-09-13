@@ -4,14 +4,13 @@
             [missionary.core :as m]
             [clojure.test :as t]))
 
+(lc/defword init [flow] [flow (l/spawn :main (l/spawned :input))])
+
 (t/deftest cancel
   (t/is (= []
           (lc/run
             (l/store
-              (m/eduction (map inc) (l/flow :input))
-              (l/spawn :main
-                ;; eduction is in charge of input, so it spawns it
-                (l/spawned :input))
+              (init (m/eduction (map inc) (l/flow :input)))
               (l/notify :input
                 ;; as input notifies of a value eduction transfers is and applies xf,
                 ;; notifying of new value
@@ -28,9 +27,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/eduction (map inc) (l/flow :input))
-              (l/spawn :main
-                (l/spawned :input))
+              (init (m/eduction (map inc) (l/flow :input)))
               (l/terminate :input
                 ;; if input terminates, so do we
                 (l/terminated :main)))))))
@@ -41,9 +38,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/eduction (map inc) (l/flow :input))
-              (l/spawn :main
-                (l/spawned :input))
+              (init (m/eduction (map inc) (l/flow :input)))
               (l/notify :input
                 ;; input crashing means we have to cancel it and notify of new value
                 (l/crashed :input
@@ -59,9 +54,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/eduction (map (fn [_] (throw err))) (l/flow :input))
-              (l/spawn :main
-                (l/spawned :input))
+              (init (m/eduction (map (fn [_] (throw err))) (l/flow :input)))
               (l/notify :input
                 (l/transferred :input
                   0)
@@ -75,12 +68,9 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/eduction (take 1) (l/flow :input))
-              (l/spawn :main
-                (l/spawned :input))
+              (init (m/eduction (take 1) (l/flow :input)))
               (l/notify :input
-                (l/transferred :input
-                  0)
+                (l/transferred :input 0)
                 ;; the xf terminates (via `reduced`), so it cancels input
                 (l/cancelled :input)
                 (l/notified :main))
@@ -91,12 +81,9 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/eduction cat (l/flow :input))
-              (l/spawn :main
-                (l/spawned :input))
+              (init (m/eduction cat (l/flow :input)))
               (l/notify :input
-                (l/transferred :input
-                  [1 2])
+                (l/transferred :input [1 2])
                 (l/notified :main))
               (l/transfer :main
                 ;; we get a new notification, since `cat` returned 2 values
@@ -109,17 +96,13 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/eduction (filter odd?) (l/flow :input))
-              (l/spawn :main
-                (l/spawned :input))
+              (init (m/eduction (filter odd?) (l/flow :input)))
               (l/notify :input
-                (l/transferred :input
-                  0)
+                (l/transferred :input 0)
                 ;; xf filters this value, so we don't notify from main
                 )
               (l/notify :input
-                (l/transferred :input
-                  1)
+                (l/transferred :input 1)
                 ;; xf keeps value, so we notify
                 (l/notified :main))
               (l/transfer :main)
@@ -129,12 +112,9 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/eduction (partition-all 2) (l/flow :input))
-              (l/spawn :main
-                (l/spawned :input))
+              (init (m/eduction (partition-all 2) (l/flow :input)))
               (l/notify :input
-                (l/transferred :input
-                  1))
+                (l/transferred :input 1))
               (l/terminate :input
                 ;; input terminated, so partition-all completes with [1],
                 ;; so it notifies of the last value

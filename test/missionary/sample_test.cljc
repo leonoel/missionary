@@ -4,7 +4,7 @@
             [missionary.core :as m]
             [clojure.test :as t]))
 
-(lc/defword sample-init [flow]
+(lc/defword init [flow]
   [flow
    (l/spawn :main
      (l/spawned :x (l/notify :x))
@@ -17,7 +17,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (sample-init (m/sample vector (l/flow :x) (l/flow :y) (l/flow :sampler)))
+              (init (m/sample vector (l/flow :x) (l/flow :y) (l/flow :sampler)))
               (l/transfer :main
                 (l/transferred :x :x1)
                 (l/transferred :y :y1)
@@ -33,7 +33,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (sample-init (m/sample vector (l/flow :x) (l/flow :y) (l/flow :sampler)))
+              (init (m/sample vector (l/flow :x) (l/flow :y) (l/flow :sampler)))
               (l/transfer :main
                 (l/transferred :x (l/compose (l/notify :x) :x1))
                 (l/transferred :x :x2)
@@ -51,7 +51,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (sample-init (m/sample vector (l/flow :x) (l/flow :y) (l/flow :sampler)))
+              (init (m/sample vector (l/flow :x) (l/flow :y) (l/flow :sampler)))
               (l/crash :main
                 (l/crashed :x err)
                 (l/transferred :sampler :sampler1)
@@ -68,7 +68,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (sample-init (m/sample (fn [& _] (lc/event :f) (throw err)) (l/flow :x) (l/flow :y) (l/flow :sampler)))
+              (init (m/sample (fn [& _] (lc/event :f) (throw err)) (l/flow :x) (l/flow :y) (l/flow :sampler)))
               (l/crash :main
                 (l/transferred :x :x1)
                 (l/transferred :y :y1)
@@ -84,7 +84,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (sample-init (m/sample vector (l/flow :x) (l/flow :y) (l/flow :sampler)))
+              (init (m/sample vector (l/flow :x) (l/flow :y) (l/flow :sampler)))
               (l/transfer :main
                 (l/transferred :x :x1)
                 (l/transferred :y :y1)

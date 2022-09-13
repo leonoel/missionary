@@ -4,14 +4,13 @@
             [missionary.core :as m]
             [clojure.test :as t]))
 
+(lc/defword init [flow] [flow (l/spawn :main (l/spawned :x) (l/spawned :y))])
+
 (t/deftest simple-with-cancel
   (t/is (= []
           (lc/run
             (l/store
-              (m/zip vector (l/flow :x) (l/flow :y))
-              (l/spawn :main
-                (l/spawned :x)
-                (l/spawned :y))
+              (init (m/zip vector (l/flow :x) (l/flow :y)))
               (l/notify :x)
               (l/notify :y
                 (l/notified :main))
@@ -27,10 +26,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/zip vector (l/flow :x) (l/flow :y))
-              (l/spawn :main
-                (l/spawned :x)
-                (l/spawned :y))
+              (init (m/zip vector (l/flow :x) (l/flow :y)))
               (l/terminate :x
                 (l/cancelled :y))
               (l/terminate :y
@@ -43,10 +39,7 @@
  (t/is (= []
          (lc/run
            (l/store
-             (m/zip (fn [_ _] (lc/event :f) (throw err)) (l/flow :x) (l/flow :y))
-             (l/spawn :main
-               (l/spawned :x)
-               (l/spawned :y))
+             (init (m/zip (fn [_ _] (lc/event :f) (throw err)) (l/flow :x) (l/flow :y)))
              (l/notify :x)
              (l/notify :y
                (l/notified :main))

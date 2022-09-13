@@ -4,7 +4,7 @@
             [missionary.core :as m]
             [clojure.test :as t]))
 
-(lc/defword latest-init [flow]
+(lc/defword init [flow]
   [flow (l/spawn :main
           (l/spawned :x (l/notify :x))
           (l/spawned :y (l/notify :y))
@@ -14,7 +14,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (latest-init (m/latest vector (l/flow :x) (l/flow :y)))
+              (init (m/latest vector (l/flow :x) (l/flow :y)))
               (l/transfer :main
                 (l/transferred :x :x1)
                 (l/transferred :y :y1))
@@ -27,7 +27,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (latest-init (m/latest vector (l/flow :x) (l/flow :y)))
+              (init (m/latest vector (l/flow :x) (l/flow :y)))
               (l/transfer :main
                 (l/transferred :x :x1)
                 (l/transferred :y :y1))
@@ -38,19 +38,11 @@
                 (l/transferred :x :x2))
               (l/check #{[:x2 :y1]}))))))
 
-(comment
-  (defn- -ps [] (println :lolcat.stack (:stack (lc/context identity))))
-  (def ps (concat (lc/push -ps) (lc/call 0) (lc/drop 0)))
-  (defn- ->r [v] (lc/context update :words (fnil conj []) v))
-  (defn- r-> [] (lc/context update :words pop))
-  (def >r (concat (lc/push ->r) (lc/call 1) (lc/drop 0) (lc/drop 0)))
-  (def r> (concat (lc/push r->) (lc/call 0))))
-
 (t/deftest consecutive-notify-causes-retransfer
   (t/is (= []
           (lc/run
             (l/store
-              (latest-init (m/latest vector (l/flow :x) (l/flow :y)))
+              (init (m/latest vector (l/flow :x) (l/flow :y)))
               (l/transfer :main
                 (l/transferred :x (l/notify :x) :x1)
                 (l/transferred :x :x2)
@@ -63,7 +55,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (latest-init (m/latest vector (l/flow :x) (l/flow :y)))
+              (init (m/latest vector (l/flow :x) (l/flow :y)))
               (l/crash :main
                 (l/crashed :x err)
                 (l/cancelled :x)
@@ -78,7 +70,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (latest-init (m/latest (fn [& _] (lc/event :f) (throw err)) (l/flow :x) (l/flow :y)))
+              (init (m/latest (fn [& _] (lc/event :f) (throw err)) (l/flow :x) (l/flow :y)))
               (l/crash :main
                 (l/transferred :x :x1)
                 (l/transferred :y :y1)
@@ -91,7 +83,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (latest-init (m/latest vector (l/flow :x) (l/flow :y)))
+              (init (m/latest vector (l/flow :x) (l/flow :y)))
               (l/transfer :main
                 (l/transferred :x :x1)
                 (l/transferred :y :y1))

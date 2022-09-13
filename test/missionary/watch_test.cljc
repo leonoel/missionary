@@ -5,14 +5,14 @@
             [clojure.test :as t])
   (:import [missionary Cancelled]))
 
+(lc/defword init [flow] [flow (l/spawn :main (l/notified :main))])
+
 (t/deftest watch
   (let [!a (atom 0)]
     (t/is (= []
             (lc/run
               (l/store
-                (m/watch !a)
-                (l/spawn :main
-                  (l/notified :main))
+                (init (m/watch !a))
                 (l/transfer :main)
                 (l/check #{0})
                 #(swap! !a inc)
@@ -32,9 +32,7 @@
     (t/is (= []
             (lc/run
               (l/store
-                (m/watch !a)
-                (l/spawn :main
-                  (l/notified :main))
+                (init (m/watch !a))
                 (l/cancel :main)
                 (l/crash :main
                   (l/terminated :main))
