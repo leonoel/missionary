@@ -40,7 +40,7 @@
               (group-transfer-new "b1")
               (group-transfer "b2")
               (group-transfer "b3")
-              (group-transfer "a3")
+              (group-transfer "a2")
               (l/cancel :main
                 (l/cancelled :input))
               (l/terminate :input
@@ -76,24 +76,22 @@
             (l/store
               (init (m/group-by key-fn (l/flow :input)))
               (group-transfer-new "a1")
-              (group-transfer-new "b1")
-              (l/cancel :a
-                (l/notified :a))
-              (l/crash :a
-                (l/terminated :a))
-              (l/check (partial instance? Cancelled))
-              ;; after termination, if a new value comes in, we get a new flow
-              (group-transfer-new "a2")
               (l/notify :input
-                (l/transferred :input "a3")
+                (l/transferred :input "a2")
                 (l/notified :a))
               (l/cancel :a
+                ;; we haven't consumed "a2", so a new group is created
+                ;; the new group will allow transferring "a2"
                 (l/notified :main))
               (l/crash :a
                 (l/terminated :a))
               (l/check (partial instance? Cancelled))
-              (l/transfer :main)
-              (l/check (comp #{:a} first))
-              ;; why no transfer of input here?
+              ;; we don't transfer input yet, because of backpressure on "a2"
               (l/notify :input)
-              )))))
+              (l/transfer :main)
+              (spawn-group :a (l/notified :a))
+              ;; we finally transfer "a2", releasing backpressure
+              (l/transfer :a
+                (l/transferred :input "a3")
+                (l/notified :a))
+              (l/check #{"a2"}))))))
