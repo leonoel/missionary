@@ -1,7 +1,9 @@
 (ns lolcat.lib
-  (:require [lolcat.core :as lc]
-            [clojure.test :as t])
-  #?(:clj (:import (clojure.lang IFn IDeref))))
+  (:require
+   [clojure.string :as s]
+   [clojure.test :as t]
+   [lolcat.core :as lc])
+  #?(:clj (:import (clojure.lang IDeref IFn))))
 
 (lc/defword compose [& insts] insts)
 
@@ -28,7 +30,11 @@
   (t/is (= [[1 2] 3] (lc/run [1 2 3] (bi pop peek)))))
 
 (lc/defword check [pred]
-  [#(when-not (pred %) (throw (ex-info "Predicate failed." {:predicate pred :value %})))
+  [#(when-not (pred %)
+      (let [words (:words (lc/context identity))]
+        (throw (ex-info (str "Predicate failed in:\n\n" (s/join " " words)
+                          "\n\n\t" pred "\n\ndidn't match\n\n\t" % "\n")
+                 {:predicate pred :value % :words (:words (lc/context identity))}))))
    (lc/call 1) (lc/drop 0)])
 
 (lc/defword change [f & args]

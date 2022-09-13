@@ -47,7 +47,9 @@
            (catch Throwable e
              (is (throw e))))
          (doseq [^Thread t (.getAndSet timers nil)]
-           (.interrupt t))))
+           (.interrupt t))
+         ;; make test runners happy
+         (is (= nil nil))))
 
      :cljs
      (cljs.test/async done

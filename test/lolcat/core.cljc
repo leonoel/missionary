@@ -8,6 +8,7 @@ instructions, which can be either :
 * any other value
 "} lolcat.core
   (:refer-clojure :exclude [drop])
+  (:require [clojure.string :as s] #?(:clj [clojure.main :refer [demunge]]))
   #?(:cljs (:require-macros lolcat.core)))
 
 (defrecord Copy [offset])
@@ -31,6 +32,22 @@ instructions, which can be either :
      (let [e (:error (context identity))]
        (context dissoc :error) (throw e))))
 
+(defn- fn-name
+  [f]
+  #?(:clj
+      (as-> (str f) $
+            (demunge $)
+            (or (re-find #"(.+)--\d+@" $)
+                (re-find #"(.+)@" $))
+            (last $))
+     :cljs
+      (as-> (.-name f) $
+            (demunge $)
+            (s/split $ #"/")
+            ((juxt butlast last) $)
+            (update $ 0 #(s/join "." %))
+            (s/join "/" $))))
+
 (def ^:no-doc eval-inst!
   (letfn [(stack-copy [stack offset]
             (let [index (- (count stack) offset)]
@@ -43,7 +60,7 @@ instructions, which can be either :
             (let [f (dec (count stack))
                   r (try (constantly (apply (peek stack) (subvec stack (- f arity) f)))
                          (catch #?(:clj Throwable :cljs :default) e
-                           #(throw (ex-info "Call failure."
+                           #(throw (ex-info (str "Call failure in:\n\n" (s/join " " words) "\n")
                                      {:arity arity
                                       :stack stack
                                       :words words} e))))
@@ -72,7 +89,7 @@ instructions, which can be either :
 
         (instance? Word inst)
         (let [{:keys [f args]} inst]
-          (context update :words conj f)
+          (context update :words conj (fn-name f))
           (run! eval-inst! (apply f args))
           (context update :words pop))
 
