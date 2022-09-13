@@ -1,4 +1,4 @@
-(ns missionary.test.eduction-test
+(ns missionary.eduction-test
   (:require [lolcat.core :as lc]
             [lolcat.lib :as l]
             [missionary.core :as m]

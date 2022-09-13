@@ -1,4 +1,4 @@
-(ns missionary.test.cp-test
+(ns missionary.cp-test
   (:require [lolcat.core :as lc]
             [lolcat.lib :as l]
             [missionary.core :refer [cp ?<]]

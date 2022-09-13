@@ -1,4 +1,4 @@
-(ns missionary.test.buffer-test
+(ns missionary.buffer-test
   (:require [lolcat.core :as lc]
             [lolcat.lib :as l]
             [missionary.core :as m]
