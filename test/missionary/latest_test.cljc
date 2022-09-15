@@ -91,3 +91,23 @@
               (l/terminate :x)
               (l/terminate :y
                 (l/terminated :main)))))))
+
+(t/deftest input-change-from-combinator
+  (t/is (= []
+          (lc/run
+            (l/store
+              (m/latest lc/event (l/flow :x))
+              (l/spawn :main
+                (l/spawned :x (l/notify :x))
+                (l/notified :main))
+              (l/transfer :main
+                (l/transferred :x :x1)
+                (l/compose
+                  (l/check #{:x1})
+                  (l/notify :x)
+                  nil)
+                (l/transferred :x :x2)
+                (l/compose
+                  (l/check #{:x2})
+                  :res))
+              (l/check #{:res}))))))

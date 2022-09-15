@@ -51,14 +51,16 @@ public interface Latest {
             try {
                 ps.value = ps;
                 if (args == null) throw new Error("Undefined continuous flow.");
-                boolean pass = x != ps;
-                do {
+                for(;;) {
                     int i = Heap.dequeue(dirty);
                     Object p = args[i];
                     args[i] = ((IDeref) inputs[i]).deref();
-                    if (pass) pass = clojure.lang.Util.equiv(p, args[i]);
-                } while (0 < Heap.size(dirty));
-                if (!pass) x = Util.apply(c, args);
+                    x = x == ps ? x : clojure.lang.Util.equiv(p, args[i]) ? x : ps;
+                    if (0 == Heap.size(dirty)) if (x == ps) {
+                        x = Util.apply(c, args);
+                        if (0 == Heap.size(dirty)) break;
+                    } else break;
+                }
             } catch (Throwable e) {
                 kill(ps);
                 while (0 < Heap.size(dirty)) try {

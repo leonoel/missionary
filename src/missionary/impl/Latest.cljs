@@ -22,14 +22,19 @@
         x (.-value ps)
         x (try (set! (.-value ps) ps)
                (when (nil? args) (throw (js/Error. "Undefined continuous flow.")))
-               (loop [pass (not (identical? x ps))]
+               (loop [x x]
                  (let [i (h/dequeue dirty)
                        p (aget args i)]
                    (aset args i @(aget inputs i))
-                   (let [pass (if pass (= p (aget args i)) pass)]
-                     (if (pos? (h/size dirty))
-                       (recur pass)
-                       (if pass x (.apply c nil args))))))
+                   (let [x (if (identical? x ps)
+                             x (if (= p (aget args i))
+                                 x ps))]
+                     (if (zero? (h/size dirty))
+                       (if (identical? x ps)
+                         (let [x (.apply c nil args)]
+                           (if (zero? (h/size dirty))
+                             x (recur x))) x)
+                       (recur x)))))
                (catch :default e
                  (kill ps)
                  (loop []
