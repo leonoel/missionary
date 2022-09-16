@@ -39,7 +39,6 @@
                 (l/cancelled :a)
                 (l/cancelled :b)
                 (l/failed :main #{err2})))))))
-
 (t/deftest f-throws
   (t/is (= []
           (lc/run
@@ -48,4 +47,19 @@
               (l/start :main (l/started :a) (l/started :b))
               (l/succeed :a 1)
               (l/succeed :b 2
+                (l/failed :main #{err1})))))))
+
+(t/deftest cancel
+  (t/is (= []
+          (lc/run
+            (l/store
+              (m/join vector (l/task :a) (l/task :b))
+              (l/start :main (l/started :a) (l/started :b))
+              (l/cancel :main
+                (l/cancelled :a)
+                (l/cancelled :b))
+              (l/fail :a err1
+                (l/cancelled :a)
+                (l/cancelled :b))
+              (l/fail :b err2
                 (l/failed :main #{err1})))))))
