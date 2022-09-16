@@ -8,6 +8,7 @@
 (lc/defword compose [& insts] insts)
 
 (lc/defword dup [] [(lc/copy 0)])
+(lc/defword over [] [(lc/copy 1)])
 (lc/defword lose [] [(lc/drop 0)])
 
 (lc/defword swap [] [(lc/copy 1) (lc/drop 2)])
