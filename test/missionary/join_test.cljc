@@ -39,3 +39,13 @@
                 (l/cancelled :a)
                 (l/cancelled :b)
                 (l/failed :main #{err2})))))))
+
+(t/deftest f-throws
+  (t/is (= []
+          (lc/run
+            (l/store
+              (m/join (fn [_ _] (throw err1)) (l/task :a) (l/task :b))
+              (l/start :main (l/started :a) (l/started :b))
+              (l/succeed :a 1)
+              (l/succeed :b 2
+                (l/failed :main #{err1})))))))
