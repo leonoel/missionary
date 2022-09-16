@@ -3,7 +3,7 @@
             [lolcat.lib :as l]
             [missionary.core :as m]
             [clojure.test :as t])
-  (:import [clojure.lang ExceptionInfo]))
+  #?(:clj (:import [clojure.lang ExceptionInfo])))
 
 (t/deftest success
   (t/is (= []
