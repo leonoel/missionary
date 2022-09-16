@@ -149,3 +149,30 @@
   (-> [{}]
     (into insts)
     (conj (lc/drop 0))))
+
+;; TASKS
+
+(lc/defword start [id & events]
+  [(fn [v] (lc/event [:succeeded id v])) (swap)
+   (fn [v] (lc/event [:failed id v])) (swap)
+   (apply lc/call 2 events)
+   (insert id)])
+
+(lc/defword succeeded [id pred] [(bi peek pop) (check #{[:succeeded id]}) (check pred) nil])
+(lc/defword failed [id pred] [(bi peek pop) (check #{[:failed id]}) (check pred) nil])
+
+(defn task [id]
+  (fn [s f] (lc/event [:ran id #((case % :succeed s :fail f) %2)])))
+
+(lc/defword started [id & insts]
+  (-> [(bi peek pop) (check #{[:ran id]}) (insert id)]
+    (into insts)
+    (conj #(lc/event [:cancelled id]))))
+
+(lc/defword succeed [id v & events]
+  (-> [(dup) (change get id) :succeed (swap)]
+    (conj v (swap) (apply lc/call 2 events) (lose))))
+
+(lc/defword fail [id v & events]
+  (-> [(dup) (change get id) :fail (swap)]
+    (conj v (swap) (apply lc/call 2 events) (lose))))
