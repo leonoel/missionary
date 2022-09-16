@@ -162,10 +162,10 @@
 (lc/defword failed [id pred] [(bi peek pop) (check #{[:failed id]}) (check pred) nil])
 
 (defn task [id]
-  (fn [s f] (lc/event [:ran id #((case % :succeed s :fail f) %2)])))
+  (fn [s f] (lc/event [:started id #((case % :succeed s :fail f) %2)])))
 
 (lc/defword started [id & insts]
-  (-> [(bi peek pop) (check #{[:ran id]}) (insert id)]
+  (-> [(bi peek pop) (check #{[:started id]}) (insert id)]
     (into insts)
     (conj #(lc/event [:cancelled id]))))
 
