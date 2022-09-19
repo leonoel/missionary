@@ -62,6 +62,9 @@
 (lc/defword transfer [id & events]
   (apply transfer-with deref id events))
 
+(lc/defword transfer= [v id & events]
+  [(apply transfer id events) (check (partial = v))])
+
 (defn capture-error [f & args]
   ((try (let [x (apply f args)] #(throw (ex-info "Not an error." {:value x})))
         (catch #?(:clj Throwable :cljs :default) e #(do e)))))

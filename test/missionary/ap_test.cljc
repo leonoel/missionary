@@ -5,10 +5,8 @@
             [clojure.test :as t])
   (:import [missionary Cancelled]))
 
-;; ?=
+;; amb
 ;; amb=
-;; amb>
-;; cancellation
 
 (t/deftest ?
   (t/is (= []
@@ -62,4 +60,24 @@
                 (l/notified :main))
               (l/crash :main)
               (l/check #{err})
+              (l/terminate :input (l/terminated :main)))))))
+
+(t/deftest ?>-parallel
+  (t/is (= []
+          (lc/run
+            (l/store
+              (m/ap (m/?> 3 (l/flow :input)))
+              (l/spawn :main (l/spawned :input))
+              (l/notify :input
+                (l/transferred :input 1)
+                (l/notified :main))
+              (l/notify :input (l/transferred :input 2))
+              (l/notify :input (l/transferred :input 3))
+              (l/notify :input)
+              (l/transfer= 1 :main
+                (l/transferred :input 4)
+                (l/notified :main))
+              (l/transfer= 2 :main (l/notified :main))
+              (l/transfer= 3 :main (l/notified :main))
+              (l/transfer= 4 :main)
               (l/terminate :input (l/terminated :main)))))))
