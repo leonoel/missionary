@@ -114,3 +114,24 @@
             (l/terminate :child2)
             (l/terminate :parent
               (l/terminated :main)))))))
+
+(deftest input-change-from-continuation
+  (is (= []
+        (lc/run
+          (l/store
+            (cp (lc/event (?< (l/flow :input))))
+            (l/spawn :main
+              (l/notified :main))
+            (l/transfer :main
+              (l/spawned :input
+                (l/notify :input))
+              (l/transferred :input :x1)
+              (l/compose
+                (l/check #{:x1})
+                (l/notify :input)
+                nil)
+              (l/transferred :input :x2)
+              (l/compose
+                (l/check #{:x2})
+                :result))
+            (l/check #{:result}))))))

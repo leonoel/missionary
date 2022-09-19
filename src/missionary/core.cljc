@@ -174,9 +174,6 @@ milliseconds). Otherwise, input is cancelled and the process succeeds with `valu
 (defn ^:no-doc sp-run [c s f]
   (Sequential/run c s f))
 
-(defn ^:no-doc cp-run [c n t]
-  (Continuous/run c n t))
-
 (defn ^:no-doc ap-run [c n t]
   (Ambiguous/run c n t))
 
@@ -284,9 +281,9 @@ Returns a continuous flow evaluating `body` (in an implicit `do`) in a new evalu
 each subsequent fork. Body evaluation can be forked by a continuous flow with `?<`. Evaluation and transfers are lazy,
 driven by downstream sampling. Cancelling an `cp` process interrupts its root evaluation context.
 "} cp [& body]
-  `(partial
+  `(Continuous/flow
      (cr {switch unpark}
-       ~@body) cp-run))
+       ~@body)))
 
 
 (defmacro
