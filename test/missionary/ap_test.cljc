@@ -2,11 +2,7 @@
   (:require [lolcat.core :as lc]
             [lolcat.lib :as l]
             [missionary.core :as m]
-            [clojure.test :as t])
-  (:import [missionary Cancelled]))
-
-;; amb
-;; amb=
+            [clojure.test :as t]))
 
 (t/deftest ?
   (t/is (= []
@@ -81,3 +77,33 @@
               (l/transfer= 3 :main (l/notified :main))
               (l/transfer= 4 :main)
               (l/terminate :input (l/terminated :main)))))))
+
+(lc/defword handle [evt v] [(l/check #{evt}) v])
+
+(t/deftest amb
+  (t/is (= []
+          (lc/run
+            (l/store
+              (m/ap (m/amb (lc/event :first) (lc/event :second)))
+              (l/spawn :main
+                (handle :first 1)
+                (l/notified :main))
+              (l/transfer= 1 :main
+                (handle :second 2)
+                (l/notified :main))
+              (l/transfer= 2 :main
+                (l/terminated :main)))))))
+
+(t/deftest amb=
+  (t/is (= []
+          (lc/run
+            (l/store
+              (m/ap (m/amb= (lc/event :e) (lc/event :e)))
+              (l/spawn :main
+                (handle :e 1)
+                (l/notified :main)
+                (handle :e 1))
+              (l/transfer= 1 :main
+                (l/notified :main))
+              (l/transfer= 1 :main
+                (l/terminated :main)))))))
