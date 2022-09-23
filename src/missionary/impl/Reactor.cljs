@@ -82,10 +82,10 @@
   (let [ps (.-process pub)
         cur (.-subscriber ps)]
     (set! (.-subscriber ps) pub)
+    (set! (.-value pub) error)
     (try
       (set! (.-value pub) @(.-iterator pub))
       (catch :default e
-        (set! (.-value pub) error)
         (when (identical? ps (.-error ps))
           (set! (.-error ps) e)
           (let [k (.-kill ps)]
@@ -215,16 +215,12 @@
       (failer n t (js/Error. "Subscription failure : not in reactor context."))
       (if (identical? sub (.-boot ps))
         (failer n t (js/Error. "Subscription failure : not a subscriber."))
-        (if (identical? sub pub)
-          (failer n t (js/Error. "Subscription failure : self subscription."))
-          (if (lt (.-ranks sub) (.-ranks pub))
-            (failer n t (js/Error. "Subscription failure : forward subscription."))
-            (let [s (->Subscription n t sub pub nil nil)]
-              (if (identical? (.-active pub) pub)
-                (hook s)
-                (do (when (pos? (.-pending pub))
-                      (set! (.-pending pub) (inc (.-pending pub))))
-                    (n))) s)))))))
+        (let [s (->Subscription n t sub pub nil nil)]
+          (if (identical? (.-active pub) pub)
+            (hook s)
+            (do (when (pos? (.-pending pub))
+                  (set! (.-pending pub) (inc (.-pending pub))))
+                (n))) s)))))
 
 (defn unsubscribe [^Subscription s]
   (let [sub (.-subscriber s)
@@ -308,17 +304,12 @@
                 (when-not (identical? pub (.-next t))
                   (recur pub)))))) true))))
 
-(def boot
-  (reify IDeref
-    (-deref [_]
-      ((.-value (.-boot current))))))
-
 (def zero (object-array 0))
 
 (defn run [init s f]
   (let [ps (->Process s f nil nil nil nil nil nil nil nil nil nil)
         k (->Publisher ps kill nil 0 0 false false false false nil nil nil nil nil nil)
-        b (->Publisher ps boot zero 0 0 false false false init nil nil nil nil nil nil)]
+        b (->Publisher ps (reify IDeref (-deref [_] (init))) zero 0 0 false false false nil nil nil nil nil nil nil)]
     (set! (.-kill ps) k)
     (set! (.-boot ps) b)
     (set! (.-error ps) ps)

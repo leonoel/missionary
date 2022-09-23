@@ -178,10 +178,10 @@ public interface Reactor {
         Process ps = pub.process;
         Publisher cur = ps.subscriber;
         ps.subscriber = pub;
+        pub.value = error; // detect reentrant push, TODO improve error reporting
         try {
             pub.value = ((IDeref) pub.iterator).deref();
         } catch (Throwable e) {
-            pub.value = error;
             if (ps.error == ps) {
                 ps.error = e;
                 Publisher k = ps.kill;
@@ -322,10 +322,6 @@ public interface Reactor {
             return failer(n, t, new Error("Subscription failure : not in reactor context."));
         if (sub == ps.boot)
             return failer(n, t, new Error("Subscription failure : not a subscriber."));
-        if (sub == pub)
-            return failer(n, t, new Error("Subscription failure : self subscription."));
-        if (lt(sub.ranks, pub.ranks))
-            return failer(n, t, new Error("Subscription failure : forward subscription."));
         Subscription s = new Subscription();
         s.notifier = n;
         s.terminator = t;
@@ -431,8 +427,6 @@ public interface Reactor {
         return true;
     };
 
-    Object boot = (IDeref) () -> ((IFn) current.get().boot.value).invoke();
-
     int[] zero = new int[0];
 
     static Object run(IFn init, IFn success, IFn failure) {
@@ -443,10 +437,9 @@ public interface Reactor {
         k.ranks = null;
         k.value = false;
         Publisher b = new Publisher();
-        b.iterator = boot;
+        b.iterator = (IDeref) init::invoke;
         b.process = ps;
         b.ranks = zero;
-        b.value = init;
         ps.kill = k;
         ps.boot = b;
         ps.error = ps;
