@@ -61,7 +61,7 @@ public interface Continuous {
 
     }
 
-    class Choice implements Fiber {
+    class Choice {
         Process process;
         Choice prev;
         Choice next;
@@ -73,31 +73,6 @@ public interface Continuous {
         boolean busy;
         boolean done;
         int rank;
-
-        @Override
-        public Object park(IFn task) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Object swich(IFn flow) {
-            return suspend(process, flow);
-        }
-
-        @Override
-        public Object fork(Number par, IFn flow) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Object check() {
-            return clojure.lang.Util.sneakyThrow(new Cancelled("Process cancelled."));
-        }
-
-        @Override
-        public Object unpark() {
-            return push(this);
-        }
     }
 
     class Flow extends AFn {
@@ -129,21 +104,18 @@ public interface Continuous {
         if (!ch.process.live) ((IFn) ch.iterator).invoke();
     }
 
-    static void done(Choice ch) {
+    static void detach(Choice ch) {
         Process ps = ch.process;
-        ps.pending--;
         Choice p = ch.prev;
-        if (p != null) {
-            ch.prev = null;
-            if (ch == p) ps.choice = null; else {
-                Choice n = ch.next;
-                n.prev = p;
-                p.next = n;
-                if (ch == ps.choice) ps.choice = p;
-                else if (p == ps.choice) top(n);
-            }
-            ch.next = null;
+        ch.prev = null;
+        if (ch == p) ps.choice = null; else {
+            Choice n = ch.next;
+            n.prev = p;
+            p.next = n;
+            if (ch == ps.choice) ps.choice = p;
+            else if (p == ps.choice) top(n);
         }
+        ch.next = null;
     }
 
     static Choice link(Choice x, Choice y) {
@@ -158,7 +130,7 @@ public interface Continuous {
         }
     }
 
-    static void detach(Choice ch) {
+    static void prune(Choice ch) {
         Choice c;
         Process ps = ch.process;
         while ((c = ps.choice) != ch) {
@@ -178,28 +150,13 @@ public interface Continuous {
         Fiber f = fiber.get();
         fiber.set(ps);
         try {
-            for(;;) if ((r = (cr = (IFn) cr.invoke(identity)).invoke()) instanceof Choice) {
-                Choice ch = (Choice) r;
-                Choice p = ps.choice;
-                ps.choice = ch;
-                if (p == null) {
-                    ch.prev = ch;
-                    ch.next = ch;
-                    top(ch);
-                } else {
-                    Choice n = p.next;
-                    ch.prev = p;
-                    ch.next = n;
-                    p.next = ch;
-                    n.prev = ch;
-                    ch.rank = p.rank + 1;
-                }
-                ch.backtrack = cr;
-            } else break;
+            for(;;) if ((r = (cr = (IFn) cr.invoke(identity)).invoke()) == ps)
+                ps.choice.backtrack = cr;
+            else break;
         } catch (Throwable e) {
             Choice ch = ps.choice;
             if (ch != null) {
-                detach(ch = ch.next);
+                prune(ch = ch.next);
                 ch.prev = null;
                 ch.next = null;
                 ps.choice = null;
@@ -212,50 +169,32 @@ public interface Continuous {
         return r;
     }
 
-    static Object resume(Choice ch, Object x) {
-        IFn cr = ch.backtrack;
-        if (ch.prev == null) {
-            Object r;
-            Fiber f = fiber.get();
-            fiber.set(ch);
-            try {
-                for(;;) if ((r = (cr = (IFn) cr.invoke(identity)).invoke()) instanceof Choice) {
-                    ch = (Choice) r;
-                    ch.backtrack = cr;
-                    ((IFn) ch.iterator).invoke();
-                    fiber.set(ch);
-                } else break;
-            } catch (Throwable e) {}
-            fiber.set(f);
-            return x;
-        } else {
-            detach(ch);
-            return step(ch.process, cr);
-        }
-    }
-
-    static void ack(Choice ch) {
-        if (ch.done) done(ch);
-        else ch.busy = false;
-    }
-
     static Object pull(Choice ch, Object x) {
+        Process ps = ch.process;
+        IFn bt = ch.backtrack;
         try {
-            Object r;
             for(;;) {
-                r = ((IDeref) ch.iterator).deref();
-                if (ch.busy) break;
-                else if (ch.done) break;
-                else ch.busy = true;
+                Object r = ((IDeref) ch.iterator).deref();
+                if (ch.busy) if (clojure.lang.Util.equiv(ch.value, ch.value = r)) {
+                    ch.busy = false;
+                    return x;
+                } else {
+                    prune(ch);
+                    return step(ps, bt);
+                } else if (ch.done) if (clojure.lang.Util.equiv(ch.value, ch.value = r)) {
+                    ps.pending--;
+                    detach(ch);
+                    return x;
+                } else {
+                    prune(ch);
+                    return step(ps, bt);
+                } else ch.busy = true;
             }
-            if (clojure.lang.Util.equiv(ch.value, ch.value = r)) {
-                ack(ch);
-                return x;
-            } else return resume(ch, x);
         } catch (Throwable e) {
             ch.iterator = null;
             ch.value = e;
-            return resume(ch, x);
+            prune(ch);
+            return step(ps, bt);
         }
     }
 
@@ -278,20 +217,15 @@ public interface Continuous {
         return prev == null ? heap : heap == null ? prev : link(heap, prev);
     }
 
-    static IFn barrier(Process ps) {
-        return ps.pending == 0 ? ps.terminator : null;
-    }
-
     static IFn ready(Choice ch) {
         Process ps = ch.process;
-        Choice d = ps.dirty;
-        if (ch.busy = !ch.busy) if (ch.done) {
-            done(ch);
-            return ps.value == ps ? null : barrier(ps);
+        Choice d;
+        for(;;) if (ch.busy = !ch.busy) if (ch.done) {
+            if (ch.prev != null) detach(ch);
+            return --ps.pending == 0 ? ps.value == ps ? null : ps.terminator : null;
         } else if (ch.prev == null) {
-            pull(ch, null);
-            return ps.value == ps ? null : barrier(ps);
-        } else if (d == null) {
+            Util.discard(ch.iterator);
+        } else if ((d = ps.dirty) == null) {
             ps.dirty = ch;
             return ps.value == ps ? null : ps.notifier;
         } else {
@@ -300,9 +234,10 @@ public interface Continuous {
         } else return null;
     }
 
-    static Choice suspend(Process ps, IFn f) {
+    static Object suspend(Process ps, IFn f) {
         Choice ch = new Choice();
         ch.busy = true;
+        ch.value = ps;
         ch.process = ps;
         ch.iterator = f.invoke(new AFn() {
             @Override
@@ -324,27 +259,22 @@ public interface Continuous {
                 return cb == null ? null : cb.invoke();
             }
         });
-        ps.pending++;
-        if (ch.busy = !ch.busy) if (ch.done) {
-            done(ch);
-            throw new Error("Undefined continuous flow.");
-        } else try {
-            Object r;
-            for(;;) {
-                r = ((IDeref) ch.iterator).deref();
-                if (ch.busy) break;
-                else if (ch.done) break;
-                else ch.busy = true;
-            }
-            ch.value = r;
-        } catch (Throwable e) {
-            ch.iterator = null;
-            ch.value = e;
+        Choice p = ps.choice;
+        if (p == null) {
+            ch.prev = ch;
+            ch.next = ch;
+            top(ch);
         } else {
-            ((IFn) ch.iterator).invoke();
-            throw new Error("Undefined continuous flow.");
+            Choice n = p.next;
+            ch.prev = p;
+            ch.next = n;
+            p.next = ch;
+            n.prev = ch;
+            ch.rank = p.rank + 1;
         }
-        return ch;
+        ps.choice = ch;
+        ps.pending++;
+        return ps;
     }
 
     static void kill(Process ps) {
@@ -358,10 +288,42 @@ public interface Continuous {
     }
 
     static Object push(Choice ch) {
-        ack(ch);
-        return ch.iterator == null
-                ? clojure.lang.Util.sneakyThrow((Throwable) ch.value)
-                : ch.value;
+        Process ps = ch.process;
+        Object x = ch.value;
+        if (x == ps) if (ch.busy = !ch.busy) if (ch.done) {
+            ps.pending--;
+            detach(ch);
+            throw new Error("Undefined continuous flow.");
+        } else try {
+            for(;;) {
+                x = ((IDeref) ch.iterator).deref();
+                if (ch.busy) {
+                    ch.busy = false;
+                    break;
+                } else if (ch.done) {
+                    ps.pending--;
+                    detach(ch);
+                    break;
+                } else ch.busy = true;
+            }
+            return ch.value = x;
+        } catch (Throwable e) {
+            if (ch.done) {
+                ps.pending--;
+                detach(ch);
+            } else ch.busy = false;
+            throw e;
+        } else {
+            detach(ch);
+            ((IFn) ch.iterator).invoke();
+            throw new Error("Undefined continuous flow.");
+        } else {
+            if (ch.done) {
+                ps.pending--;
+                detach(ch);
+            } else ch.busy = false;
+            return ch.iterator == null ? clojure.lang.Util.sneakyThrow((Throwable) x) : x;
+        }
     }
 
     static Object transfer(Process ps) {
@@ -377,10 +339,13 @@ public interface Continuous {
             } else x = step(ps, (IFn) x);
             while ((d = ps.dirty) != null) {
                 ps.dirty = dequeue(d);
-                x = pull(d, x);
+                if (d.prev == null) {
+                    Util.discard(d.iterator);
+                    ready(d);
+                } else x = pull(d, x);
             }
             ps.value = x;
-            cb = barrier(ps);
+            cb = ps.pending == 0 ? ps.terminator : null;
         }
         if (cb != null) cb.invoke();
         return ps.notifier == null ? clojure.lang.Util.sneakyThrow((Throwable) x) : x;
