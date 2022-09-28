@@ -273,6 +273,7 @@ evaluation can be parked by a task with `?`. Cancelling a `sp` process interrupt
      (cr {park unpark}
        ~@body) sp-run))
 
+(defn ^:no-doc cp* [cr] (Continuous/flow cr))
 
 (defmacro
   ^{:arglists '([& body])
@@ -281,7 +282,7 @@ Returns a continuous flow evaluating `body` (in an implicit `do`) in a new evalu
 each subsequent fork. Body evaluation can be forked by a continuous flow with `?<`. Evaluation and transfers are lazy,
 driven by downstream sampling. Cancelling an `cp` process interrupts its root evaluation context.
 "} cp [& body]
-  `(Continuous/flow
+  `(cp*
      (cr {switch unpark}
        ~@body)))
 
