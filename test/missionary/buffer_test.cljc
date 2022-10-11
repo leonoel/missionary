@@ -21,9 +21,9 @@
                 ;; buffer full, no more transfer
                 )
               (l/transfer :main
-                (l/notified :main)
                 ;; buffer has space and we were notified, so we transfer again
-                (l/transferred :input 2))
+                (l/transferred :input 2)
+                (l/notified :main))
               (l/check #{0})
               (l/transfer :main
                 (l/notified :main))
@@ -67,7 +67,12 @@
               (l/spawn :main
                 (l/spawned :input))
               (l/notify :input
-                (l/crashed :input err)
+                (l/transferred :input 0)
                 (l/notified :main))
+              (l/notify :input
+                (l/crashed :input err))
+              (l/transfer :main
+                (l/notified :main))
+              (l/check #{0})
               (l/crash :main)
               (l/check #{err}))))))

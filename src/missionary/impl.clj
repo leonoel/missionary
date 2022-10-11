@@ -4,7 +4,7 @@
     (org.reactivestreams Publisher)
     (missionary.impl
       Enumerate RaceJoin Sleep Never Thunk Dataflow Mailbox Rendezvous Semaphore
-      Transform Pub Sub Buffer Zip)))
+      Transform Pub Sub Zip)))
 
 (defn nop [])
 
@@ -50,9 +50,6 @@
 
 (defmethod print-method Transform [o w] (print-object o w))
 (defn transform [x f n t] (Transform. x f n t))
-
-(defmethod print-method Buffer [o w] (print-object o w))
-(defn buffer [c f n t] (Buffer. c f n t))
 
 (defmethod print-method Zip [o w] (print-object o w))
 (defn zip [c fs n t] (Zip. c fs n t))

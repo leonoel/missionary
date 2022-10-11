@@ -2,7 +2,7 @@
   (:refer-clojure :exclude [reduce reductions eduction group-by])
   (:require [missionary.impl :as i]
             [cloroutine.core :refer [cr] :include-macros true])
-  (:import (missionary.impl Reduce Reductions GroupBy Relieve Latest Sample Reactor Fiber Sequential Ambiguous Continuous Watch Observe))
+  (:import (missionary.impl Reduce Reductions GroupBy Relieve Latest Sample Reactor Fiber Sequential Ambiguous Continuous Watch Observe Buffer))
   #?(:cljs (:require-macros [missionary.core :refer [sp ap cp amb amb> amb= ! ? ?> ?< ?? ?! ?= holding reactor]])))
 
 
@@ -651,7 +651,7 @@ Example :
 Returns a discrete flow producing values emitted by given discrete `flow`, accumulating upstream overflow up to `capacity` items.
 "} buffer [c f]
   (assert (pos? c) "Non-positive buffer capacity.")
-  (fn [n t] (i/buffer c f n t)))
+  (Buffer/flow c f))
 
 
 (def
