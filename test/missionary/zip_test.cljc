@@ -50,3 +50,20 @@
                (l/cancelled :x)
                (l/cancelled :y))
              (l/check #{err}))))))
+
+(t/deftest doesnt-overconsume
+  (t/is (= []
+          (lc/run
+            (l/store
+              (init (m/zip vector (l/flow :x) (l/flow :y)))
+              (l/notify :x)
+              (l/notify :y
+                (l/notified :main))
+              (l/transfer :main
+                (l/transferred :x (l/terminate :x) :x1)
+                (l/transferred :y (l/notify :y) :y1)
+                ;; the next transfer shouldn't happen
+                ;; zip already has all the data it needs and won't produce more since `:x` terminated
+                (l/transferred :y :y2)
+                (l/cancelled :y))
+              (l/check #{[:x1 :y1]}))))))
