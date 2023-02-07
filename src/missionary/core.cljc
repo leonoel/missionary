@@ -3,7 +3,7 @@
   (:require [cloroutine.core :refer [cr] :include-macros true])
   (:import (missionary.impl Reduce Reductions GroupBy Relieve Latest Sample Reactor Fiber Sequential Ambiguous
                             Continuous Watch Observe Buffer Rendezvous Dataflow Mailbox Semaphore RaceJoin Sleep
-                            Never Seed Eduction Zip #?(:clj Thunk) #?(:clj Pub) #?(:clj Sub))
+                            Never Seed Eduction Zip Propagator Memo Stream Signal #?(:clj Thunk) #?(:clj Pub) #?(:clj Sub))
            #?(:clj org.reactivestreams.Publisher))
   #?(:cljs (:require-macros [missionary.core :refer [sp ap cp amb amb> amb= ! ? ?> ?< ?? ?! ?= holding reactor]])))
 
@@ -792,29 +792,125 @@ Example :
 (def
   ^{:static true
     :arglists '([boot])
-    :doc "
-Experimental. To be deprecated in favor of [lazy publishers](https://github.com/leonoel/missionary/issues/70)
-"} reactor-call (fn [i] (fn [s f] (Reactor/run i s f))))
+    :doc "Use lazy publishers instead - memo, stream, signal."}
+  reactor-call (fn [i] (fn [s f] (Reactor/run i s f))))
 
 
 (defmacro
   ^{:arglists '([& body])
-    :doc "
-Calls `reactor-call` with a function evaluating given `body` in an implicit `do`.
-"} reactor [& body] `(reactor-call (fn [] ~@body)))
+    :doc "Use lazy publishers instead - memo, stream, signal."}
+  reactor [& body] `(reactor-call (fn [] ~@body)))
 
 
 (def
   ^{:static true
     :arglists '([flow])
-    :doc "
-Spawns a discrete publisher from given flow, see `reactor-call`.
-"} stream! (fn [f] (Reactor/publish f false)))
+    :doc "Use stream instead."}
+  stream! (fn [f] (Reactor/publish f false)))
 
 
 (def
   ^{:static true
     :arglists '([flow])
+    :doc "Use signal instead."}
+  signal! (fn [f] (Reactor/publish f true)))
+
+
+(def
+  ^{:static true
+    :arglists '([t])
     :doc "
-Spawns a continuous publisher from given flow, see `reactor-call`.
-"} signal! (fn [f] (Reactor/publish f true)))
+Returns a new publisher memoizing the result of task `t`.
+
+As long as the task process did not terminate spontaneously, running the publisher as a task registers a subscription.
+Cancelling a subscription deregisters it. A new task process is spawned when the first subscription is registered and
+cancelled when the last subscription is deregistered. After the task process terminated spontaneously, every registered
+subscription and any subsequent subscription terminates immediately with the process result.
+
+Example :
+```clojure
+(require '[missionary.core :as m])
+
+(def fib42
+  (m/memo
+    (m/via m/cpu
+      (println \"Computing 42th fibonacci...\")
+      ((fn fib [n]
+         (case n
+           0 0
+           1 1
+           (+ (fib (dec n))
+              (fib (dec (dec n))))))
+       42))))
+
+(fib42 prn prn)                 ;; expensive computation starts here, result is eventually printed
+(fib42 prn prn)                 ;; expensive computation doesn't run again, previous result is reused
+```
+"} memo (fn [t] (Propagator/publisher (Memo/make t))))
+
+
+(def
+  ^{:static true
+    :arglists '([f])
+    :doc "
+Returns a new publisher distributing successive items emitted by flow `f` while collecting subscribers' backpressure.
+
+As long as the flow process did not terminate spontaneously, running the publisher as a flow registers a subscription.
+Cancelling a subscription deregisters it. A new flow process is spawned when the first subscription is registered and
+cancelled when the last subscription is deregistered. After the flow process has terminated spontaneously, every
+registered subscription and any subsequent subscription terminates immediately after consuming the current item, if any.
+
+Example :
+```clojure
+(require '[missionary.core :as m])
+
+(def >clock                                               ;; A shared process emitting `nil` every second.
+  (m/stream
+    (m/ap
+      (loop [i 0]
+        (m/amb
+          (m/? (m/sleep 1000))
+          (recur (inc i)))))))
+
+(defn counter [r _] (inc r))                              ;; A reducing function counting the number of items.
+
+((m/join vector
+   (m/reduce counter 0 (m/eduction (take 3) >clock))
+   (m/reduce counter 0 (m/eduction (take 4) >clock)))
+ prn prn)                                                 ;; After 4 seconds, prints [3 4]
+```
+"} stream (fn [f] (Propagator/publisher (Stream/make f))))
+
+
+(def
+  ^{:static true
+    :arglists '([f])
+    :doc "
+Returns a new publisher exposing latest item emitted by flow `f` regardless of subscribers' sampling rate.
+
+As long as the flow process did not terminate spontaneously, running the publisher as a flow registers a subscription.
+Cancelling a subscription deregisters it. A new flow process is spawned when the first subscription is registered and
+cancelled when the last subscription is deregistered. After the flow process has terminated spontaneously, every
+registered subscription and any subsequent subscription terminates immediately after consuming the latest item.
+
+Example :
+```clojure
+(require '[missionary.core :as m])
+
+(def !input (atom 1))
+(def main                                      ; this is a reactive computation, the println reacts to input changes
+  (let [<x (m/signal (m/watch !input))         ; continuous signal reflecting atom state
+        <y (m/signal (m/latest + <x <x))]      ; derived computation, diamond shape
+    (m/reduce (fn [_ x] (prn x)) nil <y)))     ; discrete effect performed on successive values
+
+(def dispose!
+  (main
+    #(prn ::success %)
+    #(prn ::crash %)))                         ; prints 2
+(swap! !input inc)                             ; prints 4
+                                               ; Each change on the input propagates atomically through the graph.
+                                               ; 3 is an inconsistent state and is therefore not computed.
+
+(dispose!)                                     ; cleanup, deregisters the atom watch
+```
+"} signal (fn [f] (Propagator/publisher (Signal/make f))))

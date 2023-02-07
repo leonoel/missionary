@@ -46,16 +46,21 @@
 (lc/defword insert [id]
   [id (swap) assoc (lc/call 3)])
 
-(lc/defword spawn [id & events]                             ;; [{} flow]
-  [#(lc/event [:notified id]) (swap)                        ;; [{} notifier flow]
-   #(lc/event [:terminated id]) (swap)                      ;; [{} notifier terminator flow]
+(lc/defword lookup [id]
+  [(lc/copy 0) (change get id)])
+
+(lc/defword perform [id & events]                             ;; [{} flow]
+  [(fn ([] (lc/event [:notified id]))
+     ([r] (lc/event [:succeeded id r]))) (swap)             ;; [{} notifier flow]
+   (fn ([] (lc/event [:terminated id]))
+     ([r] (lc/event [:failed id r]))) (swap)                ;; [{} notifier terminator flow]
    (apply lc/call 2 events)                                 ;; [{} iterator]
    (insert id)])                                            ;; [{id iterator}]
 
+(def spawn perform)
+
 (defn transfer-with [f id & events]                         ;; [{id iterator}]
-  [(lc/copy 0)                                              ;; [{id iterator} {id iterator}]
-   id get                                                   ;; [{id iterator} {id iterator} id get]
-   (lc/call 2)                                              ;; [{id iterator} iterator]
+  [(lookup id)                                              ;; [{id iterator} iterator]
    f                                                        ;; [{id iterator} iterator f]
    (apply lc/call 1 events)])                               ;; [{id iterator} result]
 
@@ -73,15 +78,13 @@
   (apply transfer-with (partial capture-error deref) id events))
 
 (lc/defword signal [id arg & events]
-  [(lc/copy 0)
-   (change get id)
+  [(lookup id)
    arg (swap)
    (apply lc/call 1 events)
    (lc/drop 0)])
 
 (lc/defword signal-error [id arg & events]
-  [(lc/copy 0)
-   (change get id)
+  [(lookup id)
    arg capture-error
    (apply lc/call 2 events)
    (lc/drop 0)])
@@ -92,10 +95,11 @@
 (lc/defword terminate [id & events]
   [(apply signal id true events)])
 
+(defn cancel! [ps] (ps))
+
 (lc/defword cancel [id & events]
-  [(lc/copy 0)
-   (change get id)
-   (apply lc/call 0 events)
+  [(lookup id) cancel!
+   (apply lc/call 1 events)
    (lc/drop 0)])
 
 (lc/defword notified [id & insts]
@@ -141,6 +145,20 @@
 (lc/defword detected [id & insts]
   (into [(lc/copy 0) (change peek) (swap) (change pop) (check #{[:detected id]})] insts))
 
+(defn effect [l r]
+  (lc/event
+    [:performed
+     (fn
+       ([flag] ((if flag r l)))
+       ([flag value] ((if flag r l) value)))]))
+
+(lc/defword performed [id & insts]
+  (-> [(bi peek pop)
+       (check #{[:performed]})
+       (insert id)]
+    (into insts)
+    (conj (->It id))))
+
 (defn flow [id]
   (fn [n t] (lc/event [:spawned id #((if % t n))])))
 
@@ -153,6 +171,9 @@
   (-> [{}]
     (into insts)
     (conj (lc/drop 0))))
+
+(defn run [& insts]
+  (assert (= [] (lc/run (apply store insts)))))
 
 ;; TASKS
 
@@ -171,12 +192,12 @@
 (lc/defword started [id & insts]
   (-> [(bi peek pop) (check #{[:started id]}) (insert id)]
     (into insts)
-    (conj #(lc/event [:cancelled id]))))
+    (conj (->It id))))
 
 (lc/defword succeed [id v & events]
-  (-> [(dup) (change get id) :succeed (swap)]
+  (-> [(lookup id) :succeed (swap)]
     (conj v (swap) (apply lc/call 2 events) (lose))))
 
 (lc/defword fail [id v & events]
-  (-> [(dup) (change get id) :fail (swap)]
+  (-> [(lookup id) :fail (swap)]
     (conj v (swap) (apply lc/call 2 events) (lose))))
