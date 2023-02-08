@@ -49,13 +49,6 @@
                 (l/terminated :main)))))))
 
 (def err (ex-info "" {}))
-(lc/defword input-crash [e]
-  [(l/notify :input
-     (l/crashed :input e)
-     (l/cancelled :input)
-     (l/notified :main))
-   (l/crash :main)
-   (l/check #{e})])
 
 (t/deftest input-crashes
   (t/is (= []
@@ -64,10 +57,16 @@
               (init (m/group-by key-fn (l/flow :input)))
               (group-transfer-new "a1")
               (group-transfer-new "b1")
-              (input-crash err)
-              (l/terminate :input
+              (group-transfer "a2")
+              (l/notify :input
+                (l/crashed :input err)
+                (l/cancelled :input)
                 (l/terminated :a)
                 (l/terminated :b)
+                (l/notified :main))
+              (l/crash :main)
+              (l/check #{err})
+              (l/terminate :input
                 (l/terminated :main)))))))
 
 (t/deftest group-is-cancelled
@@ -136,3 +135,73 @@
               (l/notify :input
                 (l/transferred :input "f")
                 (l/notified :group-f)))))))
+
+(t/deftest inhibit-group-cancel-after-main-cancel
+  (t/is (= []
+          (lc/run
+            (l/store
+              (m/group-by identity (l/flow :input))
+              (l/spawn :main (l/spawned :input))
+
+              (l/notify :input
+                (l/transferred :input "a")
+                (l/notified :main))
+              (l/transfer :main)
+              val (lc/call 1)
+              (l/spawn :group
+                (l/notified :group))
+
+              (l/cancel :main
+                (l/cancelled :input))
+              (l/notify :input)
+
+              (l/cancel :group)
+              (l/transfer :group
+                (l/crashed :input err)
+                (l/terminated :group)
+                (l/notified :main))
+              (l/check #{"a"})
+
+              (l/terminate :input)
+              (l/crash :main
+                (l/terminated :main))
+              (l/check #{err}))))))
+
+(t/deftest inhibit-group-cancel-after-input-termination
+  (t/is (= []
+          (lc/run
+            (l/store
+              (m/group-by identity (l/flow :input))
+              (l/spawn :main (l/spawned :input))
+
+              (l/notify :input
+                (l/transferred :input "a")
+                (l/notified :main))
+
+              (l/transfer :main)
+              val (lc/call 1)
+              (l/spawn :group
+                (l/notified :group))
+
+              (l/transfer :group)
+              (l/check #{"a"})
+
+              (l/terminate :input
+                (l/terminated :group)
+                (l/terminated :main))
+
+              (l/cancel :group)
+              (l/cancel :main))))))
+
+(t/deftest many-groups
+  (t/is (= []
+          (lc/run
+            (l/store
+              (m/group-by key-fn (l/flow :input))
+              (l/spawn :main (l/spawned :input))
+              (group-transfer-new "a1")
+              (group-transfer-new "b1")
+              (group-transfer-new "c1")
+              (group-transfer-new "d1")
+              (group-transfer-new "e1")
+              (group-transfer-new "f1"))))))
