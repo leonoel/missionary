@@ -95,3 +95,44 @@
                 (l/transferred :input "a3")
                 (l/notified :a))
               (l/check #{"a2"}))))))
+
+(t/deftest group-collision
+  (t/is (= []
+          (lc/run
+            (l/store
+              (m/group-by identity (l/flow :input))
+              (l/spawn :main (l/spawned :input))
+
+              (l/notify :input
+                (l/transferred :input "e")
+                (l/notified :main))
+              (l/transfer :main)
+              val (lc/call 1)
+              (l/spawn :group-e (l/notified :group-e))
+              (l/transfer :group-e)
+              (l/check #{"e"})
+
+              (l/notify :input
+                (l/transferred :input "i")
+                (l/notified :main))
+              (l/transfer :main)
+              val (lc/call 1)
+              (l/spawn :group-i (l/notified :group-i))
+              (l/transfer :group-i)
+              (l/check #{"i"})
+
+              (l/notify :input
+                (l/transferred :input "f")
+                (l/notified :main))
+              (l/transfer :main)
+              val (lc/call 1)
+              (l/spawn :group-f (l/notified :group-f))
+              (l/transfer :group-f)
+              (l/check #{"f"})
+
+              (l/cancel :group-e
+                (l/notified :group-e))
+
+              (l/notify :input
+                (l/transferred :input "f")
+                (l/notified :group-f)))))))

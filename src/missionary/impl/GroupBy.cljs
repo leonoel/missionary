@@ -57,31 +57,31 @@
                (insert (set! (.-process g) p) i g))))
          n) t)) g))
 
-(defn delete [^Process p ^number i ^number m]
-  (set! (.-load p) (dec (.-load p)))
-  (let [table (.-table p)]
-    (loop [j i]
-      (aset table j nil)
-      (let [i (step j m)]
-        (when-some [h (aget table i)]
-          (when-not (== i (bit-and (hash (.-key h)) m))
-            (aset table j h)
-            (recur i)))))))
-
 (defn cancel [^Group g]
   (when-some [^Process p (.-process g)]
     (when (.-live p)
       (set! (.-process g) nil)
       (let [k (.-key g)
             table (.-table p)
-            m (dec (alength table))]
-        (loop [i (bit-and (hash k) m)]
-          (if (identical? (aget table i) g)
-            (do (delete p i m)
-                ((if (= k (.-key p))
-                   (.-notifier p)
-                   (.-notifier g))))
-            (recur (step i m))))))))
+            m (dec (alength table))
+            i (loop [i (bit-and (hash k) m)]
+                (if (identical? g (aget table i))
+                  i (recur (step i m))))]
+        (aset table i nil)
+        (set! (.-load p) (dec (.-load p)))
+        (loop [i (step i m)]
+          (when-some [h (aget table i)]
+            (let [j (bit-and (hash (.-key h)) m)]
+              (when-not (== i j)
+                (aset table i nil)
+                (loop [j j]
+                  (if (nil? (aget table j))
+                    (aset table j h)
+                    (recur (step j m))))))
+            (recur (step i m))))
+        ((if (= k (.-key p))
+           (.-notifier p)
+           (.-notifier g)))))))
 
 (defn transfer [^Process p]
   (when-some [cb (loop []

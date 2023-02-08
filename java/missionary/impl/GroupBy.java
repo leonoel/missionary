@@ -106,15 +106,6 @@ public interface GroupBy {
         return g;
     }
 
-    static void delete(Process p, int i, int m) {
-        p.load--;
-        Group[] table = p.table;
-        Group h;
-        int j;
-        while ((table[j = i] = null) != (h = table[i = step(i, m)]) &&
-                (clojure.lang.Util.hasheq(h.key) & m) != i) table[j] = h;
-    }
-
     static void cancel(Group g) {
         Process p = g.process;
         if (p != null) if (p.live) {
@@ -126,7 +117,17 @@ public interface GroupBy {
                 int m = table.length - 1;
                 int i = clojure.lang.Util.hasheq(k) & m;
                 while (table[i] != g) i = step(i, m);
-                delete(p, i, m);
+                table[i] = null;
+                p.load--;
+                Group h;
+                while ((h = table[i = step(i, m)]) != null) {
+                    int j = clojure.lang.Util.hasheq(h.key) & m;
+                    if (i != j) {
+                        table[i] = null;
+                        while (table[j] != null) j = step(j, m);
+                        table[j] = h;
+                    }
+                }
                 cb = clojure.lang.Util.equiv(p.key, k) ? p.notifier : g.notifier;
             }
             cb.invoke();
