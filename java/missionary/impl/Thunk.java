@@ -8,9 +8,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
-public final class Thunk extends AFn {
+public interface Thunk {
 
-    static final class Cpu extends Thread {
+    final class Cpu extends Thread {
         static final AtomicInteger ID = new AtomicInteger();
         static final Executor POOL = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors(), r -> {
             Thread t = new Thread(r, "missionary cpu-" + ID.getAndIncrement());
@@ -19,7 +19,7 @@ public final class Thunk extends AFn {
         });
     }
 
-    static final class Blk extends Thread {
+    final class Blk extends Thread {
         static final AtomicInteger ID = new AtomicInteger();
         static final Executor POOL = Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "missionary blk-" + ID.getAndIncrement());
@@ -28,55 +28,66 @@ public final class Thunk extends AFn {
         });
     }
 
-    static final AtomicReferenceFieldUpdater<Thunk, Object> STATE =
-            AtomicReferenceFieldUpdater.newUpdater(Thunk.class, Object.class, "state");
+    Executor cpu = Cpu.POOL;
+    Executor blk = Blk.POOL;
 
-    IFn thunk;
-    IFn success;
-    IFn failure;
+    AtomicReferenceFieldUpdater<Process, Object> STATE =
+            AtomicReferenceFieldUpdater.newUpdater(Process.class, Object.class, "state");
 
-    volatile Object state = this;
+    final class Process extends AFn {
+        static {
+            Util.printDefault(Process.class);
+        }
 
-    public Thunk(Executor e, IFn t, IFn s, IFn f) {
-        thunk = t;
-        success = s;
-        failure = f;
-        e.execute(this);
+        IFn thunk;
+        IFn success;
+        IFn failure;
+
+        volatile Object state = this;
+
+        @Override
+        public void run() {
+            Thread t = Thread.currentThread();
+            for(;;) {
+                Object x = state;
+                if (x == null) {
+                    t.interrupt();
+                    break;
+                } else if (STATE.compareAndSet(this, x, t)) break;
+            }
+            try {
+                success.invoke(thunk.invoke());
+            } catch (Throwable error) {
+                failure.invoke(error);
+            }
+            cancel(this);
+            Thread.interrupted();
+        }
+
+        @Override
+        public Object invoke() {
+            cancel(this);
+            return null;
+        }
     }
 
-    @Override
-    public void run() {
-        Thread t = Thread.currentThread();
+    static void cancel(Process ps) {
         for(;;) {
-            Object x = state;
-            if (x == null) {
-                t.interrupt();
-                break;
-            } else if (STATE.compareAndSet(this, x, t)) break;
-        }
-        try {
-            success.invoke(thunk.invoke());
-        } catch (Throwable error) {
-            failure.invoke(error);
-        }
-        invoke();
-        Thread.interrupted();
-    }
-
-    @Override
-    public Object invoke() {
-        for(;;) {
-            Object x = state;
+            Object x = ps.state;
             if (x == null) break;
-            if (STATE.compareAndSet(this, x, null)) {
-                if (x != this) ((Thread) x).interrupt();
+            if (STATE.compareAndSet(ps, x, null)) {
+                if (x != ps) ((Thread) x).interrupt();
                 break;
             }
         }
-        return null;
     }
 
-    public static Executor cpu = Cpu.POOL;
-    public static Executor blk = Blk.POOL;
-
+    static Process run(Executor e, IFn t, IFn s, IFn f) {
+        Process ps = new Process();
+        ps.thunk = t;
+        ps.success = s;
+        ps.failure = f;
+        e.execute(ps);
+        return ps;
+    }
 }

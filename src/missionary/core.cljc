@@ -1,21 +1,23 @@
 (ns missionary.core
   (:refer-clojure :exclude [reduce reductions eduction group-by])
-  (:require [missionary.impl :as i]
-            [cloroutine.core :refer [cr] :include-macros true])
-  (:import (missionary.impl Reduce Reductions GroupBy Relieve Latest Sample Reactor Fiber Sequential Ambiguous Continuous Watch Observe Buffer))
+  (:require [cloroutine.core :refer [cr] :include-macros true])
+  (:import (missionary.impl Reduce Reductions GroupBy Relieve Latest Sample Reactor Fiber Sequential Ambiguous
+                            Continuous Watch Observe Buffer Rendezvous Dataflow Mailbox Semaphore RaceJoin Sleep
+                            Never Seed Eduction Zip #?(:clj Thunk) #?(:clj Pub) #?(:clj Sub))
+           #?(:clj org.reactivestreams.Publisher))
   #?(:cljs (:require-macros [missionary.core :refer [sp ap cp amb amb> amb= ! ? ?> ?< ?? ?! ?= holding reactor]])))
 
 
 (def
   ^{:static true
     :doc "A `java.util.concurrent.Executor` optimized for blocking evaluation."}
-  blk i/blk)
+  blk #?(:clj Thunk/blk))
 
 
 (def
   ^{:static true
     :doc "A `java.util.concurrent.Executor` optimized for non-blocking evaluation."}
-  cpu i/cpu)
+  cpu #?(:clj Thunk/cpu))
 
 
 (defn
@@ -30,7 +32,10 @@ Not supported on clojurescript.
 (? (via-call blk read-line))
 ;; reads a line from stdin and returns it
 ```
-"} via-call [e t] (fn [s f] (i/thunk e t s f)))
+"} via-call [e t]
+  (fn [s f]
+    #?(:clj (Thunk/run e t s f)
+       :cljs (throw (js/Error. "Unsupported operation.")))))
 
 
 (defmacro
@@ -64,7 +69,7 @@ Example :
 ```
 "} sleep
   ([d] (sleep d nil))
-  ([d x] (fn [s f] (i/sleep d x s f))))
+  ([d x] (fn [s f] (Sleep/run d x s f))))
 
 
 (defn
@@ -85,8 +90,8 @@ Example :
 #_=> [1 2]            ;; 1 second later
 ```
 "} join
-  ([c] (fn [s _] (s (c)) i/nop))
-  ([c & ts] (fn [s f] (i/race-join false c ts s f))))
+  ([c] (fn [s _] (s (c)) #(do)))
+  ([c & ts] (fn [s f] (RaceJoin/run false c ts s f))))
 
 
 (defn ^{:static true :no-doc true} race-failure [& errors]
@@ -111,8 +116,8 @@ Example :
 #_=> 1                 ;; 1 second later
 ```
 "} race
-  ([] (fn [_ f] (f (race-failure)) i/nop))
-  ([& ts] (fn [s f] (i/race-join true race-failure ts s f))))
+  ([] (fn [_ f] (f (race-failure)) #(do)))
+  ([& ts] (fn [s f] (RaceJoin/run true race-failure ts s f))))
 
 
 (defn
@@ -130,7 +135,13 @@ Returns a task always succeeding with result of given `task` wrapped in a zero-a
     :doc "
 Returns a task running given `task` completing with a zero-argument function and completing with the result of this function call.
 "} absolve [task]
-  (fn [s f] (task (i/absolver s f) f)))
+  (fn [s f]
+    (task
+      (fn [t]
+        (try (s (t))
+             (catch #?(:clj Throwable
+                       :cljs :default) e
+               (f e)))) f)))
 
 
 (def
@@ -308,7 +319,7 @@ evaluation context.
     :doc "
 Inhibits cancellation signal of given `task`.
 "} compel [task]
-  (fn [s f] (task s f) i/nop))
+  (fn [s f] (task s f) #(do)))
 
 
 (defn
@@ -321,7 +332,7 @@ A dataflow variable is a function implementing `assign` on 1-arity and `deref` o
 
 Cancelling a `deref` task makes it fail immediately.
 ```
-"} dfv [] (i/dataflow))
+"} dfv [] (Dataflow/make))
 
 
 (defn
@@ -361,7 +372,7 @@ Example : an actor is a mailbox associated with a process consuming messages.
 (counter prn)                                             ;; prints 1
 (counter prn)                                             ;; prints 2
 ```
-"} mbx [] (i/mailbox))
+"} mbx [] (Mailbox/make))
 
 
 (defn
@@ -395,7 +406,7 @@ Example : producer / consumer stream communication
 
 (? (join {} (iterator stream (range 100)) (reducer + 0 stream)))      ;; returns 4950
 ```
-"} rdv [] (i/rendezvous))
+"} rdv [] (Rendezvous/make))
 
 
 (defn
@@ -432,7 +443,7 @@ Example : dining philosophers
 ```
 "} sem
   ([] (sem 1))
-  ([n] (i/semaphore n)))
+  ([n] (Semaphore/make n)))
 
 
 (defmacro
@@ -447,7 +458,7 @@ Example : dining philosophers
   ^{:static true
     :doc "
 A task never succeeding. Cancelling makes it fail immediately."}
-  (fn [_ f] (i/never f)))
+  (fn [_ f] (Never/run f)))
 
 
 (def
@@ -460,7 +471,7 @@ Example :
 (? (reduce conj none))
 #_=> []
 ```
-"} none (fn [_ t] (t) i/nop))
+"} none (fn [_ t] (t) #(do)))
 
 
 (defn
@@ -469,7 +480,7 @@ Example :
     :doc "
 Returns a discrete flow producing values from given `collection`. Cancelling before having reached the end makes the flow fail immediately.
 "} seed [coll]
-  (fn [n t] (i/enumerate coll n t)))
+  (fn [n t] (Seed/run coll n t)))
 
 (def ^{:deprecated true
        :doc "Alias for `seed`"}
@@ -571,7 +582,7 @@ Example :
 "} eduction
   (fn e
     ([f] f)
-    ([x f] (fn [n t] (i/transform x f n t)))
+    ([x f] (fn [n t] (Eduction/run x f n t)))
     ([x y & zs] (apply e (comp x y) zs))))
 
 (def ^{:deprecated true
@@ -609,7 +620,9 @@ Example :
     :arglists '([flow])
     :doc "
 Returns a `org.reactivestreams.Publisher` running given discrete `flow` on each subscription.
-"} publisher [flow] (i/publisher flow))
+"} publisher [f]
+  #?(:clj (reify Publisher (subscribe [_ s] (Pub. f s)))
+     :cljs (throw (js/Error. "Unsupported operation."))))
 
 
 (defn
@@ -617,7 +630,9 @@ Returns a `org.reactivestreams.Publisher` running given discrete `flow` on each 
     :arglists '([pub])
     :doc "
 Returns a discrete flow subscribing to given `org.reactivestreams.Publisher`.
-"} subscribe [pub] (fn [n t] (i/subscribe pub n t)))
+"} subscribe [pub]
+  #?(:clj (fn [n t] (Sub. pub n t))
+     :cljs (throw (js/Error. "Unsupported operation."))))
 
 
 (def
@@ -735,7 +750,7 @@ Example :
           (m/reduce conj)))
 #_=> [[1 :a] [2 :b] [3 :c]]
 ```
-"} zip [c f & fs] (fn [n t] (i/zip c (cons f fs) n t)))
+"} zip [c f & fs] (fn [n t] (Zip/run c (cons f fs) n t)))
 
 (defn
   ^{:static true

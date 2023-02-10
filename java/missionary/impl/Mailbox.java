@@ -7,64 +7,80 @@ import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
 import static missionary.impl.Util.NOP;
 
-public final class Mailbox extends AFn implements Event.Emitter {
+public interface Mailbox {
 
-    static final AtomicReferenceFieldUpdater<Mailbox, Object> STATE =
-            AtomicReferenceFieldUpdater.newUpdater(Mailbox.class, Object.class, "state");
+    AtomicReferenceFieldUpdater<Port, Object> STATE =
+            AtomicReferenceFieldUpdater.newUpdater(Port.class, Object.class, "state");
 
-    volatile Object state = null;
+    final class Port extends AFn implements Event.Emitter {
 
-    public Mailbox() {
+        volatile Object state = null;
+
+        @Override
+        public Object invoke(Object x) {
+            post(this, x);
+            return null;
+        }
+
+        @Override
+        public Object invoke(Object s, Object f) {
+            return fetch(this, (IFn) s, (IFn) f);
+        }
+
+        @Override
+        public void cancel(Event e) {
+            cancelFetch(this, e);
+        }
     }
-
-    @Override
-    public Object invoke(Object msg) {
+    static void post(Port port, Object x) {
         for(;;) {
-            Object s = state;
+            Object s = port.state;
             if (s instanceof IPersistentSet) {
                 Event e = (Event) RT.iter(s).next();
                 IPersistentSet set = (IPersistentSet) s;
-                if (STATE.compareAndSet(this, s, set.count() == 1 ? null : set.disjoin(e))) {
-                    e.success.invoke(msg);
+                if (STATE.compareAndSet(port, s, set.count() == 1 ? null : set.disjoin(e))) {
+                    e.success.invoke(x);
                     break;
                 }
-            } else if (STATE.compareAndSet(this, s, s == null ?
-                    PersistentVector.create(msg) : ((IPersistentVector) s).cons(msg))) break;
+            } else if (STATE.compareAndSet(port, s, s == null ?
+                    PersistentVector.create(x) : ((IPersistentVector) s).cons(x))) break;
         }
-        return null;
     }
 
-    @Override
-    public Object invoke(Object success, Object failure) {
+    static Object fetch(Port port, IFn success, IFn failure) {
         for(;;) {
-            Object s = state;
+            Object s = port.state;
             if (s instanceof IPersistentVector) {
                 IPersistentVector v = (IPersistentVector) s;
                 int n = v.count();
-                if (STATE.compareAndSet(this, s, n == 1 ? null :
+                if (STATE.compareAndSet(port, s, n == 1 ? null :
                         new APersistentVector.SubVector(null, v, 1, n))) {
-                    ((IFn) success).invoke(v.nth(0));
+                    success.invoke(v.nth(0));
                     return NOP;
                 }
             } else {
-                Event e = new Event(this, (IFn) success, (IFn) failure);
+                Event e = new Event(port, success, failure);
                 IPersistentSet set = (s == null) ? PersistentHashSet.EMPTY : (IPersistentSet) s;
-                if (STATE.compareAndSet(this, s, set.cons(e))) return e;
+                if (STATE.compareAndSet(port, s, set.cons(e))) return e;
             }
         }
     }
 
-    @Override
-    public void cancel(Event e) {
+    static void cancelFetch(Port port, Event e) {
         for(;;) {
-            Object s = state;
+            Object s = port.state;
             if (!(s instanceof IPersistentSet)) break;
             IPersistentSet set = (IPersistentSet) s;
             if (!(set.contains(e))) break;
-            if (STATE.compareAndSet(this, s, set.count() == 1 ? null : set.disjoin(e))) {
+            if (STATE.compareAndSet(port, s, set.count() == 1 ? null : set.disjoin(e))) {
                 e.failure.invoke(new Cancelled("Mailbox fetch cancelled."));
                 break;
             }
         }
     }
+
+    static Port make() {
+        return new Port();
+    }
 }
+

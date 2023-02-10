@@ -10,6 +10,11 @@ import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
 public final class Pub implements Subscription {
+
+    static {
+        Util.printDefault(Pub.class);
+    }
+
     static final AtomicIntegerFieldUpdater<Pub> PRESSURE =
             AtomicIntegerFieldUpdater.newUpdater(Pub.class, "pressure");
     static final AtomicLongFieldUpdater<Pub> REQUESTED =

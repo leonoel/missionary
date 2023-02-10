@@ -10,6 +10,10 @@ import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
 public final class Sub extends AFn implements IDeref, Subscriber<Object> {
 
+    static {
+        Util.printDefault(Sub.class);
+    }
+
     static final AtomicIntegerFieldUpdater<Sub> stateAtom =
             AtomicIntegerFieldUpdater.newUpdater(Sub.class, "state");
 

@@ -5,21 +5,34 @@ import missionary.Cancelled;
 
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
-public final class Never extends AFn {
-    static final AtomicReferenceFieldUpdater<Never, IFn> FAILURE =
-            AtomicReferenceFieldUpdater.newUpdater(Never.class, IFn.class, "failure");
+public interface Never {
+    AtomicReferenceFieldUpdater<Process, IFn> FAILURE =
+            AtomicReferenceFieldUpdater.newUpdater(Process.class, IFn.class, "failure");
 
-    volatile IFn failure;
+    final class Process extends AFn {
+        static {
+            Util.printDefault(Process.class);
+        }
 
-    public Never(IFn f) {
-        failure = f;
+        volatile IFn failure;
+
+        @Override
+        public Object invoke() {
+            cancel(this);
+            return null;
+        }
     }
 
-    @Override
-    public Object invoke() {
-        IFn f = failure;
-        if (f != null && FAILURE.compareAndSet(this, f, null))
+    static void cancel(Process ps) {
+        IFn f = ps.failure;
+        if (f != null && FAILURE.compareAndSet(ps, f, null))
             f.invoke(new Cancelled("Never cancelled."));
-        return null;
     }
+
+    static Process run(IFn f) {
+        Process ps = new Process();
+        ps.failure = f;
+        return ps;
+    }
+
 }

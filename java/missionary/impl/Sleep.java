@@ -5,13 +5,13 @@ import missionary.Cancelled;
 
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
-public final class Sleep extends AFn {
+public interface Sleep {
 
-    static final class Scheduler extends Thread {
-        static final Scheduler INSTANCE = new Scheduler();
+    AtomicReferenceFieldUpdater<Scheduler, IPersistentMap> PENDING =
+            AtomicReferenceFieldUpdater.newUpdater(Scheduler.class, IPersistentMap.class, "pending");
 
-        static final AtomicReferenceFieldUpdater<Scheduler, IPersistentMap> PENDING =
-                AtomicReferenceFieldUpdater.newUpdater(Scheduler.class, IPersistentMap.class, "pending");
+    final class Scheduler extends Thread {
+        static Scheduler INSTANCE = new Scheduler();
 
         volatile IPersistentMap pending = PersistentTreeMap.EMPTY;
 
@@ -19,45 +19,6 @@ public final class Sleep extends AFn {
             super("missionary scheduler");
             setDaemon(true);
             start();
-        }
-
-        void schedule(Sleep s) {
-            for(;;) {
-                IPersistentMap p = pending;
-                Object slot = p.valAt(s.time);
-                IPersistentMap n = p.assoc(s.time, slot == null ? s :
-                        slot instanceof Sleep ?
-                                PersistentHashSet.create(slot, s) :
-                                ((IPersistentSet) slot).cons(s));
-                if (PENDING.compareAndSet(this, p, n)) {
-                    if (((IMapEntry) n.iterator().next()).key().equals(s.time)
-                            && slot == null) interrupt();
-                    break;
-                }
-            }
-        }
-
-        void cancel(Sleep s) {
-            for(;;) {
-                IPersistentMap p = pending;
-                Object item = p.valAt(s.time);
-                if (item == null) break;
-                IPersistentMap n;
-                if (item instanceof Sleep) {
-                    if (item == s) n = p.without(s.time); else break;
-                } else {
-                    IPersistentSet ss = ((IPersistentSet) item).disjoin(s);
-                    if (ss.equals(item)) break; else n = p.assoc(s.time, ss);
-                }
-                if (PENDING.compareAndSet(this, p, n)) {
-                    s.failure.invoke(new Cancelled("Sleep cancelled."));
-                    break;
-                }
-            }
-        }
-
-        void trigger(Sleep s) {
-            s.success.invoke(s.payload);
         }
 
         @Override
@@ -71,8 +32,8 @@ public final class Sleep extends AFn {
                     if (0 < delay) sleep(delay);
                     else if (PENDING.compareAndSet(this, p, p.without(e.key()))) {
                         Object slot = e.val();
-                        if (slot instanceof Sleep) trigger((Sleep) slot);
-                        else for (Object x : (APersistentSet) slot) trigger((Sleep) x);
+                        if (slot instanceof Process) trigger((Process) slot);
+                        else for (Object x : (APersistentSet) slot) trigger((Process) x);
                     }
                 }
             } catch (InterruptedException _) {
@@ -81,22 +42,69 @@ public final class Sleep extends AFn {
         }
     }
 
-    Object payload;
-    IFn success;
-    IFn failure;
-    Long time;
+    final class Process extends AFn {
+        static {
+            Util.printDefault(Process.class);
+        }
 
-    public Sleep(long d, Object x, IFn s, IFn f) {
-        payload = x;
-        success = s;
-        failure = f;
-        time = System.currentTimeMillis() + d;
-        Scheduler.INSTANCE.schedule(this);
+        Object payload;
+        IFn success;
+        IFn failure;
+        Long time;
+
+        @Override
+        public Object invoke() {
+            cancel(this);
+            return null;
+        }
     }
 
-    @Override
-    public Object invoke() {
-        Scheduler.INSTANCE.cancel(this);
-        return null;
+    static void trigger(Process s) {
+        s.success.invoke(s.payload);
+    }
+
+    static void schedule(Process s) {
+        for(;;) {
+            IPersistentMap p = Scheduler.INSTANCE.pending;
+            Object slot = p.valAt(s.time);
+            IPersistentMap n = p.assoc(s.time, slot == null ? s :
+                    slot instanceof Process ?
+                            PersistentHashSet.create(slot, s) :
+                            ((IPersistentSet) slot).cons(s));
+            if (PENDING.compareAndSet(Scheduler.INSTANCE, p, n)) {
+                if (((IMapEntry) n.iterator().next()).key().equals(s.time)
+                        && slot == null) Scheduler.INSTANCE.interrupt();
+                break;
+            }
+        }
+    }
+
+    static void cancel(Process s) {
+        for(;;) {
+            IPersistentMap p = Scheduler.INSTANCE.pending;
+            Object item = p.valAt(s.time);
+            if (item == null) break;
+            IPersistentMap n;
+            if (item instanceof Process) {
+                if (item == s) n = p.without(s.time); else break;
+            } else {
+                IPersistentSet ss = ((IPersistentSet) item).disjoin(s);
+                if (ss.equals(item)) break; else n = p.assoc(s.time, ss);
+            }
+            if (PENDING.compareAndSet(Scheduler.INSTANCE, p, n)) {
+                s.failure.invoke(new Cancelled("Sleep cancelled."));
+                break;
+            }
+        }
+    }
+
+    static Process run(long d, Object x, IFn s, IFn f) {
+        Process ps = new Process();
+        ps.payload = x;
+        ps.success = s;
+        ps.failure = f;
+        ps.time = System.currentTimeMillis() + d;
+        schedule(ps);
+        return ps;
     }
 }
