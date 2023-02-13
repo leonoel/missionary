@@ -35,8 +35,7 @@
                 (m/rdv)
                 (give 1)
                 (l/cancel :give
-                  ;; fails on clj, runs on cljs. Docs say it should happen
-                  #_(l/failed :give (partial instance? Cancelled))))))))
+                  (l/failed :give (partial instance? Cancelled))))))))
   (t/testing "take"
     (t/is (= []
             (lc/run

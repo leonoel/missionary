@@ -21,7 +21,7 @@ public interface Rendezvous {
 
         @Override
         public Object invoke(Object x) {
-            return new Put(this, x);
+            return new Give(this, x);
         }
 
         @Override
@@ -35,27 +35,27 @@ public interface Rendezvous {
         }
     }
 
-    final class Put extends AFn implements Event.Emitter {
+    final class Give extends AFn implements Event.Emitter {
         static {
-            Util.printDefault(Put.class);
+            Util.printDefault(Give.class);
         }
 
         final Port port;
         final Object value;
 
-        Put(Port p, Object x) {
+        Give(Port p, Object x) {
             port = p;
             value = x;
         }
 
         @Override
         public Object invoke(Object s, Object f) {
-            return put(this, (IFn) s, (IFn) f);
+            return give(this, (IFn) s, (IFn) f);
         }
 
         @Override
         public void cancel(Event e) {
-            cancelPut(this, e);
+            cancelGive(this, e);
         }
     }
 
@@ -91,9 +91,23 @@ public interface Rendezvous {
         }
     }
 
-    static IFn put(Put p, IFn success, IFn failure) {
-        Port port = p.port;
-        Object value = p.value;
+    static void cancelGive(Give g, Event e) {
+        Port port = g.port;
+        for(;;) {
+            Object s = port.state;
+            if (!(s instanceof IPersistentMap)) break;
+            IPersistentMap map = (IPersistentMap) s;
+            if (!(map.containsKey(e))) break;
+            if (STATE.compareAndSet(port, s, map.count() == 1 ? null : map.without(e))) {
+                e.failure.invoke(new Cancelled("Rendez-vous give cancelled."));
+                break;
+            }
+        }
+    }
+
+    static IFn give(Give g, IFn success, IFn failure) {
+        Port port = g.port;
+        Object value = g.value;
         for(;;) {
             Object s = port.state;
             if (s instanceof IPersistentSet) {
@@ -105,23 +119,9 @@ public interface Rendezvous {
                     return NOP;
                 }
             } else {
-                Event e = new Event(p, success, failure);
+                Event e = new Event(g, success, failure);
                 IPersistentMap map = s == null ? PersistentHashMap.EMPTY : (IPersistentMap) s;
                 if (STATE.compareAndSet(port, s, map.assoc(e, value))) return e;
-            }
-        }
-    }
-
-    static void cancelPut(Put p, Event e) {
-        Port port = p.port;
-        for(;;) {
-            Object s = port.state;
-            if (!(s instanceof IPersistentSet)) break;
-            IPersistentSet set = (IPersistentSet) s;
-            if (!(set.contains(e))) break;
-            if (STATE.compareAndSet(port, s, set.count() == 1 ? null : set.disjoin(e))) {
-                e.failure.invoke(new Cancelled("Rendez-vous give cancelled."));
-                break;
             }
         }
     }
