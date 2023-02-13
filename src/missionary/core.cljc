@@ -752,6 +752,7 @@ Example :
 ```
 "} zip [c f & fs] (fn [n t] (Zip/run c (cons f fs) n t)))
 
+
 (defn
   ^{:static true
     :arglists '([kf >f])
@@ -787,101 +788,12 @@ Example :
 ```
 "} group-by [kf f] (fn [n t] (GroupBy/run kf f n t)))
 
+
 (def
   ^{:static true
     :arglists '([boot])
     :doc "
-Returns a task spawning a new reactor with given boot function. A reactor is a supervisor for a dynamic set of
-concurrent flow processes called publishers, allowing each of them to share its values to multiple subscribers while
-ensuring transactional propagation of their signaling events. A transaction is a point in time where several publishers
-are considered simultaneously active as a result of the propagation of an event through the subscription graph.
-
-During a transaction, a reactor may schedule and perform the following user actions :
-- calling the boot function
-- spawning a publisher
-- cancelling a publisher
-- transferring a publisher
-- signaling a subscription
-
-The reactor allows the following user events to happen as a side-effect of any of these actions :
-- create a new publisher
-- detach an existing publisher
-- spawn a subscription
-- cancel a subscription
-- transfer a subscription
-
-A publisher process is allowed to signal at any point in time. If the signaling event happens as a side-effect of a
-user space action of the publisher's reactor, it is considered part of the current transaction, otherwise a new
-transaction is run.
-
-
-
-
-Publishers are spawned with `stream!` and `signal!`, respectively for discrete and continuous flows. This operation is
-allowed only as a side-effect of the evaluation of the boot function, or as a side-effect of another publisher action.
-In the latter case, the publisher targeted by the action is the parent of the spawned publisher. Publishers thus form a
-tree where the top-level nodes are those spawned directly within the boot function. The post-order traversal of this
-tree, where siblings follow the birth order, defines a total order on publishers called the propagation order. The
-object returned represents the publisher identity and provides two operations :
-* discard the publisher, when called with no argument.
-* spawn a new subscription to this publisher, when used as a flow. This operation is allowed only as a side-effect of a
-publisher action, and only if the subscribed publisher comes before the subscriber publisher in the propagation order.
-This constraint effectively makes acyclic the publisher-subscription directed graph.
-
-When the reactor process is spawned, the boot function is immediately called with no argument and a new transaction is
-run. The reactor process terminates with the value returned by the boot function when a transaction completes with no
-running publisher. As long as at least one publisher is running, the reactor reacts to the following events, if
-triggered by the same thread as the one used to spawn the process :
-* cancelling the main process. All publishers are discarded along with those subsequently spawned.
-* notifying a publisher process. If the publisher is continuous, or if it is discrete and the previous dispatch has
-been acknowledged for every subscription, the publisher will be active in the current transaction or in the next one.
-* terminating a publisher process. The subscriptions of this publisher will terminate as soon as no transfer is pending.
-If the publisher is discrete, subsequent subscriptions transfer no value and terminate immediately. If the publisher is
-continuous, the last value is considered as the final value, subsequent subscriptions transfer this value and terminate
-immediately afterwards.
-* discarding a publisher. The publisher process is cancelled. If the publisher is continuous, transfers becomes eager.
-* transferring a subscription process. TODO
-* cancelling a subscription process. The next transfer fails with an instance of `missionary.Cancelled` and terminates
-immediately afterwards. If the publisher is discrete and a transfer was pending, the dispatch is acknowledged for this
-subscription.
-
-
-
-During a transaction, each publisher is allowed to notify its subscriptions, at most once. A publisher is active in a\ntransaction if it becomes ready to transfer synchronously on a notification of a subscription in the same transaction\n
-
-<TODO>
-Publisher emissions are grouped in propagation turns, where successive
-publishers of a given turn are strictly increasing.
-
- When a publisher becomes able to emit, it is compared to the
-publisher currently emitting to figure out whether the emission must happen on the current turn or on the next one.
-Cyclic reactions are possible and no attempt is made to prevent them, so care must be taken to ensure the propagation
-eventually stops. The dispatching mechanism depends on the nature of the publisher, discrete or continuous.
-* a stream is able to emit when its flow is ready to transfer and the backpressure of the previous emission has been
-collected from all of its subscriptions. On emission, a value is transferred from the flow and subscriptions are
-notified of the availability of this value. Until the end of the propagation turn, each new subscription to this stream
-will be immediately notified.
-* a signal always has a current value, thus each new subscription is immediately notified. It is able to emit when its
-flow is ready to transfer. On emission, its current value is marked as stale and its subscriptions are notified if not
-already. From this point, a sampling request from any of its subscriptions will trigger the transfer from the flow to
-refresh the current value. Subsequent sampling requests will reuse this memoized value until next emission.
-</TODO>
-
-
-When a stream completes, ...
-When a signal completes, its latest value is treated as the final state. Active subscriptions terminate after having
-transferred this value, subsequent subscriptions transfer only this value and complete afterwards.
-
-Calling a publisher as a zero-argument function cancels the underlying process. When cancelled, signals transfer eagerly.
-Cancelling a subscription before termination makes it fail immediately with `Cancelled`.
-
-When a reactor is cancelled, all of its active publishers are cancelled along with any one subsequently spawned.
-When a publisher crashes, all of its active subscriptions are cancelled along with any one subsequently spawned.
-If the boot function throws an exception, or any publisher crashes, the reactor is cancelled.
-
-A reactor terminates at the end of the first turn where every publisher flow is terminated, meaning no transfer can
-ever happen anymore. The task succeeds with the result of the boot function if no error happened, otherwise it fails
-with the first error.
+Experimental. To be deprecated in favor of [lazy publishers](https://github.com/leonoel/missionary/issues/70)
 "} reactor-call (fn [i] (fn [s f] (Reactor/run i s f))))
 
 
