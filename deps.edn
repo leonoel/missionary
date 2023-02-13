@@ -1,8 +1,8 @@
 {:deps
- {org.clojure/clojure {:mvn/version "1.10.3"}
-  org.clojure/clojurescript {:mvn/version "1.10.879"}
-  org.reactivestreams/reactive-streams {:mvn/version "1.0.3"}
-  cloroutine/cloroutine {:mvn/version "10"}}
+ {org.clojure/clojure {:mvn/version "1.11.1"}
+  org.clojure/clojurescript {:mvn/version "1.11.60"}
+  org.reactivestreams/reactive-streams {:mvn/version "1.0.4"}
+  cloroutine/cloroutine {:mvn/version "11"}}
 
  :paths ["src" "target/classes"]
 
