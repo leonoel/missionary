@@ -95,7 +95,7 @@ public interface Reactor {
 
         IFn success;
         IFn failure;
-        Object error;
+        Object result;
         Publisher kill;
         Publisher boot;
         Publisher alive;
@@ -182,8 +182,8 @@ public interface Reactor {
         try {
             pub.value = ((IDeref) pub.iterator).deref();
         } catch (Throwable e) {
-            if (ps.error == ps) {
-                ps.error = e;
+            if (ps.result == ps) {
+                ps.result = e;
                 Publisher k = ps.kill;
                 if (k.busy = !k.busy)
                     schedule(k);
@@ -233,7 +233,7 @@ public interface Reactor {
         }
     }
 
-    static void propagate(Publisher pub) {
+    static IFn propagate(Publisher pub) {
         Process ps = pub.process;
         current.set(ps);
         do {
@@ -269,10 +269,11 @@ public interface Reactor {
         }
         if (ps.alive == null) if ((pub = ps.boot) != null) {
             ps.boot = null;
-            Object e = ps.error;
-            if (e == ps) ps.success.invoke(pub.value);
-            else ps.failure.invoke(e);
-        }
+            if (ps.result == ps) {
+                ps.result = pub.value;
+                return ps.success;
+            } else return ps.failure;
+        } else return null; else return null;
     }
 
     static void hook(Subscription s) {
@@ -392,18 +393,20 @@ public interface Reactor {
     static void event(Publisher pub) {
         Process ps = current.get();
         if (ps == null) {
+            IFn cb;
             synchronized (pub.process) {
-                if (pub.busy = !pub.busy)
-                    propagate(pub);
+                cb = (pub.busy = !pub.busy) ? propagate(pub) : null;
             }
+            if (cb != null) cb.invoke(pub.process.result);
             while ((ps = delayed.get()) != null) {
                 delayed.set(ps.delayed);
                 ps.delayed = null;
                 pub = ps.schedule;
                 ps.schedule = null;
                 synchronized (ps) {
-                    propagate(pub);
+                    cb = propagate(pub);
                 }
+                if (cb != null) cb.invoke(ps.result);
             }
         } else if (pub.busy = !pub.busy) if (ps == pub.process) if (lt(ps.current.ranks, pub.ranks)) {
             Publisher r = ps.reaction;
@@ -442,7 +445,7 @@ public interface Reactor {
         b.ranks = zero;
         ps.kill = k;
         ps.boot = b;
-        ps.error = ps;
+        ps.result = ps;
         ps.success = success;
         ps.failure = failure;
         event(b);

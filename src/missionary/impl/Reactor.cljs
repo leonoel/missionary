@@ -21,7 +21,7 @@
   (-invoke [this] (free this) nil)
   (-invoke [this n t] (subscribe this n t)))
 
-(deftype Process [success failure error kill boot alive active current reaction schedule subscriber delayed]
+(deftype Process [success failure result kill boot alive active current reaction schedule subscriber delayed]
   IFn
   (-invoke [_] (event kill) nil))
 
@@ -86,8 +86,8 @@
     (try
       (set! (.-value pub) @(.-iterator pub))
       (catch :default e
-        (when (identical? ps (.-error ps))
-          (set! (.-error ps) e)
+        (when (identical? ps (.-result ps))
+          (set! (.-result ps) e)
           (let [k (.-kill ps)]
             (when (set! (.-busy k) (not (.-busy k)))
               (schedule k))))))
@@ -168,10 +168,9 @@
     (when (nil? (.-alive ps))
       (when-some [pub (.-boot ps)]
         (set! (.-boot ps) nil)
-        (let [e (.-error ps)]
-          (if (identical? e ps)
-            ((.-success ps) (.-value pub))
-            ((.-failure ps) e)))))))
+        (if (identical? (.-result ps) ps)
+          (do (set! (.-result ps) (.-value pub))
+              (.-success ps)) (.-failure ps))))))
 
 (defn hook [^Subscription s]
   (let [pub (.-subscribed s)]
@@ -278,14 +277,16 @@
           (schedule pub))
         (schedule pub)))
     (do (when (set! (.-busy pub) (not (.-busy pub)))
-          (propagate pub))
+          (when-some [cb (propagate pub)]
+            (cb (.-result (.-process pub)))))
         (loop []
           (when-some [ps delayed]
             (set! delayed (.-delayed ps))
             (set! (.-delayed ps) nil)
             (let [pub (.-schedule ps)]
               (set! (.-schedule ps) nil)
-              (propagate pub)
+              (when-some [cb (propagate pub)]
+                (cb (.-result ps)))
               (recur)))))))
 
 (def kill
@@ -312,7 +313,7 @@
         b (->Publisher ps (reify IDeref (-deref [_] (init))) zero 0 0 false false false nil nil nil nil nil nil nil)]
     (set! (.-kill ps) k)
     (set! (.-boot ps) b)
-    (set! (.-error ps) ps)
+    (set! (.-result ps) ps)
     (event b) ps))
 
 (defn publish [flow continuous]
