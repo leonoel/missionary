@@ -37,7 +37,7 @@ Key ideas
 
 Missionary's mission is to establish a rigorous foundation for modern web programming, particularly sophisticated real-time collaborative applications. Missionary's reactive primitives are fully separated and unbundled in order to achieve low-level control over every aspect of the computation (discrete vs continuous, eager vs lazy, allocation and reaction boundaries).
 
-Missionary can be used as a foundation to build higher level reactive abstractions. For example, Missionary's "reactive VM" is the compiler target of [hyperfiddle/photon](https://hyperfiddle.notion.site/Reactive-Clojure-You-don-t-need-a-web-framework-you-need-a-web-language-44b5bfa526be4af282863f34fa1cfffc), a reactive dialect of Clojure/Script for UI programming.
+Missionary can be used as a foundation to build higher level reactive abstractions. For example, Missionary's "reactive VM" is the compiler target of [hyperfiddle/electric](https://github.com/hyperfiddle/electric), a reactive dialect of Clojure/Script for UI programming.
 
 # Dependency
 
