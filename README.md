@@ -44,7 +44,7 @@ Missionary can be used as a foundation to build higher level reactive abstractio
 Project maturity: experimental, but stable. The current development priority is documentation.
 
 ```clojure
-{:deps {missionary/missionary {:mvn/version "b.27"}}} 
+{:deps {missionary/missionary {:mvn/version "b.28"}}} 
 ```
 [![clojars](https://img.shields.io/clojars/v/missionary.svg)](https://clojars.org/missionary)
 [![cljdoc](https://cljdoc.org/badge/missionary/missionary)](https://cljdoc.org/d/missionary/missionary/CURRENT)
