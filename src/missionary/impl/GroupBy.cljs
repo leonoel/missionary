@@ -1,7 +1,7 @@
 (ns ^:no-doc missionary.impl.GroupBy
   (:import missionary.Cancelled))
 
-(declare kill sample cancel consume)
+(declare kill group sample cancel consume)
 
 (deftype Process [keyfn notifier terminator
                   key value input table
@@ -11,6 +11,7 @@
                   ^boolean done]
   IFn
   (-invoke [p] (kill p) nil)
+  (-invoke [p n t] (group p n t))
   IDeref
   (-deref [p] (sample p)))
 
@@ -28,111 +29,109 @@
 (defn step [^number i ^number m]
   (bit-and (inc i) m))
 
-(defn insert [^Process p ^number i g]
-  (let [table (.-table p)
-        ts (alength table)
-        ls (bit-shift-left ts 1)]
-    (aset table i g)
-    (when (<= ls (* 3 (set! (.-load p) (inc (.-load p)))))
-      (let [l (set! (.-table p) (object-array ls))
-            m (dec ls)]
-        (loop [j 0]
-          (when (< j ts)
-            (when-some [h (aget table j)]
-              (loop [i (bit-and (hash (.-key h)) m)]
-                (if (nil? (aget l i))
-                  (aset l i h)
-                  (recur (step i m)))))
-            (recur (inc j))))))))
-
-(defn group [^Process p k n t]
-  (let [g (->Group nil k n t)]
-    ((if-some [table (.-table p)]
-       (let [m (dec (alength table))]
-         (loop [i (bit-and (hash k) m)]
-           (if-some [h (aget table i)]
-             (when-not (= k (.-key h))
-               (recur (step i m)))
-             (when (= k (.-key p))
-               (insert (set! (.-process g) p) i g))))
-         n) t)) g))
+(defn group [^Process p n t]
+  (let [k (.-key p)
+        g (->Group p k n t)
+        table (.-table p)]
+    (when-not (identical? k p)
+      (set! (.-key p) p)
+      (let [s (alength table)
+            m (dec s)]
+        (loop [i (bit-and (hash k) m)]
+          (case (aget table i)
+            nil (aset table i g)
+            (recur (step i m))))
+        (let [ss (bit-shift-left s 1)]
+          (when (<= ss (* 3 (set! (.-load p) (inc (.-load p)))))
+            (let [mm (dec ss)
+                  larger (object-array ss)]
+              (set! (.-table p) larger)
+              (dotimes [i s]
+                (when-some [h (aget table i)]
+                  (loop [j (bit-and (hash (.-key h)) mm)]
+                    (case (aget larger j)
+                      nil (aset larger j h)
+                      (recur (step j mm)))))))))))
+    (n) g))
 
 (defn cancel [^Group g]
-  (when-some [^Process p (.-process g)]
+  (let [^Process p (.-process g)
+        k (.-key g)]
     (when (.-live p)
-      (set! (.-process g) nil)
-      (let [k (.-key g)
-            table (.-table p)
-            m (dec (alength table))
-            i (loop [i (bit-and (hash k) m)]
-                (if (identical? g (aget table i))
-                  i (recur (step i m))))]
-        (aset table i nil)
-        (set! (.-load p) (dec (.-load p)))
-        (loop [i (step i m)]
-          (when-some [h (aget table i)]
-            (let [j (bit-and (hash (.-key h)) m)]
-              (when-not (== i j)
-                (aset table i nil)
-                (loop [j j]
-                  (if (nil? (aget table j))
-                    (aset table j h)
-                    (recur (step j m))))))
-            (recur (step i m))))
-        ((if (= k (.-key p))
-           (.-notifier p)
-           (.-notifier g)))))))
+      (when-not (identical? k p)
+        (set! (.-key g) p)
+        (let [table (.-table p)
+              m (dec (alength table))
+              i (loop [i (bit-and (hash k) m)]
+                  (if (identical? g (aget table i))
+                    i (recur (step i m))))]
+          (aset table i nil)
+          (set! (.-load p) (dec (.-load p)))
+          (loop [i (step i m)]
+            (when-some [h (aget table i)]
+              (let [j (bit-and (hash (.-key h)) m)]
+                (when-not (== i j)
+                  (aset table i nil)
+                  (loop [j j]
+                    (if (nil? (aget table j))
+                      (aset table j h)
+                      (recur (step j m))))))
+              (recur (step i m))))
+          ((if (= k (.-key p))
+             (.-notifier p)
+             (.-notifier g))))))))
 
 (defn transfer [^Process p]
-  (when-some [cb (loop []
-                   (when (set! (.-busy p) (not (.-busy p)))
-                     (if (.-done p)
-                       (.-terminator p)
-                       (if (identical? p (.-value p))
-                         (try
-                           (let [k (set! (.-key p) ((.-keyfn p) (set! (.-value p) @(.-input p))))
-                                 table (.-table p)
-                                 m (dec (alength table))]
-                             (loop [i (bit-and (hash k) m)]
-                               (if-some [h (aget table i)]
-                                 (if (= k (.-key h))
-                                   (.-notifier h)
-                                   (recur (step i m)))
-                                 (.-notifier p))))
-                           (catch :default e
-                             ((.-input p))
-                             (set! (.-value p) e)
-                             (.-notifier p)))
-                         (do (try @(.-input p) (catch :default _))
-                             (recur))))))] (cb)))
+  (loop []
+    (when (set! (.-busy p) (not (.-busy p)))
+      (if (.-done p)
+        (do (set! (.-live p) false)
+            (when-some [table (.-table p)]
+              (set! (.-table p) nil)
+              (dotimes [i (alength table)]
+                (when-some [g (aget table i)]
+                  ((.-terminator g)))))
+            ((.-terminator p)))
+        (if (identical? p (.-value p))
+          (let [table (.-table p)]
+            (try
+              (let [k (set! (.-key p) ((.-keyfn p) (set! (.-value p) @(.-input p))))
+                    m (dec (alength table))]
+                (loop [i (bit-and (hash k) m)]
+                  (if-some [h (aget table i)]
+                    (if (= k (.-key h))
+                      ((.-notifier h))
+                      (recur (step i m)))
+                    ((.-notifier p)))))
+              (catch :default e
+                (set! (.-value p) e)
+                (set! (.-table p) nil)
+                (kill p)
+                (dotimes [i (alength table)]
+                  (when-some [g (aget table i)]
+                    ((.-terminator g))))
+                ((.-notifier p)))))
+          (do (try @(.-input p) (catch :default _))
+              (recur)))))))
 
 (defn sample [^Process p]
   (let [k (.-key p)]
     (if (identical? k p)
       (do (transfer p) (throw (.-value p)))
-      (->MapEntry k (partial group p k) nil))))
+      (->MapEntry k p nil))))
 
 (defn consume [^Group g]
-  (if-some [^Process p (.-process g)]
-    (let [x (.-value p)]
-      (set! (.-value p) p)
-      (set! (.-key p) p)
-      (transfer p) x)
-    (do ((.-terminator g))
-        (throw (Cancelled. "Group consumer cancelled.")))))
+  (let [^Process p (.-process g)]
+    (if (identical? p (.-key g))
+      (do ((.-terminator g))
+          (throw (Cancelled. "Group consumer cancelled.")))
+      (let [x (.-value p)]
+        (set! (.-value p) p)
+        (set! (.-key p) p)
+        (transfer p) x))))
 
 (defn run [k f n t]
-  (let [p (->Process k n nil nil nil nil (object-array 8) 0 true true false)]
-    (set! (.-terminator p)
-      (fn []
-        (let [table (.-table p)]
-          (loop [i 0]
-            (when (< i (alength table))
-              (when-some [g (aget table i)]
-                (set! (.-process g) nil)
-                ((.-terminator g)))
-              (recur (inc i))))
-          (set! (.-table p) nil) (t))))
+  (let [p (->Process k n t nil nil nil (object-array 8) 0 true true false)]
     (set! (.-key p) p)
     (set! (.-value p) p)
     (set! (.-input p)

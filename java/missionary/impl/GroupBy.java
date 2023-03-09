@@ -24,6 +24,11 @@ public interface GroupBy {
         boolean done;
 
         @Override
+        public Object invoke(Object n, Object t) {
+            return group(this, (IFn) n, (IFn) t);
+        }
+
+        @Override
         public Object invoke() {
             kill(this);
             return null;
@@ -69,50 +74,45 @@ public interface GroupBy {
         return (i + 1) & m;
     }
 
-    static void insert(Process p, int i, Group g) {
-        Group[] table = p.table;
-        table[i] = g;
-        int s = table.length << 1;
-        if (s <= ++p.load * 3) {
-            Group[] larger = p.table = new Group[s];
-            int m = s - 1;
-            for (Group h : table) if (h != null) {
-                i = clojure.lang.Util.hasheq(h.key) & m;
-                while (larger[i] != null) i = step(i, m);
-                larger[i] = h;
-            }
-        }
-    }
-
-    static Group group(Process p, Object k, IFn n, IFn t) {
+    static Group group(Process p, IFn n, IFn t) {
         Group g = new Group();
-        g.key = k;
+        g.process = p;
         g.notifier = n;
         g.terminator = t;
-        IFn cb;
         synchronized (p) {
             Group[] table = p.table;
-            if (table == null) cb = t;
-            else {
-                int m = table.length - 1;
+            Object k = g.key = p.key;
+            if (k != p) {
+                p.key = p;
+                int s = table.length;
+                int m = s - 1;
                 int i = clojure.lang.Util.hasheq(k) & m;
-                Group h;
-                while ((h = table[i]) != null && !clojure.lang.Util.equiv(h.key, k)) i = step(i, m);
-                if (h == null && clojure.lang.Util.equiv(p.key, k)) insert(g.process = p, i, g);
-                cb = n;
+                while (table[i] != null) i = step(i, m);
+                table[i] = g;
+                int ss = s << 1;
+                if (ss <= ++p.load * 3) {
+                    int mm = ss - 1;
+                    Group[] larger = p.table = new Group[ss];
+                    Group h;
+                    for (i = 0; i < s; i++) if ((h = table[i]) != null) {
+                        int j = clojure.lang.Util.hasheq(h.key) & mm;
+                        while (larger[j] != null) j = step(j, mm);
+                        larger[j] = h;
+                    }
+                }
             }
         }
-        cb.invoke();
+        n.invoke();
         return g;
     }
 
     static void cancel(Group g) {
         Process p = g.process;
-        if (p != null) if (p.live) {
-            IFn cb;
-            synchronized (p) {
-                g.process = null;
-                Object k = g.key;
+        IFn cb = null;
+        synchronized (p) {
+            Object k = g.key;
+            if (p.live) if (k != p) {
+                g.key = p;
                 Group[] table = p.table;
                 int m = table.length - 1;
                 int i = clojure.lang.Util.hasheq(k) & m;
@@ -130,32 +130,49 @@ public interface GroupBy {
                 }
                 cb = clojure.lang.Util.equiv(p.key, k) ? p.notifier : g.notifier;
             }
-            cb.invoke();
         }
+        if (cb != null) cb.invoke();
     }
 
     static void transfer(Process p) {
-        IFn cb = null;
+        IFn cb;
+        Group[] table;
         synchronized (p) {
-            while (p.busy = !p.busy) if (p.done) {
+            table = p.table;
+            for(;;) if (p.busy = !p.busy) if (p.done) {
+                p.live = false;
+                p.table = null;
                 cb = p.terminator;
                 break;
             } else if (p.value == p) try {
                 Object k = p.key = p.keyfn.invoke(p.value = ((IDeref) p.input).deref());
-                Group[] table = p.table;
                 int m = table.length - 1;
                 int i = clojure.lang.Util.hasheq(k) & m;
-                Group h;
-                while ((h = table[i]) != null && !clojure.lang.Util.equiv(h.key, k)) i = step(i, m);
-                cb = h == null ? p.notifier : h.notifier;
+                for(;;) {
+                    Group h = table[i];
+                    if (h == null) {
+                        cb = p.notifier;
+                        break;
+                    } else if (clojure.lang.Util.equiv(h.key, k)) {
+                        cb = h.notifier;
+                        break;
+                    } else i = step(i, m);
+                }
+                table = null;
                 break;
             } catch (Throwable e) {
-                ((IFn) p.input).invoke();
                 p.value = e;
+                p.table = null;
+                kill(p);
                 cb = p.notifier;
                 break;
-            } else Util.discard(p.input);
+            } else Util.discard(p.input); else {
+                cb = null;
+                table = null;
+                break;
+            }
         }
+        if (table != null) for (Group g : table) if (g != null) g.terminator.invoke();
         if (cb != null) cb.invoke();
     }
 
@@ -164,17 +181,12 @@ public interface GroupBy {
         if (k == p) {
             transfer(p);
             return clojure.lang.Util.sneakyThrow((Throwable) p.value);
-        } else return new MapEntry(k, new AFn() {
-            @Override
-            public Object invoke(Object n, Object t) {
-                return group(p, k, (IFn) n, (IFn) t);
-            }
-        });
+        } else return new MapEntry(k, p);
     }
 
     static Object consume(Group g) {
         Process p = g.process;
-        if (p == null) {
+        if (p == g.key) {
             g.terminator.invoke();
             return clojure.lang.Util.sneakyThrow(new Cancelled("Group consumer cancelled."));
         } else {
@@ -190,17 +202,7 @@ public interface GroupBy {
         Process p = new Process();
         p.keyfn = k;
         p.notifier = n;
-        p.terminator = new AFn() {
-            @Override
-            public Object invoke() {
-                for (Group g : p.table) if (g != null) {
-                    g.process = null;
-                    g.terminator.invoke();
-                }
-                p.table = null;
-                return t.invoke();
-            }
-        };
+        p.terminator = t;
         p.key = p.value = p;
         p.live = p.busy = true;
         p.table = new Group[8];

@@ -397,7 +397,7 @@ public interface Reactor {
             synchronized (pub.process) {
                 cb = (pub.busy = !pub.busy) ? propagate(pub) : null;
             }
-            if (cb != null) pub.process.invoke(ps.result);
+            if (cb != null) cb.invoke(pub.process.result);
             while ((ps = delayed.get()) != null) {
                 delayed.set(ps.delayed);
                 ps.delayed = null;
