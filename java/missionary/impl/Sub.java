@@ -1,156 +1,144 @@
 package missionary.impl;
 
-import clojure.lang.*;
+import clojure.lang.AFn;
+import clojure.lang.IDeref;
+import clojure.lang.IFn;
 import missionary.Cancelled;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 
-import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+public interface Sub {
 
-public final class Sub extends AFn implements IDeref, Subscriber<Object> {
+    final class Process extends AFn implements IDeref, Subscriber<Object> {
 
-    static {
-        Util.printDefault(Sub.class);
-    }
+        static {
+            Util.printDefault(Process.class);
+        }
 
-    static final AtomicIntegerFieldUpdater<Sub> stateAtom =
-            AtomicIntegerFieldUpdater.newUpdater(Sub.class, "state");
+        IFn terminator;
+        IFn notifier;
+        Subscription sub;
+        Object current;
+        Object result;
 
-    static final int INIT = 0;
-    static final int PULL = 1;
-    static final int PUSH = 2;
-    static final int DONE = 3;
-    static final int STOP = 4;
+        @Override
+        public Object invoke() {
+            cancel(this);
+            return null;
+        }
 
-    IFn terminator;
-    IFn notifier;
-    Subscription subscription;
-    Object current;
-    Throwable error;
+        @Override
+        public Object deref() {
+            return transfer(this);
+        }
 
-    volatile int state = INIT;
+        @Override
+        public void onSubscribe(Subscription s) {
+            if (s == null) throw new NullPointerException();
+            subscribe(this, s);
+        }
 
-    public Sub(Publisher<Object> p, IFn n, IFn t) {
-        notifier = n;
-        terminator = t;
-        p.subscribe(this);
-    }
+        @Override
+        public void onNext(Object x) {
+            if (x == null) throw new NullPointerException();
+            next(this, x);
+        }
 
-    @Override
-    public Object invoke() {
-        for(;;) {
-            switch (state) {
-                case INIT: if (stateAtom.compareAndSet(this, INIT, STOP)) {
-                    notifier.invoke();
-                    return null;
-                } else break;
-                case PULL: if (stateAtom.compareAndSet(this, PULL, STOP)) {
-                    subscription.cancel();
-                    notifier.invoke();
-                    return null;
-                } else break;
-                case PUSH: if (stateAtom.compareAndSet(this, PUSH, STOP)) {
-                    subscription.cancel();
-                    return null;
-                } else break;
-                default: return null;
-            }
+        @Override
+        public void onError(Throwable e) {
+            if (e == null) throw new NullPointerException();
+            error(this, e);
+        }
+
+        @Override
+        public void onComplete() {
+            complete(this);
         }
     }
 
-    @Override
-    public Object deref() {
-        for(;;) {
-            switch (state) {
-                case PUSH: if (stateAtom.compareAndSet(this, PUSH, PULL)) {
-                    Object x = current;
-                    current = null;
-                    subscription.request(1);
-                    return x;
-                } else break;
-                case DONE: {
-                    Object x = current;
-                    if (x == null) {
-                        terminator.invoke();
-                        return clojure.lang.Util.sneakyThrow(error);
-                    } else {
-                        current = null;
-                        ((error == null) ? terminator : notifier).invoke();
-                        return x;
-                    }
-                }
-                case STOP: {
-                    Object x = current;
-                    if (x == null) {
-                        terminator.invoke();
-                        clojure.lang.Util.sneakyThrow(new Cancelled("Subscription cancelled."));
-                    } else {
-                        current = null;
-                        notifier.invoke();
-                        return x;
-                    }
-                }
-                default: throw new IllegalStateException();
-            }
+    static void cancel(Process ps) {
+        Subscription sub;
+        Object current;
+        Object result;
+        synchronized (ps) {
+            sub = ps.sub;
+            result = ps.result;
+            current = ps.current;
+            if (result == null) ps.result = new Cancelled("Subscription cancelled.");
+        }
+        if (result == null) {
+            if (sub != null) sub.cancel();
+            if (current == null) ps.notifier.invoke();
         }
     }
 
-    @Override
-    public void onSubscribe(Subscription sub) {
-        if (sub == null) throw new NullPointerException();
-        for(;;) {
-            switch (state) {
-                case INIT: if (stateAtom.compareAndSet(this, INIT, PULL)) {
-                    subscription = sub;
-                    sub.request(1);
-                    return;
-                } else break;
-                default: {
-                    sub.cancel();
-                    return;
-                }
-            }
+    static Object transfer(Process ps) {
+        Object result;
+        Object current;
+        synchronized (ps) {
+            result = ps.result;
+            current = ps.current;
+            ps.current = null;
+        }
+        if (current == null) {
+            ps.terminator.invoke();
+            return clojure.lang.Util.sneakyThrow((Throwable) result);
+        } else {
+            if (result == null) ps.sub.request(1);
+            else (result == ps ? ps.terminator : ps.notifier).invoke();
+            return current;
         }
     }
 
-    @Override
-    public void onNext(Object x) {
-        if (x == null) throw new NullPointerException();
-        for(;;) {
-            switch (state) {
-                case PULL: if (stateAtom.compareAndSet(this, PULL, PUSH)) {
-                    current = x;
-                    notifier.invoke();
-                    return;
-                } else break;
-                case DONE: return;
-                default: throw new IllegalStateException();
-            }
+    static void subscribe(Process ps, Subscription sub) {
+        Object result;
+        Subscription prev;
+        synchronized (ps) {
+            prev = ps.sub;
+            result = ps.result;
+            if (prev == null && result == null) ps.sub = sub;
         }
+        if (prev == null && result == null) sub.request(1);
+        else sub.cancel();
     }
 
-    @Override
-    public void onError(Throwable e) {
-        if (e == null) throw new NullPointerException();
-        error = e;
-        onComplete();
+    static void next(Process ps, Object x) {
+        Object result;
+        synchronized (ps) {
+            result = ps.result;
+            if (result == null) ps.current = x;
+        }
+        if (result == null) ps.notifier.invoke();
     }
 
-    @Override
-    public void onComplete() {
-        for(;;) {
-            switch (state) {
-                case PULL: if (stateAtom.compareAndSet(this, PULL, DONE)) {
-                    notifier.invoke();
-                    return;
-                } else break;
-                case PUSH: if (stateAtom.compareAndSet(this, PUSH, DONE)) {
-                    return;
-                } else break;
-                case STOP: return;
-                default: throw new IllegalStateException();
-            }
+    static void error(Process ps, Throwable err) {
+        Object current;
+        Object result;
+        synchronized (ps) {
+            current = ps.current;
+            result = ps.result;
+            if (result == null) ps.result = err;
         }
+        if (result == null && current == null) ps.notifier.invoke();
+    }
+
+    static void complete(Process ps) {
+        Object current;
+        Object result;
+        synchronized (ps) {
+            current = ps.current;
+            result = ps.result;
+            if (result == null) ps.result = ps;
+        }
+        if (result == null) (current == null ? ps.terminator : ps.notifier).invoke();
+    }
+
+    static Process run(Publisher<?> p, IFn n, IFn t) {
+        Process ps = new Process();
+        ps.notifier = n;
+        ps.terminator = t;
+        p.subscribe(ps);
+        return ps;
     }
 }

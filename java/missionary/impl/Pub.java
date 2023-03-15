@@ -6,111 +6,118 @@ import clojure.lang.IFn;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 
-import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
-import java.util.concurrent.atomic.AtomicLongFieldUpdater;
+public interface Pub {
+    class Process implements Subscription {
+        static {
+            Util.printDefault(Process.class);
+        }
 
-public final class Pub implements Subscription {
+        Subscriber<Object> subscriber;
+        Object iterator;
+        Object current;
+        long requested;
+        boolean busy;
+        boolean done;
 
-    static {
-        Util.printDefault(Pub.class);
+        @Override
+        public void request(long n) {
+            if (0 < n) more(this, n);
+            else kill(this, new IllegalArgumentException("Negative subscription request (3.9)"));
+        }
+
+        @Override
+        public void cancel() {
+            kill(this, null);
+        }
+
     }
 
-    static final AtomicIntegerFieldUpdater<Pub> PRESSURE =
-            AtomicIntegerFieldUpdater.newUpdater(Pub.class, "pressure");
-    static final AtomicLongFieldUpdater<Pub> REQUESTED =
-            AtomicLongFieldUpdater.newUpdater(Pub.class, "requested");
-    static final Throwable negativeRequest =
-            new IllegalArgumentException("Negative subscription request (3.9)");
-
-    Subscriber<Object> subscriber;
-    Object iterator;
-    Throwable error;
-    boolean done;
-
-    volatile int pressure;
-    volatile long requested;
-
-    void pull() {
-        do {
-            long r = requested;
-            if (done) switch ((int) r) {
-                case -2:
-                    subscriber.onError(negativeRequest);
-                    break;
-                case -1:
-                    break;
-                default:
-                    if (error == null) subscriber.onComplete();
-                    else subscriber.onError(error);
-            }
-            else if (r < 0) try {((IDeref) iterator).deref();} catch (Throwable ignored) {}
-            else try {
-                subscriber.onNext(((IDeref) iterator).deref());
-                for(;;) {
-                    if (REQUESTED.compareAndSet(this, r, r - 1)) {
-                        if (r == 1) return;
-                        else break;
-                    } else {
-                        r = requested;
-                        if (r < 0) break;
-                    }
-                }
-            } catch (Throwable e) {
-                error = e;
-            }
-        } while (0 == PRESSURE.decrementAndGet(this));
-    }
-
-    void kill(int code) {
-        for(;;) {
-            long p = requested;
-            if (p < 0) break;
-            else if (REQUESTED.compareAndSet(this, p, code)) {
-                ((IFn) iterator).invoke();
-                if (0 == p && 0 == PRESSURE.decrementAndGet(this)) pull();
-                break;
-            }
+    static void kill(Process ps, Throwable e) {
+        long requested;
+        Subscriber<Object> sub;
+        synchronized (ps) {
+            requested = ps.requested;
+            sub = ps.subscriber;
+            ps.subscriber = null;
+            if (requested < 0) ps.current = null;
+        }
+        if (sub != null) {
+            ((IFn) ps.iterator).invoke();
+            if (requested < 0) ready(ps);
+            if (e != null) sub.onError(e);
         }
     }
 
-    public Pub(IFn f, Subscriber<Object> s) {
-        subscriber = s;
-        iterator = f.invoke(
-                new AFn() {
-                    @Override
-                    public Object invoke() {
-                        if (0 == PRESSURE.incrementAndGet(Pub.this)) pull();
-                        return null;
-                    }
-                },
-                new AFn() {
-                    @Override
-                    public Object invoke() {
-                        done = true;
-                        if (0 == PRESSURE.incrementAndGet(Pub.this)) pull();
-                        return null;
-                    }
-                });
-        s.onSubscribe(this);
+    static void more(Process ps, long n) {
+        long requested;
+        Object current;
+        Subscriber<Object> sub;
+        synchronized (ps) {
+            sub = ps.subscriber;
+            current = ps.current;
+            requested = ps.requested;
+            long r = requested + n;
+            ps.requested = r < 0 ? Long.MAX_VALUE : r;
+            if (sub != null && requested < 0) ps.current = null;
+        }
+        if (sub != null && requested < 0) {
+            sub.onNext(current);
+            ready(ps);
+        }
     }
 
-    @Override
-    public void request(long n) {
-        if (0 < n) for(;;) {
-            long p = requested;
-            if (p < 0) break;
-            long r = p + n;
-            if (n < 0) r = Long.MAX_VALUE;
-            if (REQUESTED.compareAndSet(this, p, r)) {
-                if (0 == p && 0 == PRESSURE.decrementAndGet(this)) pull();
-                break;
+    static void ready(Process ps) {
+        Subscriber<Object> sub;
+        for(;;) {
+            boolean terminated = false;
+            Object current = null;
+            synchronized (ps) {
+                sub = ps.subscriber;
+                if (ps.busy = !ps.busy) if (sub == null) if (ps.done);
+                else Util.discard(ps.iterator);
+                else if (ps.done) {
+                    terminated = true;
+                    current = ps.current;
+                    ps.current = null;
+                    ps.subscriber = null;
+                } else try {
+                    current = ((IDeref) ps.iterator).deref();
+                    if (0 == ps.requested--) {
+                        ps.current = current;
+                        break;
+                    }
+                } catch (Throwable e) {
+                    ps.requested = Long.MAX_VALUE;
+                    ps.current = e;
+                } else break;
             }
-        } else kill(-2);
+            if (terminated) if (current == null) sub.onComplete();
+            else sub.onError((Throwable) current);
+            else if (current == null);
+            else sub.onNext(current);
+        }
     }
 
-    @Override
-    public void cancel() {
-        kill(-1);
+    static void run(IFn f, Subscriber<Object> s) {
+        Process ps = new Process();
+        ps.busy = true;
+        ps.subscriber = s;
+        ps.iterator = f.invoke(new AFn() {
+            @Override
+            public Object invoke() {
+                ready(ps);
+                return null;
+            }
+        }, new AFn() {
+            @Override
+            public Object invoke() {
+                ps.done = true;
+                ready(ps);
+                return null;
+            }
+        });
+        s.onSubscribe(ps);
+        ready(ps);
     }
 
 }

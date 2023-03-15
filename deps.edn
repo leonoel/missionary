@@ -8,7 +8,7 @@
 
  :aliases
  {:tck
-  {:extra-deps {org.reactivestreams/reactive-streams-tck {:mvn/version "1.0.2"}}}
+  {:extra-deps {org.reactivestreams/reactive-streams-tck {:mvn/version "1.0.4"}}}
 
   :clj-test
   {:extra-deps  {com.cognitect/test-runner

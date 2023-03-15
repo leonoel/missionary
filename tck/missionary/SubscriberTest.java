@@ -8,7 +8,6 @@ import org.reactivestreams.Subscription;
 import org.reactivestreams.tck.SubscriberWhiteboxVerification;
 import org.reactivestreams.tck.TestEnvironment;
 
-@SuppressWarnings("unchecked")
 public final class SubscriberTest extends SubscriberWhiteboxVerification<Object> {
     public SubscriberTest() {
         super(new TestEnvironment());
@@ -25,7 +24,7 @@ public final class SubscriberTest extends SubscriberWhiteboxVerification<Object>
                 IFn println = Clojure.var("clojure.core", "println");
                 IFn plus = Clojure.var("clojure.core", "+");
                 IFn subscribe = Clojure.var("missionary.core", "subscribe");
-                IFn sink = Clojure.var ("missionary.core", "aggregate");
+                IFn sink = Clojure.var ("missionary.core", "reduce");
                 IFn task = (IFn) sink.invoke(plus, subscribe.invoke(new Publisher<Object>() {
                     public void subscribe(Subscriber<? super Object> s) {
                         subscriber = s;

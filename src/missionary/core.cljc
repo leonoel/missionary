@@ -621,7 +621,7 @@ Example :
     :doc "
 Returns a `org.reactivestreams.Publisher` running given discrete `flow` on each subscription.
 "} publisher [f]
-  #?(:clj (reify Publisher (subscribe [_ s] (Pub. f s)))
+  #?(:clj (reify Publisher (subscribe [_ s] (Pub/run f s)))
      :cljs (throw (js/Error. "Unsupported operation."))))
 
 
@@ -631,7 +631,7 @@ Returns a `org.reactivestreams.Publisher` running given discrete `flow` on each 
     :doc "
 Returns a discrete flow subscribing to given `org.reactivestreams.Publisher`.
 "} subscribe [pub]
-  #?(:clj (fn [n t] (Sub. pub n t))
+  #?(:clj (fn [n t] (Sub/run pub n t))
      :cljs (throw (js/Error. "Unsupported operation."))))
 
 

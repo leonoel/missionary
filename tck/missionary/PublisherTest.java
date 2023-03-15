@@ -18,7 +18,7 @@ public final class PublisherTest extends PublisherVerification<Object> {
         Clojure.var("clojure.core", "require").invoke(Clojure.read("missionary.core"));
         IFn range = Clojure.var("clojure.core", "range");
         IFn publisher = Clojure.var("missionary.core", "publisher");
-        IFn enumerate = Clojure.var("missionary.core", "enumerate");
+        IFn enumerate = Clojure.var("missionary.core", "seed");
         return (Publisher<Object>) publisher.invoke(enumerate.invoke(range.invoke(n)));
     }
 
