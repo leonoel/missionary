@@ -78,52 +78,51 @@ public interface Sequential {
     }
 
     static void step(Process ps) {
-        if (ps.busy = !ps.busy) {
-            Fiber prev = fiber.get();
-            fiber.set(ps);
-            try {
-                Object x;
-                for(;;) if (ps == (x = ps.coroutine.invoke())) if (ps.busy = !ps.busy) {}
-                else break; else {
-                    ps.success.invoke(x);
-                    break;
+        Object x = null;
+        IFn cb = null;
+        synchronized (ps) {
+            if (ps.busy = !ps.busy) {
+                Fiber prev = fiber.get();
+                fiber.set(ps);
+                try {
+                    for(;;) if (ps == (x = ps.coroutine.invoke())) if (ps.busy = !ps.busy) {}
+                    else break; else {
+                        cb = ps.success;
+                        break;
+                    }
+                } catch (Throwable e) {
+                    x = e;
+                    cb = ps.failure;
                 }
-            } catch (Throwable e) {
-                ps.failure.invoke(e);
+                fiber.set(prev);
             }
-            fiber.set(prev);
         }
+        if (cb != null) cb.invoke(x);
     }
 
     static Process run(IFn c, IFn s, IFn f) {
         Process ps = new Process();
-        synchronized (ps) {
-            ps.coroutine = c;
-            ps.success = s;
-            ps.failure = f;
-            ps.resume = new AFn() {
-                @Override
-                public Object invoke(Object x) {
-                    synchronized (ps) {
-                        ps.current = x;
-                        step(ps);
-                        return null;
-                    }
-                }
-            };
-            ps.rethrow = new AFn() {
-                @Override
-                public Object invoke(Object x) {
-                    synchronized (ps) {
-                        ps.failed = true;
-                        ps.current = x;
-                        step(ps);
-                        return null;
-                    }
-                }
-            };
-            step(ps);
-            return ps;
-        }
+        ps.coroutine = c;
+        ps.success = s;
+        ps.failure = f;
+        ps.resume = new AFn() {
+            @Override
+            public Object invoke(Object x) {
+                ps.current = x;
+                step(ps);
+                return null;
+            }
+        };
+        ps.rethrow = new AFn() {
+            @Override
+            public Object invoke(Object x) {
+                ps.failed = true;
+                ps.current = x;
+                step(ps);
+                return null;
+            }
+        };
+        step(ps);
+        return ps;
     }
 }
