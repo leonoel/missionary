@@ -5,20 +5,21 @@ Missionary is a reactive dataflow programming toolkit providing referentially tr
 ```clojure 
 (require '[missionary.core :as m])
 
-; this is a reactive computation, the println reacts to input changes
 (def !input (atom 1))
-(def main (m/reactor
-            (let [>x (m/signal! (m/watch !input))       ; continuous signal reflecting atom state
-                  >y (m/signal! (m/latest + >x >x))]    ; derived computation, diamond shape
-              (m/stream! (m/ap (println (m/?< >y))))))) ; discrete effect performed on successive values
+(def main                                      ; this is a reactive computation, the println reacts to input changes
+  (let [<x (m/signal (m/watch !input))         ; continuous signal reflecting atom state
+        <y (m/signal (m/latest + <x <x))]      ; derived computation, diamond shape
+    (m/reduce (fn [_ x] (prn x)) nil <y)))     ; discrete effect performed on successive values
 
-(def dispose! (main #(prn ::success %) #(prn ::crash %)))
-; 2
-(swap! !input inc)
-; 4
-(dispose!)
+(def dispose!
+  (main
+    #(prn ::success %)
+    #(prn ::crash %)))                         ; prints 2
+(swap! !input inc)                             ; prints 4
+                                               ; Each change on the input propagates atomically through the graph.
+                                               ; 3 is an inconsistent state and is therefore not computed.
 
-; Each change on the input propagates atomically through the graph. 3 is an inconsistent state and is therefore not computed.
+(dispose!)                                     ; cleanup, deregisters the atom watch
 ```
 
 Features
@@ -44,7 +45,7 @@ Missionary can be used as a foundation to build higher level reactive abstractio
 Project maturity: experimental, but stable. The current development priority is documentation.
 
 ```clojure
-{:deps {missionary/missionary {:mvn/version "b.30"}}} 
+{:deps {missionary/missionary {:mvn/version "b.31"}}} 
 ```
 [![clojars](https://img.shields.io/clojars/v/missionary.svg)](https://clojars.org/missionary)
 [![cljdoc](https://cljdoc.org/badge/missionary/missionary)](https://cljdoc.org/d/missionary/missionary/CURRENT)
