@@ -142,7 +142,7 @@ Produce given value, evaluate the program, consume a value and return it to the 
     (try (rethrow!)
          (let [{:keys [words stack events]} (context identity)]
            (when (nil? events)
-             (throw (ex-info (str "\n\nSpurious event " x "\n") {:words words :stack stack :event x})))
+             (throw (ex-info (str "\n\nUnhandled event " x "\n") {:words words :stack stack :event x})))
            (context assoc :stack (conj stack x) :events (next events))
            (eval-inst! (first events))
            (let [stack (:stack (context identity))]

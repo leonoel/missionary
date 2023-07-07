@@ -158,6 +158,10 @@ https://stackoverflow.com/questions/12925988/how-to-generate-strings-that-share-
   {:failure fine?}
   (m/zip vector (m/ap (fine!)) (m/seed [1 2 3])))
 
+(defflow zip-with-infinite
+  {:results (map =? [[:a 0] [:b 1]])}
+  (m/zip vector (m/seed [:a :b]) (m/seed (range))))
+
 (defn delay-each [delay input]
   (m/ap (m/? (m/sleep delay (m/?> input)))))
 

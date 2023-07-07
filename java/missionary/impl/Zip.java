@@ -7,6 +7,8 @@ import clojure.lang.RT;
 
 import java.util.Iterator;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+import java.util.Arrays;
+import java.util.Objects;
 
 public interface Zip {
 
@@ -74,6 +76,9 @@ public interface Zip {
             @Override
             public Object invoke() {
                 int c;
+                // if a subprocess terminated cancel the rest
+                if (Arrays.stream(ps.iterators).anyMatch(Objects::isNull))
+                    Arrays.stream(ps.iterators).filter(Objects::nonNull).forEach(it -> ((IFn) it).invoke());
                 do {
                     c = 0;
                     for(Object it : ps.iterators) {

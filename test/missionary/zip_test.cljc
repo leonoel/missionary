@@ -47,8 +47,11 @@
                (l/transferred :x :x1)
                (l/transferred :y :y1)
                f-called
-               (l/cancelled :x)
-               (l/cancelled :y))
+               (l/cancelled :x
+                 (l/terminate :x
+                   (l/cancelled :y
+                     (l/terminate :y
+                       (l/terminated :main))))))
              (l/check #{err}))))))
 
 (t/deftest doesnt-overconsume
@@ -62,8 +65,7 @@
               (l/transfer :main
                 (l/transferred :x (l/terminate :x) :x1)
                 (l/transferred :y (l/notify :y) :y1)
-                ;; the next transfer shouldn't happen
-                ;; zip already has all the data it needs and won't produce more since `:x` terminated
-                (l/transferred :y :y2)
-                (l/cancelled :y))
+                (l/cancelled :y)
+                (l/transferred :y (l/terminate :y) :y2)
+                (l/terminated :main))
               (l/check #{[:x1 :y1]}))))))

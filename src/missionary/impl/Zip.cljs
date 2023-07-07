@@ -36,17 +36,12 @@
         i (iter fs)
         z (->Process f n nil (object-array c) (object-array c) 0)]
     (set! (.-flusher z)
-      #(let [its (.-iterators z)
-             cnt (alength its)]
+      #(let [its (.-iterators z)]
+         (when (some nil? its)          ; if a subprocess terminated cancel the rest
+           (areduce its idx _ nil (when-some [it (aget its idx)] (it))))
          (loop []
-           (let [flushed (loop [i 0
-                                f 0]
-                           (if (< i cnt)
-                             (recur
-                               (inc i)
-                               (if-some [it (aget its i)]
-                                 (do (try @it (catch :default _))
-                                     (inc f)) f)) f))]
+           (let [flushed (areduce its idx f 0 (let [it (aget its idx)]
+                                                (if it (do (try @it (catch :default _)) (inc f)) f)))]
              (if (zero? flushed)
                (t) (when (zero? (set! (.-pending z) (+ (.-pending z) flushed)))
                      (recur)))))))
