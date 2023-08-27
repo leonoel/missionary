@@ -60,7 +60,7 @@ World
 #_=> nil                     ;; after 2 seconds
 ```
 
-Note : while the semantics of `?` are the same inside and outside `sp` blocks (run a `task` and return its result), the mechanism is slightly different : the `sp` macro will detect `?` calls in its body and rewrite code in asynchronous style, such that no thread will be blocked performing `nap` (we say the process is *parked* instead of *blocked*). Consequently, this definition of `slowmo-hello-world` is perfectly legal in clojurescript.
+Note : while the semantics of `?` are the same inside and outside `sp` blocks (run a `task` and return its result), the mechanism is slightly different : the `sp` macro will detect `?` calls in its body and rewrite code in asynchronous style, such that no thread will be blocked performing `nap` (we say the process is *parked* instead of *blocked*). Consequently, this definition of `slowmo-hello-world` is perfectly legal in clojurescript. The top level `m/?` call is still not allowed though. Use something like `(js/Promise. slowmo-hello-world)` instead.
 
 ## Parallel composition
 
