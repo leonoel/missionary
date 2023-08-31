@@ -3,6 +3,7 @@ package missionary.impl;
 import clojure.lang.AFn;
 import clojure.lang.IDeref;
 import clojure.lang.IFn;
+import missionary.Cancelled;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
@@ -15,35 +16,43 @@ public interface Propagator {
         }
 
         final int[] ranks;
-        final ReentrantLock lock;
-        final AtomicInteger children;
+        final Object initp;
+        final Object inits;
+        final IFn perform;
+        final IFn subscribe;
+        final IFn lcb;
+        final IFn rcb;
+        final IFn tick;
+        final IFn accept;
+        final IFn reject;
 
+        final ReentrantLock lock = new ReentrantLock();
+        final AtomicInteger children = new AtomicInteger();
+
+        IFn effect;
         Process current;
-        Subscription prop;
         Publisher child;
         Publisher sibling;
+        Subscription prop;
 
-        Publisher(int[] ranks) {
+        Publisher(int[] ranks, Object initp, Object inits, IFn perform, IFn subscribe,
+                  IFn lcb, IFn rcb, IFn tick, IFn accept, IFn reject, IFn effect) {
             this.ranks = ranks;
-            this.lock = new ReentrantLock();
-            this.children = new AtomicInteger();
+            this.initp = initp;
+            this.inits = inits;
+            this.perform = perform;
+            this.subscribe = subscribe;
+            this.lcb = lcb;
+            this.rcb = rcb;
+            this.tick = tick;
+            this.accept = accept;
+            this.reject = reject;
+            this.effect = effect;
         }
 
         @Override
-        public Object invoke(Object lcb, Object rcb) {
-            Context ctx = context.get();
-            boolean held = enter(this);
-            boolean busy = ctx.busy;
-            Process node = ctx.node;
-            Subscription edge = ctx.edge;
-            Process ps = this.current;
-            Subscription s = new Subscription((IFn) lcb, (IFn) rcb, ps, node);
-            ctx.busy = true;
-            ctx.node = ps;
-            ctx.edge = s;
-            s.state = ((IDeref) ps.state).deref();
-            exit(this, ctx, held, busy, node, edge);
-            return s;
+        public Object invoke(Object l, Object r) {
+            return sub(this, (IFn) l, (IFn) r);
         }
 
         @Override
@@ -54,12 +63,14 @@ public interface Propagator {
 
     class Process {
         final Publisher parent;
-        final Object state;
-        Subscription subs;
 
-        Process(Publisher parent, Object state) {
+        Object state;
+        Object process;
+        Subscription waiting;
+        Subscription pending;
+
+        Process(Publisher parent) {
             this.parent = parent;
-            this.state = state;
         }
     }
 
@@ -68,66 +79,41 @@ public interface Propagator {
             Util.printDefault(Subscription.class);
         }
 
+        final Process source;
+        final Process target;
         final IFn lcb;
         final IFn rcb;
-        final Process pub;
-        final Process sub;
 
-        boolean flag;
-        Object value;
-        Object state;
         Subscription prev;
         Subscription next;
+        Subscription prop;
 
-        Subscription(IFn lcb, IFn rcb, Process pub, Process sub) {
+        Object state;
+        boolean flag;          // if task : success. if flow : pending
+
+        Subscription(Process source, Process target, IFn lcb, IFn rcb) {
+            this.source = source;
+            this.target = target;
             this.lcb = lcb;
             this.rcb = rcb;
-            this.pub = pub;
-            this.sub = sub;
         }
 
         @Override
         public Object invoke() {
-            Context ctx = context.get();
-            Process ps = this.pub;
-            Publisher pub = ps.parent;
-            boolean held = enter(pub);
-            boolean busy = ctx.busy;
-            Process node = ctx.node;
-            Subscription edge = ctx.edge;
-            ctx.busy = true;
-            ctx.node = ps;
-            ctx.edge = this;
-            ((IFn) this.state).invoke();
-            exit(pub, ctx, held, busy, node, edge);
-            return null;
+            return unsub(this);
         }
 
         @Override
         public Object deref() {
-            Context ctx = context.get();
-            Process ps = this.pub;
-            Publisher pub = ps.parent;
-            boolean held = enter(pub);
-            boolean busy = ctx.busy;
-            Process node = ctx.node;
-            Subscription edge = ctx.edge;
-            ctx.busy = true;
-            ctx.node = ps;
-            ctx.edge = this;
-            try {
-                return ((IDeref) this.state).deref();
-            } finally {
-                exit(pub, ctx, held, busy, node, edge);
-            }
+            return accept(this);
         }
     }
 
     class Context {
-        long step;               // time increment
+        long time;               // time increment
         boolean busy;            // currently propagating
-        Process node;            // node currently touched
-        Subscription edge;       // edge currently touched
+        Process process;         // process currently running
+        Subscription sub;        // subscription currently running
         Publisher emitter;       // publisher currently emitting
         Publisher reacted;       // pairing heap of publishers scheduled for this turn.
         Publisher delayed;       // pairing heap of publishers scheduled for next turn.
@@ -190,18 +176,22 @@ public interface Propagator {
         return held;
     }
 
-    static void callback(Context ctx, Subscription s) {
-        ctx.edge = null;
-        while (s != null) {
-            IFn cb = s.flag ? s.rcb : s.lcb;
-            Object value = s.value;
-            Subscription n = s.next;
-            s.value = null;
-            s.next = null;
-            ctx.node = s.sub;
-            if (value == none) cb.invoke();
-            else cb.invoke(value);
-            s = n;
+    static void cancel(Process ps) {
+        ps.parent.current = null;
+        ((IFn) ps.process).invoke();
+    }
+
+    static void propagate(Context ctx, Process ps, Subscription sub) {
+        Publisher pub = ps.parent;
+        ctx.sub = null;
+        while (sub != null) {
+            IFn cb = sub.flag ? sub.lcb : sub.rcb;
+            Subscription n = sub.prop;
+            sub.prop = null;
+            ctx.process = sub.source;
+            if (pub.accept == null) cb.invoke(sub.state);
+            else cb.invoke();
+            sub = n;
         }
     }
 
@@ -210,28 +200,30 @@ public interface Propagator {
         Process ps = pub.current;
         ctx.reacted = dequeue(pub);
         ctx.emitter = pub;
-        ctx.node = ps;
-        ((IFn) ps.state).invoke();
-        Subscription s = pub.prop;
+        ctx.process = ps;
+        pub.tick.invoke();
+        Subscription sub = pub.prop;
         pub.prop = null;
         pub.lock.unlock();
-        callback(ctx, s);
+        propagate(ctx, ps, sub);
     }
 
-    static void exit(Publisher pub, Context ctx, boolean held, boolean busy, Process node, Subscription edge) {
-        Subscription s;
-        if (held) s = null; else {
-            s = pub.prop;
+    static void exit(Context ctx, boolean held, boolean b, Process p, Subscription s) {
+        Process ps = ctx.process;
+        Publisher pub = ps.parent;
+        Subscription sub;
+        if (held) sub = null; else {
+            sub = pub.prop;
             pub.prop = null;
         }
         pub.lock.unlock();
-        callback(ctx, s);
-        if (!busy) {
-            ctx.edge = null;
+        propagate(ctx, ps, sub);
+        if (!b) {
+            ctx.sub = null;
             for(;;) {
                 pub = ctx.reacted;
                 if (pub == null) {
-                    ctx.step++;
+                    ctx.time++;
                     pub = ctx.delayed;
                     if (pub == null) break; else {
                         ctx.delayed = null;
@@ -241,88 +233,13 @@ public interface Propagator {
             }
             ctx.emitter = null;
         }
-        ctx.busy = busy;
-        ctx.node = node;
-        ctx.edge = edge;
+        ctx.busy = b;
+        ctx.process = p;
+        ctx.sub = s;
     }
 
-
-    // public API
-
-    Object none = new Object();
-
-    static long step() {
-        return context.get().step;
-    }
-
-    static void reset(Object state) {
-        Publisher pub = context.get().node.parent;
-        pub.current = new Process(pub, state);
-    }
-
-    static boolean attached() {
-        return context.get().edge.prev != null;
-    }
-
-    static void detach(boolean flag, Object value) {
-        Context ctx = context.get();
-        Process ps = ctx.node;
-        Subscription s = ctx.edge;
-        Subscription p = s.prev;
-        Subscription n = s.next;
-        Publisher pub = ps.parent;
-        s.value = value;
-        s.flag = flag;
-        s.prev = null;
-        s.next = pub.prop;
-        pub.prop = s;
-        if (p == s) ps.subs = null; else {
-            n.prev = p;
-            p.next = n;
-            ps.subs = n;
-        }
-    }
-
-    static void dispatch(boolean flag, Object value) {
-        Context ctx = context.get();
-        Process ps = ctx.node;
-        Publisher pub = ps.parent;
-        Subscription subs = ps.subs;
-        if (subs != null) {
-            ps.subs = null;
-            Subscription s = subs;
-            for(;;) {
-                s.value = value;
-                s.flag = flag;
-                s.prev = null;
-                Subscription n = s.next;
-                if (n == subs) break;
-                else s = n;
-            }
-            s.next = pub.prop;
-            pub.prop = subs;
-        }
-    }
-
-    static void schedule() {
-        Context ctx = context.get();
-        Process ps = ctx.node;
-        Publisher pub = ps.parent;
-        if (pub.current == ps) {
-            Publisher emitter = ctx.emitter;
-            if (emitter == null || lt(emitter.ranks, pub.ranks))
-                ctx.reacted = enqueue(ctx.reacted, pub);
-            else ctx.delayed = enqueue(ctx.delayed, pub);
-        } else ((IFn) ps.state).invoke();
-    }
-
-    static void attach() {
-        Context ctx = context.get();
-        Process ps = ctx.node;
-        Subscription s = ctx.edge;
-        Subscription n = ps.subs;
+    static void attach(Subscription n, Subscription s) {
         if (n == null) {
-            ps.subs = s;
             s.prev = s;
             s.next = s;
         } else {
@@ -334,56 +251,274 @@ public interface Propagator {
         }
     }
 
-    static IFn bind(IFn f) {
-        Process ps = context.get().node;
+    static void dispatch(Subscription s) {
+        Process ps = s.target;
+        Subscription p = s.prev;
+        Subscription n = s.next;
+        s.prev = s.next = null;
+        if (p == s) ps.waiting = null; else {
+            n.prev = p;
+            p.next = n;
+            ps.waiting = n;
+        }
+        Publisher pub = ps.parent;
+        s.prop = pub.prop;
+        pub.prop = s;
+    }
+
+    static void detach(Subscription s) {
+        Process ps = s.target;
+        Subscription p = s.prev;
+        Subscription n = s.next;
+        s.prev = s.next = null;
+        if (p == s) ps.pending = null; else {
+            n.prev = p;
+            p.next = n;
+            ps.pending = n;
+        }
+    }
+
+    static void foreach(Context ctx, Subscription subs, IFn f) {
+        if (subs != null) {
+            Subscription s = ctx.sub;
+            Subscription sub = subs.next;
+            for(;;) {
+                Subscription n = sub.next;
+                ctx.sub = sub;
+                f.invoke();
+                if (sub == subs) break;
+                else sub = n;
+            }
+            ctx.sub = s;
+        }
+    }
+
+    static Object accept(Subscription sub) {
+        Context ctx = context.get();
+        Process ps = sub.target;
+        Publisher pub = ps.parent;
+        boolean held = enter(pub);
+        boolean b = ctx.busy;
+        Process p = ctx.process;
+        Subscription s = ctx.sub;
+        try {
+            ctx.busy = true;
+            ctx.process = ps;
+            ctx.sub = sub;
+            sub.flag = false;
+            if (sub.next == null) {
+                sub.prop = pub.prop;
+                pub.prop = sub;
+                return clojure.lang.Util.sneakyThrow(new Cancelled("Flow publisher cancelled."));
+            } else {
+                detach(sub);
+                attach(ps.waiting, ps.waiting = sub);
+                return pub.accept.invoke();
+            }
+        } finally {
+            exit(ctx, held, b, p, s);
+        }
+    }
+
+    static Object unsub(Subscription sub) {
+        Context ctx = context.get();
+        Process ps = sub.target;
+        Publisher pub = ps.parent;
+        boolean held = enter(pub);
+        boolean b = ctx.busy;
+        Process p = ctx.process;
+        Subscription s = ctx.sub;
+        try {
+            ctx.busy = true;
+            ctx.process = ps;
+            ctx.sub = sub;
+            if (sub.next != null) if (pub.effect != null) if (pub.current == ps) {
+                if (pub.accept == null) if (sub.next == sub) cancel(ps); else {
+                    sub.state = new Cancelled("Task publisher cancelled.");
+                    dispatch(sub);
+                } else if (sub.flag) if (sub.next == sub && ps.waiting == null) cancel(ps); else {
+                    detach(sub);
+                    pub.reject.invoke();
+                } else if (sub.next == sub && ps.pending == null) cancel(ps); else {
+                    sub.flag = true;
+                    dispatch(sub);
+                }
+            }
+            return null;
+        } finally {
+            exit(ctx, held, b, p, s);
+        }
+    }
+
+    static IFn bind(Process ps, IFn f) {
         return new AFn() {
             @Override
             public Object invoke() {
                 Context ctx = context.get();
-                Publisher pub = ps.parent;
-                boolean held = enter(pub);
-                boolean busy = ctx.busy;
-                Process node = ctx.node;
-                Subscription edge = ctx.edge;
-                ctx.busy = true;
-                ctx.node = ps;
-                ctx.edge = null;
-                f.invoke();
-                exit(pub, ctx, held, busy, node, edge);
-                return null;
+                boolean held = enter(ps.parent);
+                boolean b = ctx.busy;
+                Process p = ctx.process;
+                Subscription s = ctx.sub;
+                try {
+                    ctx.busy = true;
+                    ctx.process = ps;
+                    ctx.sub = null;
+                    return f.invoke();
+                } finally {
+                    exit(ctx, held, b, p, s);
+                }
             }
 
             @Override
             public Object invoke(Object x) {
                 Context ctx = context.get();
-                Publisher pub = ps.parent;
-                boolean held = enter(pub);
-                boolean busy = ctx.busy;
-                Process node = ctx.node;
-                Subscription edge = ctx.edge;
-                ctx.busy = true;
-                ctx.node = ps;
-                ctx.edge = null;
-                f.invoke(x);
-                exit(pub, ctx, held, busy, node, edge);
-                return null;
+                boolean held = enter(ps.parent);
+                boolean b = ctx.busy;
+                Process p = ctx.process;
+                Subscription s = ctx.sub;
+                try {
+                    ctx.busy = true;
+                    ctx.process = ps;
+                    ctx.sub = null;
+                    return f.invoke(x);
+                } finally {
+                    exit(ctx, held, b, p, s);
+                }
             }
         };
     }
 
-    static Publisher publisher(Object state) {
-        int[] ranks;
-        Process ps = context.get().node;
-        if (ps == null) ranks = new int[] {children.getAndIncrement()}; else {
+    static Subscription sub(Publisher pub, IFn lcb, IFn rcb) {
+        Context ctx = context.get();
+        boolean held = enter(pub);
+        boolean b = ctx.busy;
+        Process p = ctx.process;
+        Subscription s = ctx.sub;
+        try {
+            ctx.busy = true;
+            Process ps = pub.current;
+            if (ps == null) {
+                ps = new Process(pub);
+                ps.state = pub.initp;
+                pub.current = ps;
+                ctx.process = ps;
+                ctx.sub = null;
+                pub.perform.invoke();
+                ps.process = pub.effect.invoke(bind(ps, pub.lcb), bind(ps, pub.rcb));
+            } else ctx.process = ps;
+            Subscription sub = new Subscription(p, ps, lcb, rcb);
+            sub.state = pub.inits;
+            attach(ps.waiting, ps.waiting = sub);
+            ctx.sub = sub;
+            pub.subscribe.invoke();
+            return sub;
+        } finally {
+            exit(ctx, held, b, p, s);
+        }
+    }
+
+    static int[] ranks() {
+        Process ps = context.get().process;
+        if (ps == null) return new int[] {children.getAndIncrement()}; else {
             Publisher p = ps.parent;
             int[] r = p.ranks;
             int s = r.length;
-            ranks = new int[s + 1];
-            ranks[s] = p.children.getAndIncrement();
+            int[] ranks = new int[s + 1];
             System.arraycopy(r, 0, ranks, 0, s);
+            ranks[s] = p.children.getAndIncrement();
+            return ranks;
         }
-        Publisher pub = new Publisher(ranks);
-        pub.current = new Process(pub, state);
-        return pub;
+    }
+
+    // public API
+
+    static long time() {
+        return context.get().time;
+    }
+
+    static Object transfer() {
+        return ((IDeref) context.get().process.process).deref();
+    }
+
+    static Object getp() {
+        return context.get().process.state;
+    }
+
+    static void setp(Object x) {
+        context.get().process.state = x;
+    }
+
+    static Object gets() {
+        return context.get().sub.state;
+    }
+
+    static void sets(Object x) {
+        context.get().sub.state = x;
+    }
+
+    static void success(Object x) {
+        Subscription sub = context.get().sub;
+        sub.flag = true;
+        sub.state = x;
+        dispatch(sub);
+    }
+
+    static void failure(Object x) {
+        Subscription sub = context.get().sub;
+        sub.state = x;
+        dispatch(sub);
+    }
+
+    static void step() {
+        Subscription sub = context.get().sub;
+        sub.flag = true;
+        dispatch(sub);
+        Process ps = sub.target;
+        attach(ps.pending, ps.pending = sub);
+    }
+
+    static void done() {
+        Subscription sub = context.get().sub;
+        dispatch(sub);
+    }
+
+    static void waiting(IFn f) {
+        Context ctx = context.get();
+        foreach(ctx, ctx.process.waiting, f);
+    }
+
+    static void pending(IFn f) {
+        Context ctx = context.get();
+        foreach(ctx, ctx.process.pending, f);
+    }
+
+    static void schedule() {
+        Context ctx = context.get();
+        Process ps = ctx.process;
+        Publisher pub = ps.parent;
+        if (pub.current == ps && ps.process != null) {
+            Publisher emitter = ctx.emitter;
+            if (emitter == null || lt(emitter.ranks, pub.ranks))
+                ctx.reacted = enqueue(ctx.reacted, pub);
+            else ctx.delayed = enqueue(ctx.delayed, pub);
+        } else pub.tick.invoke();
+    }
+
+    static void resolve() {
+        Process ps = context.get().process;
+        Publisher pub = ps.parent;
+        if (ps == pub.current) pub.effect = null;
+    }
+
+    static Publisher task(Object initp, Object inits,
+                          IFn perform, IFn subscribe, IFn success, IFn failure,
+                          IFn tick, IFn task) {
+        return new Publisher(ranks(), initp, inits, perform, subscribe, success, failure, tick, null, null, task);
+    }
+
+    static Publisher flow(Object initp, Object inits,
+                          IFn perform, IFn subscribe, IFn step, IFn done,
+                          IFn tick, IFn accept, IFn reject, IFn flow) {
+        return new Publisher(ranks(), initp, inits, perform, subscribe, step, done, tick, accept, reject, flow);
     }
 }

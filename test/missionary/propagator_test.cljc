@@ -114,6 +114,32 @@
     (l/check #{error})
     (l/cancel :main)))
 
+(t/deftest signal-plus
+  (l/run
+    (m/signal + l/effect)
+    (l/insert :signal)
+    (sub :signal :sub1
+      (l/performed :input
+        (l/notify :input))
+      (l/notified :sub1))
+    (l/transfer :sub1
+      (l/transferred :input 0))
+    (l/check #{0})
+    (l/notify :input
+      (l/notified :sub1))
+    (l/transfer :sub1
+      (l/transferred :input 2))
+    (l/check #{2})
+    (l/notify :input
+      (l/notified :sub1))
+    (sub :signal :sub2
+      (l/notified :sub2))
+    (l/transfer :sub2
+      (l/transferred :input 3))
+    (l/check #{5})
+    (l/transfer :sub1)
+    (l/check #{3})))
+
 (t/deftest stream-one
   (l/run
     (m/stream l/effect)
@@ -182,8 +208,8 @@
           (l/check #{0})
           (l/notify :input))
         (l/notified :main)
-        (l/notified :sub1)
-        (l/notified :sub2))
+        (l/notified :sub2)
+        (l/notified :sub1))
       (l/transfer :main
         (l/transferred :input
           (l/transfer :sub1
@@ -194,8 +220,8 @@
           (l/check #{1})
           (l/notify :input)
           :a)
-        (l/notified :sub1)
         (l/notified :sub2)
+        (l/notified :sub1)
         (l/notified :main))
       (l/check #{:a})
       (l/transfer :main
@@ -208,8 +234,8 @@
           (l/check #{2})
           (l/notify :input)
           :b)
-        (l/notified :sub1)
         (l/notified :sub2)
+        (l/notified :sub1)
         (l/notified :main))
       (l/check #{:b}))))
 
@@ -222,13 +248,13 @@
       sub
       (l/perform :sub2)
       (l/notify :input
-        (l/notified :sub1)
-        (l/notified :sub2))
+        (l/notified :sub2)
+        (l/notified :sub1))
       (l/transfer :sub1
         (l/transferred :input
           (l/notify :input) 0))
       (l/check #{0})
       (l/transfer :sub2
-        (l/notified :sub1)
-        (l/notified :sub2))
+        (l/notified :sub2)
+        (l/notified :sub1))
       (l/check #{0}))))
