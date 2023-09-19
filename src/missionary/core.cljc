@@ -39,8 +39,9 @@ Not supported on clojurescript.
 
 
 (defmacro
-  ^{:arglists '([executor & body])
-    :doc "
+  ^{:arglists     '([executor & body])
+    :style/indent 1
+    :doc          "
 Returns a task evaluating body (in an implicit `do`) on given `java.util.concurrent.Executor` and completing with its result.
 
 Cancellation interrupts the evaluating thread.
@@ -275,8 +276,9 @@ Example :
 
 
 (defmacro
-  ^{:arglists '([& body])
-    :doc "
+  ^{:arglists     '([& body])
+    :style/indent 0
+    :doc          "
 Returns a task evaluating `body` (in an implicit `do`) in a new evaluation context and completing its result. Body
 evaluation can be parked by a task with `?`. Cancelling a `sp` process interrupts its evaluation context.
 "} sp [& body]
@@ -287,8 +289,9 @@ evaluation can be parked by a task with `?`. Cancelling a `sp` process interrupt
 (defn ^:no-doc cp* [cr] (Continuous/flow cr))
 
 (defmacro
-  ^{:arglists '([& body])
-    :doc "
+  ^{:arglists     '([& body])
+    :style/indent 0
+    :doc          "
 Returns a continuous flow evaluating `body` (in an implicit `do`) in a new evaluation context and producing values of
 each subsequent fork. Body evaluation can be forked by a continuous flow with `?<`. Evaluation and transfers are lazy,
 driven by downstream sampling. Cancelling an `cp` process interrupts its root evaluation context.
@@ -299,8 +302,9 @@ driven by downstream sampling. Cancelling an `cp` process interrupts its root ev
 
 
 (defmacro
-  ^{:arglists '([& body])
-    :doc "
+  ^{:arglists     '([& body])
+    :style/indent 0
+    :doc          "
 Returns a discrete flow evaluating `body` (in an implicit `do`) in a new evaluation context and producing values of each
 subsequent fork. Body evaluation can be parked by a task with `?` and forked by a flow with `?>` and `?<`. Evaluation
 and transfers are eager, backpressured by downstream transfers. Cancelling an `ap` process interrupts its root
@@ -447,8 +451,9 @@ Example : dining philosophers
 
 
 (defmacro
-  ^{:arglists '([semaphore & body])
-    :doc "
+  ^{:arglists     '([semaphore & body])
+    :style/indent 1
+    :doc          "
 `acquire`s given `semaphore` and evaluates `body` (in an implicit `do`), ensuring `semaphore` is `release`d after evaluation.
 "} holding [lock & body]
   `(let [l# ~lock] (? l#) (try ~@body (finally (l#)))))
