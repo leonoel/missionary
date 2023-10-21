@@ -34,8 +34,8 @@
                     (do (set! (.-value ps) x) (cb))
                     (throw (js/Error. "Can't process event - consumer is not ready.")))))))
          (catch :default e
-           (set! (.-value ps) nil)
            (set! (.-notifier ps) nil)
            (set! (.-unsub ps) #(throw e))
-           (n))) ps))
+           (if (identical? ps (.-value ps))
+             (n) (set! (.-value ps) ps)))) ps))
 

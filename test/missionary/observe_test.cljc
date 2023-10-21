@@ -51,3 +51,15 @@
                   (l/check #{:unsub})
                   nil))
               (l/check #(instance? Cancelled %)))))))
+
+;; subject throws exception after callback
+(t/deftest subject-callback-throw
+  (t/is (= []
+          (lc/run
+            (l/store
+              (m/observe (fn [!] (! :foo) (! :bar)))
+              (l/spawn :main
+                (l/notified :main))
+              (l/crash :main
+                (l/terminated :main))
+              (l/check #(instance? #?(:clj Error :cljs js/Error) %)))))))

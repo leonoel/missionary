@@ -75,7 +75,6 @@ public interface Observe {
                 }
             });
         } catch (Throwable e) {
-            ps.value = null;
             ps.notifier = null;
             ps.unsub = new AFn() {
                 @Override
@@ -83,7 +82,8 @@ public interface Observe {
                     return clojure.lang.Util.sneakyThrow(e);
                 }
             };
-            n.invoke();
+            if (ps.value == ps) n.invoke();
+            else ps.value = ps;
         }
         return ps;
     }
