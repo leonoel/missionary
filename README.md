@@ -22,7 +22,7 @@ Missionary is a reactive dataflow programming toolkit providing referentially tr
 (dispose!)                                     ; cleanup, deregisters the atom watch
 ```
 
-Features
+## Features
 * Discrete event streams with backpressure
 * Continuous-time signals with lazy sampling
 * Correct incremental maintenance of dynamic DAGs without inconsistent states (aka FRP glitches)
@@ -30,7 +30,7 @@ Features
 * Asynchronous design for efficiency and ClojureScript compatibility
 * Reactive Streams compliant
 
-Key ideas
+## Key ideas
 * Unification of functional effect systems and FRP / dataflow programming
 * Unification of continuous-time and discrete-time primitives under the common Flow protocol
 * Embrace and reuse Clojure core abstractions including collections, transducers, reducing functions and reference types
@@ -98,18 +98,18 @@ providing the best of both worlds.
 
 API Reference: [`missionary.core`](https://cljdoc.org/d/missionary/missionary/CURRENT/api/missionary.core)
 
-Discussions:
+### Discussions
 * [ClojureVerse (2019)](https://clojureverse.org/t/missionary-new-release-with-streaming-support-design-notes/4510)
 * [reddit (2021)](https://www.reddit.com/r/Clojure/comments/k2db8k/leonoelmissionary_a_functional_effect_and/)
 
-Tutorials
+## Tutorials
 1. [Hello task](doc/tutorials/hello_task.md)
 2. [Hello flow](doc/tutorials/hello_flow.md)
 3. [Comparison to RxJava](doc/tutorials/rx_comparison.md)
 
 How-to guides: [cookbook](https://github.com/leonoel/missionary/wiki)
 
-Explanations
+### Explanations
 * [re:Clojure 2021](https://www.youtube.com/watch?v=tV-DoiGdUIo)
 
 ## Community
