@@ -101,7 +101,7 @@ Hello
 ;; throws after 500 ms
 ```
 
-What happened here is both tasks have been run concurrently, each have printed Hello, then the second task failed after 500 ms, then error was propagated to the join task, making it fail as well. Modelling concurrency in functional style gave us supervision for free, we don't have to program defensively, operators do what you expect by default.
+What happened here is both tasks have been run concurrently, each has printed Hello, then the second task failed after 500 ms, then error was propagated to the join task, making it fail as well. Modeling concurrency in functional style gave us supervision for free, we don't have to program defensively, operators do what you expect by default.
 
 In fact, under the hood, `join` reacted to the error by *cancelling* the other action, allowing it to gracefully shutdown before rethrowing the error. The cancelling signal was propagated to the `sleep` action, which deregistered itself from the scheduler and failed. Then, the sleep failure has been rethrown in the sequential process, terminating it. Only then, `join` propagated the first error.
 
