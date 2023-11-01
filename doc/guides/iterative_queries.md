@@ -39,7 +39,7 @@ In addition, this strategy is not an option in threadless environments such as U
 
 ## The antipattern
 
-The first strategy coming to mind is to recursively build successive flows for each API call, prepending the current page to the next flow.
+The first strategy that comes to mind is to recursively build successive flows for each API call, prepending the current page to the next flow.
 
 ```clojure
 (defn pages  
@@ -53,7 +53,7 @@ The first strategy coming to mind is to recursively build successive flows for e
 
 This implementation seems to work. However, it will crash in the long run because it builds a hierarchy of processes that grows indefinitely for each successive step. The memory footprint will gradually increase, and the stack will ultimately blow up.
 
-This is actually the exact same problem as unbounded recursion in synchronous code. The stack works, it's low-level and fast, but the platform doesn't prevent us to abuse it. `missionary` follows the same guideline, it doesn't trade speed for safety and the user is expected to be aware of some pitfalls. This is one of them, just don't do it.
+This is actually the exact same problem as unbounded recursion in synchronous code. The stack works, it's low-level and fast, but the platform doesn't prevent us from abusing it. `missionary` follows the same guideline, it doesn't trade speed for safety and the user is expected to be aware of some pitfalls. This is one of them, just don't do it.
 
 
 ## The solution

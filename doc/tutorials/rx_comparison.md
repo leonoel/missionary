@@ -39,7 +39,7 @@ For those who need a refresher:
 
 While there is certainly more functions/macros being called, you'll find that they are completely orthogonal and compose nicely. The end result is a simpler API.
 
-Since this pattern of reducing a flow for a side effect will be present in the few next sections we're define a helper macro to cut on the boilerplate a bit:
+Since this pattern of reducing a flow for a side effect will be present in the few next sections we define a helper macro to cut on the boilerplate a bit:
 
 ```clj
 (defmacro drain [flow] `(m/? (m/reduce (constantly nil) ~flow)))
@@ -90,7 +90,7 @@ Missionary has a `zip` function as well. No other new functions are needed:
 
 ### c) Letters
 
-Next each character gets its own line:
+Next, each character gets its own line:
 
 ```java
 Observable.from(words)
@@ -261,7 +261,7 @@ This outputs:
 
 1 new method is introduced, `sorted`.
 
-There is no sort function in missionary and there isn't a transducer available either since sorting requires consuming the whole collecition. No new functions are needed though, we just need to `reduce` the flow and `seed`it:
+There is no sort function in missionary and there isn't a transducer available either since sorting requires consuming the whole collection. No new functions are needed though, we just need to `reduce` the flow and `seed`it:
 
 ```clj
 (let [words ["the" "quick" "brown" "fox" "jumped" "over" "the" "lazy" "dog"]]
@@ -415,7 +415,7 @@ In `1e` we have to break out of our pattern a bit since we need to sort the lett
                                    (m/eduction (map-indexed #(format "%2d. %s" (inc %1) %2)))))))))
 ```
 
-The "have to" is a bit strong, noone can stop us from implementing our own sorting transducer!
+The "have to" is a bit strong, no one can stop us from implementing our own sorting transducer!
 
 ```clj
 (defn tsort []
@@ -464,7 +464,7 @@ Flowable.fromCallable(() -> {
 Thread.sleep(2000); // <--- wait for the flow to finish
 ```
 
-The `subscribeOn` ensures the callable is run on a thread dedicated for IO (blocking) tasks. `observeOn` ensures the value is observerd on the single (e.g. UI) thread.
+The `subscribeOn` ensures the callable is run on a thread dedicated for IO (blocking) tasks. `observeOn` ensures the value is observed on the single (e.g. UI) thread.
 
 The callable example emits a single value, so we'll use a task in missionary instead:
 
@@ -583,7 +583,7 @@ sourceObservable
   .map(v -> v.toString())
 ```
 
-Here `sourceObservable` needs to complete and only then another source can be run.
+Here `sourceObservable` needs to be completed and only then another source can be run.
 
 ```clj
 (m/? (m/sp (m/? (m/reduce (constantly nil) source-flow)) (str (m/? some-task))))
