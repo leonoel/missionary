@@ -258,3 +258,28 @@
         (l/notified :sub2)
         (l/notified :sub1))
       (l/check #{0}))))
+
+(t/deftest signal-cancel-while-scheduled
+  (l/run
+    (m/signal l/effect)
+    (l/perform :sub1
+      (l/performed :eff1
+        (l/notify :eff1))
+      (l/notified :sub1))
+    (l/transfer :sub1
+      (l/transferred :eff1 1))
+    (l/check #{1})
+    (m/signal l/effect)
+    (l/perform :sub2
+      (l/performed :eff2
+        (l/notify :eff2))
+      (l/notified :sub2))
+    (l/transfer :sub2
+      (l/transferred :eff2 2))
+    (l/check #{2})
+    (l/cancel :sub2
+      (l/cancelled :eff2
+        (l/notify :eff1)
+        (l/cancel :sub1
+          (l/cancelled :eff1)))
+      (l/notified :sub1))))

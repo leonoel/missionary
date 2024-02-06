@@ -31,8 +31,6 @@ public interface Propagator {
 
         IFn effect;
         Process current;
-        Publisher child;
-        Publisher sibling;
         Subscription prop;
 
         Publisher(int[] ranks, Object initp, Object inits, IFn perform, IFn subscribe,
@@ -68,6 +66,8 @@ public interface Propagator {
         Object process;
         Subscription waiting;
         Subscription pending;
+        Process child;
+        Process sibling;
 
         Process(Publisher parent) {
             this.parent = parent;
@@ -111,12 +111,11 @@ public interface Propagator {
 
     class Context {
         long time;               // time increment
-        boolean busy;            // currently propagating
         Process process;         // process currently running
         Subscription sub;        // subscription currently running
-        Publisher emitter;       // publisher currently emitting
-        Publisher reacted;       // pairing heap of publishers scheduled for this turn.
-        Publisher delayed;       // pairing heap of publishers scheduled for next turn.
+        int[] cursor;            // progress of current propagation turn
+        Process reacted;         // pairing heap of processes scheduled for this turn
+        Process delayed;         // pairing heap of processes scheduled for next turn
     }
 
     ThreadLocal<Context> context = ThreadLocal.withInitial(Context::new);
@@ -135,8 +134,8 @@ public interface Propagator {
         return xl > yl;
     }
 
-    static Publisher link(Publisher x, Publisher y) {
-        if (lt(x.ranks, y.ranks)) {
+    static Process link(Process x, Process y) {
+        if (lt(x.parent.ranks, y.parent.ranks)) {
             y.sibling = x.child;
             x.child = y;
             return x;
@@ -147,13 +146,13 @@ public interface Propagator {
         }
     }
 
-    static Publisher dequeue(Publisher pub) {
-        Publisher heap = null;
-        Publisher prev = null;
-        Publisher head = pub.child;
-        pub.child = null;
+    static Process dequeue(Process ps) {
+        Process heap = null;
+        Process prev = null;
+        Process head = ps.child;
+        ps.child = null;
         while (head != null) {
-            Publisher next = head.sibling;
+            Process next = head.sibling;
             head.sibling = null;
             if (prev == null) prev = head;
             else {
@@ -166,7 +165,7 @@ public interface Propagator {
         return prev == null ? heap : heap == null ? prev : link(heap, prev);
     }
 
-    static Publisher enqueue(Publisher r, Publisher p) {
+    static Process enqueue(Process r, Process p) {
         return r == null ? p : link(p, r);
     }
 
@@ -181,61 +180,53 @@ public interface Propagator {
         ((IFn) ps.process).invoke();
     }
 
-    static void propagate(Context ctx, Process ps, Subscription sub) {
-        Publisher pub = ps.parent;
+    static void propagate(Context ctx) {
+        Publisher pub = ctx.process.parent;
+        Subscription sub = pub.prop;
+        pub.prop = null;
+        pub.lock.unlock();
         ctx.sub = null;
-        while (sub != null) {
-            IFn cb = sub.flag ? sub.lcb : sub.rcb;
+        if (pub.accept == null) while (sub != null) {
             Subscription n = sub.prop;
             sub.prop = null;
             ctx.process = sub.source;
-            if (pub.accept == null) cb.invoke(sub.state);
-            else cb.invoke();
+            (sub.flag ? sub.lcb : sub.rcb).invoke(sub.state);
+            sub = n;
+        } else while (sub != null) {
+            Subscription n = sub.prop;
+            sub.prop = null;
+            ctx.process = sub.source;
+            (sub.flag ? sub.lcb : sub.rcb).invoke();
             sub = n;
         }
     }
 
-    static void tick(Publisher pub, Context ctx) {
-        pub.lock.lock();
-        Process ps = pub.current;
-        ctx.reacted = dequeue(pub);
-        ctx.emitter = pub;
-        ctx.process = ps;
-        pub.tick.invoke();
-        Subscription sub = pub.prop;
-        pub.prop = null;
-        pub.lock.unlock();
-        propagate(ctx, ps, sub);
-    }
-
-    static void exit(Context ctx, boolean held, boolean b, Process p, Subscription s) {
-        Process ps = ctx.process;
-        Publisher pub = ps.parent;
-        Subscription sub;
-        if (held) sub = null; else {
-            sub = pub.prop;
-            pub.prop = null;
-        }
-        pub.lock.unlock();
-        propagate(ctx, ps, sub);
-        if (!b) {
+    static void exit(Context ctx, boolean held, Process p, Subscription s) {
+        if (held) ctx.process.parent.lock.unlock(); else propagate(ctx);
+        if (p == null) {
             ctx.sub = null;
-            for(;;) {
-                pub = ctx.reacted;
-                if (pub == null) {
-                    ctx.time++;
-                    pub = ctx.delayed;
-                    if (pub == null) break; else {
-                        ctx.delayed = null;
-                        tick(pub, ctx);
-                    }
-                } else tick(pub, ctx);
+            Process ps = ctx.reacted;
+            while (ps != null) {
+                do {
+                    Publisher pub = ps.parent;
+                    ctx.reacted = dequeue(ps);
+                    ctx.process = ps;
+                    ctx.cursor = pub.ranks;
+                    pub.lock.lock();
+                    pub.tick.invoke();
+                    propagate(ctx);
+                    ps = ctx.reacted;
+                } while (ps != null);
+                ps = ctx.delayed;
+                ctx.delayed = null;
+                ctx.time++;
             }
-            ctx.emitter = null;
+            ctx.process = null;
+            ctx.cursor = null;
+        } else {
+            ctx.sub = s;
+            ctx.process = p;
         }
-        ctx.busy = b;
-        ctx.process = p;
-        ctx.sub = s;
     }
 
     static void attach(Subscription n, Subscription s) {
@@ -298,11 +289,9 @@ public interface Propagator {
         Process ps = sub.target;
         Publisher pub = ps.parent;
         boolean held = enter(pub);
-        boolean b = ctx.busy;
         Process p = ctx.process;
         Subscription s = ctx.sub;
         try {
-            ctx.busy = true;
             ctx.process = ps;
             ctx.sub = sub;
             sub.flag = false;
@@ -316,7 +305,7 @@ public interface Propagator {
                 return pub.accept.invoke();
             }
         } finally {
-            exit(ctx, held, b, p, s);
+            exit(ctx, held, p, s);
         }
     }
 
@@ -325,11 +314,9 @@ public interface Propagator {
         Process ps = sub.target;
         Publisher pub = ps.parent;
         boolean held = enter(pub);
-        boolean b = ctx.busy;
         Process p = ctx.process;
         Subscription s = ctx.sub;
         try {
-            ctx.busy = true;
             ctx.process = ps;
             ctx.sub = sub;
             if (sub.next != null) if (pub.effect != null) if (pub.current == ps) {
@@ -346,7 +333,7 @@ public interface Propagator {
             }
             return null;
         } finally {
-            exit(ctx, held, b, p, s);
+            exit(ctx, held, p, s);
         }
     }
 
@@ -356,16 +343,14 @@ public interface Propagator {
             public Object invoke() {
                 Context ctx = context.get();
                 boolean held = enter(ps.parent);
-                boolean b = ctx.busy;
                 Process p = ctx.process;
                 Subscription s = ctx.sub;
                 try {
-                    ctx.busy = true;
                     ctx.process = ps;
                     ctx.sub = null;
                     return f.invoke();
                 } finally {
-                    exit(ctx, held, b, p, s);
+                    exit(ctx, held, p, s);
                 }
             }
 
@@ -373,16 +358,14 @@ public interface Propagator {
             public Object invoke(Object x) {
                 Context ctx = context.get();
                 boolean held = enter(ps.parent);
-                boolean b = ctx.busy;
                 Process p = ctx.process;
                 Subscription s = ctx.sub;
                 try {
-                    ctx.busy = true;
                     ctx.process = ps;
                     ctx.sub = null;
                     return f.invoke(x);
                 } finally {
-                    exit(ctx, held, b, p, s);
+                    exit(ctx, held, p, s);
                 }
             }
         };
@@ -391,11 +374,9 @@ public interface Propagator {
     static Subscription sub(Publisher pub, IFn lcb, IFn rcb) {
         Context ctx = context.get();
         boolean held = enter(pub);
-        boolean b = ctx.busy;
         Process p = ctx.process;
         Subscription s = ctx.sub;
         try {
-            ctx.busy = true;
             Process ps = pub.current;
             if (ps == null) {
                 ps = new Process(pub);
@@ -413,7 +394,7 @@ public interface Propagator {
             pub.subscribe.invoke();
             return sub;
         } finally {
-            exit(ctx, held, b, p, s);
+            exit(ctx, held, p, s);
         }
     }
 
@@ -496,12 +477,13 @@ public interface Propagator {
         Context ctx = context.get();
         Process ps = ctx.process;
         Publisher pub = ps.parent;
-        if (pub.current == ps && ps.process != null) {
-            Publisher emitter = ctx.emitter;
-            if (emitter == null || lt(emitter.ranks, pub.ranks))
-                ctx.reacted = enqueue(ctx.reacted, pub);
-            else ctx.delayed = enqueue(ctx.delayed, pub);
-        } else pub.tick.invoke();
+        int[] cursor = ctx.cursor;
+        if (ps.process == null)
+            pub.tick.invoke();
+        else if (cursor == null || lt(cursor, pub.ranks))
+            ctx.reacted = enqueue(ctx.reacted, ps);
+        else
+            ctx.delayed = enqueue(ctx.delayed, ps);
     }
 
     static void resolve() {

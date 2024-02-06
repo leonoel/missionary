@@ -5,7 +5,7 @@
 (declare lt sub unsub accept)
 
 (deftype Publisher [ranks initp inits perform subscribe lcb rcb tick accept reject
-                    ^boolean held ^number children effect current child sibling prop]
+                    ^boolean held ^number children effect current prop]
   IFn
   (-invoke [this l r]
     (sub this l r))
@@ -16,7 +16,7 @@
       0 (if (lt (.-ranks this) (.-ranks that))
           -1 +1))))
 
-(deftype Process [parent state process waiting pending])
+(deftype Process [parent state process waiting pending child sibling])
 
 (deftype Subscription [source target lcb rcb prev next prop state ^boolean flag]
   IFn
@@ -26,9 +26,9 @@
   (-deref [this]
     (accept this)))
 
-(deftype Context [^number time ^boolean busy process sub emitter reacted delayed])
+(deftype Context [^number time process sub cursor reacted delayed])
 
-(def context (->Context 0 false nil nil nil nil nil))
+(def context (->Context 0 nil nil nil nil nil))
 
 (def children 0)
 
@@ -45,14 +45,14 @@
             (< xi yi)))
         (> xl yl)))))
 
-(defn link [^Publisher x ^Publisher y]
-  (if (lt (.-ranks x) (.-ranks y))
+(defn link [^Process x ^Process y]
+  (if (lt (.-ranks (.-parent x)) (.-ranks (.-parent y)))
     (do (set! (.-sibling y) (.-child x))
         (set! (.-child x) y) x)
     (do (set! (.-sibling x) (.-child y))
         (set! (.-child y) x) y)))
 
-(defn dequeue [^Publisher pub]
+(defn dequeue [^Process pub]
   (let [head (.-child pub)]
     (set! (.-child pub) nil)
     (loop [heap nil
@@ -67,7 +67,7 @@
             (let [head (link prev head)]
               (recur (if (nil? heap) head (link heap head)) nil next))))))))
 
-(defn enqueue [^Publisher r ^Publisher p]
+(defn enqueue [^Process r ^Process p]
   (if (nil? r) p (link p r)))
 
 (defn enter [pub]
@@ -79,51 +79,52 @@
   (set! (.-current (.-parent ps)) nil)
   ((.-process ps)))
 
-(defn propagate [^Context ctx ^Process ps ^Subscription sub]
-  (let [pub (.-parent ps)]
+(defn propagate [^Context ctx]
+  (let [pub (.-parent (.-process ctx))
+        sub (.-prop pub)]
+    (set! (.-prop pub) nil)
+    (set! (.-held pub) false)
     (set! (.-sub ctx) nil)
-    (loop [sub sub]
-      (when-not (nil? sub)
-        (let [cb (if (.-flag sub) (.-lcb sub) (.-rcb sub))
-              n (.-prop sub)]
-          (set! (.-prop sub) nil)
-          (set! (.-process ctx) (.-source sub))
-          (if (nil? (.-accept pub)) (cb (.-state sub)) (cb))
-          (recur n))))))
+    (if (nil? (.-accept pub))
+      (loop [sub sub]
+        (when-not (nil? sub)
+          (let [n (.-prop sub)]
+            (set! (.-prop sub) nil)
+            (set! (.-process ctx) (.-source sub))
+            ((if (.-flag sub) (.-lcb sub) (.-rcb sub)) (.-state sub))
+            (recur n))))
+      (loop [sub sub]
+        (when-not (nil? sub)
+          (let [n (.-prop sub)]
+            (set! (.-prop sub) nil)
+            (set! (.-process ctx) (.-source sub))
+            ((if (.-flag sub) (.-lcb sub) (.-rcb sub)))
+            (recur n)))))))
 
-(defn tick [^Publisher pub ^Context ctx]
-  (set! (.-held pub) true)
-  (let [ps (.-current pub)]
-    (set! (.-reacted ctx) (dequeue pub))
-    (set! (.-emitter ctx) pub)
-    (set! (.-process ctx) ps)
-    ((.-tick pub))
-    (let [sub (.-prop pub)]
-      (set! (.-prop pub) nil)
-      (set! (.-held pub) false)
-      (propagate ctx ps sub))))
-
-(defn exit [^Context ctx ^boolean held ^boolean b ^Process p ^Subscription s]
-  (let [ps (.-process ctx)
-        pub (.-parent ps)
-        sub (when-not held
-              (let [sub (.-prop pub)]
-                (set! (.-prop pub) nil) sub))]
-    (set! (.-held pub) held)
-    (propagate ctx ps sub)
-    (when-not b
-      (set! (.-sub ctx) nil)
-      (loop []
-        (if-some [pub (.-reacted ctx)]
-          (do (tick pub ctx) (recur))
-          (do (set! (.-time ctx) (inc (.-time ctx)))
-              (when-some [pub (.-delayed ctx)]
-                (set! (.-delayed ctx) nil)
-                (tick pub ctx) (recur)))))
-      (set! (.-emitter ctx) nil))
-    (set! (.-busy ctx) b)
-    (set! (.-process ctx) p)
-    (set! (.-sub ctx) s)))
+(defn exit [^Context ctx ^boolean held ^Process p ^Subscription s]
+  (when-not held (propagate ctx))
+  (if (nil? p)
+    (do (set! (.-sub ctx) nil)
+        (loop [ps (.-reacted ctx)]
+          (when-not (nil? ps)
+            (loop [ps ps]
+              (let [pub (.-parent ps)]
+                (set! (.-reacted ctx) (dequeue ps))
+                (set! (.-process ctx) ps)
+                (set! (.-cursor ctx) (.-ranks pub))
+                (set! (.-held pub) true)
+                ((.-tick pub))
+                (propagate ctx)
+                (when-some [ps (.-reacted ctx)]
+                  (recur ps))))
+            (let [ps (.-delayed ctx)]
+              (set! (.-delayed ctx) nil)
+              (set! (.-time ctx) (inc (.-time ctx)))
+              (recur ps))))
+        (set! (.-process ctx) nil)
+        (set! (.-cursor ctx) nil))
+    (do (set! (.-sub ctx) s)
+        (set! (.-process ctx) p))))
 
 (defn attach [^Subscription n ^Subscription s]
   (if (nil? n)
@@ -177,11 +178,9 @@
         ps (.-target sub)
         pub (.-parent ps)
         held (enter pub)
-        b (.-busy ctx)
         p (.-process ctx)
         s (.-sub ctx)]
-    (try (set! (.-busy ctx) true)
-         (set! (.-process ctx) ps)
+    (try (set! (.-process ctx) ps)
          (set! (.-sub ctx) sub)
          (set! (.-flag sub) false)
          (if (nil? (.-next sub))
@@ -191,18 +190,16 @@
            (do (detach sub)
                (attach (.-waiting ps) (set! (.-waiting ps) sub))
                ((.-accept pub))))
-         (finally (exit ctx held b p s)))))
+         (finally (exit ctx held p s)))))
 
 (defn unsub [^Subscription sub]
   (let [ctx context
         ps (.-target sub)
         pub (.-parent ps)
         held (enter pub)
-        b (.-busy ctx)
         p (.-process ctx)
         s (.-sub ctx)]
-    (try (set! (.-busy ctx) true)
-         (set! (.-process ctx) ps)
+    (try (set! (.-process ctx) ps)
          (set! (.-sub ctx) sub)
          (when-not (nil? (.-next sub))
            (when-not (nil? (.-effect pub))
@@ -221,43 +218,35 @@
                      (cancel ps)
                      (do (set! (.-flag sub) true)
                          (dispatch sub))))))))
-         nil (finally (exit ctx held b p s)))))
+         nil (finally (exit ctx held p s)))))
 
 (defn bind [^Process ps f]
   (fn
     ([]
      (let [ctx context
            held (enter (.-parent ps))
-           b (.-busy ctx)
            p (.-process ctx)
            s (.-sub ctx)]
-       (try
-         (set! (.-busy ctx) true)
-         (set! (.-process ctx) ps)
-         (set! (.-sub ctx) nil)
-         (f) (finally (exit ctx held b p s)))))
+       (try (set! (.-process ctx) ps)
+            (set! (.-sub ctx) nil)
+            (f) (finally (exit ctx held p s)))))
     ([x]
      (let [ctx context
            held (enter (.-parent ps))
-           b (.-busy ctx)
            p (.-process ctx)
            s (.-sub ctx)]
-       (try
-         (set! (.-busy ctx) true)
-         (set! (.-process ctx) ps)
-         (set! (.-sub ctx) nil)
-         (f x) (finally (exit ctx held b p s)))))))
+       (try (set! (.-process ctx) ps)
+            (set! (.-sub ctx) nil)
+            (f x) (finally (exit ctx held p s)))))))
 
 (defn sub [^Publisher pub lcb rcb]
   (let [ctx context
         held (enter pub)
-        b (.-busy ctx)
         p (.-process ctx)
         s (.-sub ctx)]
-    (try (set! (.-busy ctx) true)
-         (let [ps (if-some [ps (.-current pub)]
+    (try (let [ps (if-some [ps (.-current pub)]
                     (set! (.-process ctx) ps)
-                    (let [ps (->Process pub (.-initp pub) nil nil nil)]
+                    (let [ps (->Process pub (.-initp pub) nil nil nil nil nil)]
                       (set! (.-current pub) ps)
                       (set! (.-process ctx) ps)
                       (set! (.-sub ctx) nil)
@@ -270,8 +259,8 @@
                sub (->Subscription p ps lcb rcb nil nil nil (.-inits pub) false)]
            (attach (.-waiting ps) (set! (.-waiting ps) sub))
            (set! (.-sub ctx) sub)
-           ((.-subscribe pub))
-           sub) (finally (exit ctx held b p s)))))
+           ((.-subscribe pub)) sub)
+         (finally (exit ctx held p s)))))
 
 (defn ranks []
   (if-some [^Process ps (.-process context)]
@@ -337,13 +326,13 @@
 (defn schedule []
   (let [ctx context
         ps (.-process ctx)
-        pub (.-parent ps)]
-    (if (and (identical? ps (.-current pub)) (some? (.-process ps)))
-      (let [emitter (.-emitter ctx)]
-        (if (or (nil? emitter) (lt (.-ranks emitter) (.-ranks pub)))
-          (set! (.-reacted ctx) (enqueue (.-reacted ctx) pub))
-          (set! (.-delayed ctx) (enqueue (.-delayed ctx) pub))))
-      ((.-tick pub)))))
+        pub (.-parent ps)
+        cursor (.-cursor ctx)]
+    (if (nil? (.-process ps))
+      ((.-tick pub))
+      (if (or (nil? cursor) (lt cursor (.-ranks pub)))
+        (set! (.-reacted ctx) (enqueue (.-reacted ctx) ps))
+        (set! (.-delayed ctx) (enqueue (.-delayed ctx) ps))))))
 
 (defn resolve []
   (let [ps (.-process context)
@@ -352,7 +341,7 @@
       (set! (.-effect pub) nil))))
 
 (defn task [initp inits perform subscribe success failure tick task]
-  (->Publisher (ranks) initp inits perform subscribe success failure tick nil nil false 0 task nil nil nil nil))
+  (->Publisher (ranks) initp inits perform subscribe success failure tick nil nil false 0 task nil nil))
 
 (defn flow [initp inits perform subscribe step done tick accept reject flow]
-  (->Publisher (ranks) initp inits perform subscribe step done tick accept reject false 0 flow nil nil nil nil))
+  (->Publisher (ranks) initp inits perform subscribe step done tick accept reject false 0 flow nil nil))
