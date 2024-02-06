@@ -60,7 +60,7 @@ World
 #_=> nil                     ;; after 2 seconds
 ```
 
-Note : while the semantics of `?` are the same inside and outside `sp` blocks (run a `task` and return its result), the mechanism is slightly different : the `sp` macro will detect `?` calls in its body and rewrite code in asynchronous style, such that no thread will be blocked performing `nap` (we say the process is *parked* instead of *blocked*). Consequently, this definition of `slowmo-hello-world` is perfectly legal in clojurescript.
+Note : while the semantics of `?` are the same inside and outside `sp` blocks (run a `task` and return its result), the mechanism is slightly different : the `sp` macro will detect `?` calls in its body and rewrite code in asynchronous style, such that no thread will be blocked performing `nap` (we say the process is *parked* instead of *blocked*). Consequently, this definition of `slowmo-hello-world` is perfectly legal in clojurescript. The top level `m/?` call is still not allowed though. Use something like `(js/Promise. slowmo-hello-world)` instead.
 
 ## Parallel composition
 
@@ -101,7 +101,7 @@ Hello
 ;; throws after 500 ms
 ```
 
-What happened here is both tasks have been run concurrently, each have printed Hello, then the second task failed after 500 ms, then error was propagated to the join task, making it fail as well. Modelling concurrency in functional style gave us supervision for free, we don't have to program defensively, operators do what you expect by default.
+What happened here is both tasks have been run concurrently, each has printed Hello, then the second task failed after 500 ms, then error was propagated to the join task, making it fail as well. Modeling concurrency in functional style gave us supervision for free, we don't have to program defensively, operators do what you expect by default.
 
 In fact, under the hood, `join` reacted to the error by *cancelling* the other action, allowing it to gracefully shutdown before rethrowing the error. The cancelling signal was propagated to the `sleep` action, which deregistered itself from the scheduler and failed. Then, the sleep failure has been rethrown in the sequential process, terminating it. Only then, `join` propagated the first error.
 

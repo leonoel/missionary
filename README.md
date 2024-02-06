@@ -98,6 +98,8 @@ providing the best of both worlds.
 
 API Reference: [`missionary.core`](https://cljdoc.org/d/missionary/missionary/CURRENT/api/missionary.core)
 
+Quickstart repo: [quickstart.cljs](https://github.com/dustingetz/missionary-quickstart/blob/main/src/quickstart.cljs) (clone repo and jack in)
+
 Discussions:
 * [ClojureVerse (2019)](https://clojureverse.org/t/missionary-new-release-with-streaming-support-design-notes/4510)
 * [reddit (2021)](https://www.reddit.com/r/Clojure/comments/k2db8k/leonoelmissionary_a_functional_effect_and/)

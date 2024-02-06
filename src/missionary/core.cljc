@@ -426,24 +426,25 @@ Cancelling an `acquire` task makes it fail immediately.
 Example : dining philosophers
 ```clojure
 (defn phil [name f1 f2]
-  (sp
+  (m/sp
     (while true
       (prn name :thinking)
-      (? (sleep 500))
-      (holding f1
-        (holding f2
+      (m/? (m/sleep 500))
+      (m/holding f1
+        (m/holding f2
           (prn name :eating)
-          (? (sleep 600)))))))
+          (m/? (m/sleep 600)))))))
 
-(def forks (vec (repeatedly 5 sem)))
+(def forks (vec (repeatedly 5 m/sem)))
 
-(? (timeout 10000
-     (join vector
-       (phil \"descartes\" (forks 0) (forks 1))
-       (phil \"hume\"      (forks 1) (forks 2))
-       (phil \"plato\"     (forks 2) (forks 3))
-       (phil \"nietzsche\" (forks 3) (forks 4))
-       (phil \"kant\"      (forks 0) (forks 4)))))
+(m/? (m/timeout
+     (m/join vector
+       (phil "descartes" (forks 0) (forks 1))
+       (phil "hume"      (forks 1) (forks 2))
+       (phil "plato"     (forks 2) (forks 3))
+       (phil "nietzsche" (forks 3) (forks 4))
+       (phil "kant"      (forks 0) (forks 4)))
+     10000))
 ```
 "} sem
   ([] (sem 1))

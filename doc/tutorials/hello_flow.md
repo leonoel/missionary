@@ -30,7 +30,7 @@ You can build a flow from an arbitrary collection with `seed`, and you can reduc
 
 ## Ambiguous evaluation
 
-Not very interesting so far, because we didn't perform any action yet. Let's introduce the `ap` macro. `ap` is to `flow`s what `sp` is to `task`s. Like `sp`, it can be parked with `?`, but it has an additional superpower : it can be *forked*.
+Not very interesting so far, because we haven't performed any action yet. Let's introduce the `ap` macro. `ap` is to `flow`s what `sp` is to `task`s. Like `sp`, it can be parked with `?`, but it has an additional superpower : it can be *forked*.
 ```clojure
 (def hello-world
   (m/ap
@@ -49,7 +49,7 @@ The `?>` operator pulls the first seeded value, forks evaluation and moves on un
 
 ## Preemptive forking
 
-In the previous example, pulling a value from the flow passed to `?>` transfers evaluation control to the forked process, and waited evaluation to be completed before pulling another value from the flow. In some cases though, we want the flow to keep priority over the forked process, so it can be shutdowned when more values become available. That kind of forking is implemented by `?<`.
+In the previous example, pulling a value from the flow passed to `?>` transfers evaluation control to the forked process, and waits for evaluation to be completed before pulling another value from the flow. In some cases though, we want the flow to keep priority over the forked process, so it can be shutdowned when more values become available. That kind of forking is implemented by `?<`.
 
 We can use it to implement debounce operators. A debounced flow is a flow emitting only values that are not followed by another one within a given delay.
 ```clojure
