@@ -944,7 +944,7 @@ Example :
             (sub []
               (let [^objects state (Propagator/getp)]
                 (when (identical? (thread) (aget state slot-thread))
-                  (when (identical? (Propagator/time) (aget state slot-time))
+                  (when (== (Propagator/time) (aget state slot-time))
                     (aset state slot-pending
                       (inc (aget state slot-pending)))
                     (Propagator/step)))))
