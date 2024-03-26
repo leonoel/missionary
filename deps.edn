@@ -1,8 +1,6 @@
 {:deps
- {org.clojure/clojure {:mvn/version "1.11.1"}
-  org.clojure/clojurescript {:mvn/version "1.11.60"}
-  org.reactivestreams/reactive-streams {:mvn/version "1.0.4"}
-  cloroutine/cloroutine {:mvn/version "11"}}
+ {org.reactivestreams/reactive-streams {:mvn/version "1.0.4"}
+  cloroutine/cloroutine {:mvn/version "12"}}
 
  :paths ["src" "target/classes"]
 
@@ -21,7 +19,7 @@
                    :extra-paths ["test"]
                    :exec-fn missionary.test-dev/run}
   :cljs-test
-  {:extra-deps  {olical/cljs-test-runner
-                 {:mvn/version "3.8.0"}}
+  {:extra-deps  {olical/cljs-test-runner {:mvn/version "3.8.0"}
+                 org.clojure/clojurescript {:mvn/version "1.11.60"}}
    :extra-paths ["test" "cljs-test-runner-out/gen"]
    :main-opts   ["-m" "cljs-test-runner.main"]}}}
