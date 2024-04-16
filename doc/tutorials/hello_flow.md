@@ -77,10 +77,10 @@ To test it, we need a flow of values emitting at various intervals.
 
 ## Concurrent forking
 
-What if we want to fork the processes concurrently? Enter the `?=` operator. It forks evaluation for *all* values concurrently. Values are returned from the flow in the order they finish, which is not necessarily the initial order.
+What if we want to fork the processes concurrently? Use the `?>` operator with its extra `par` argument. It forks evaluation for `par` values concurrently, *all* values if you use the value `##Inf` for `par`. Values are returned from the flow in the order they finish, which is not necessarily the initial order.
 
 ```clojure
-(m/? (m/reduce conj (m/ap (let [ms (m/?= (m/seed [300 100 400 200]))]
+(m/? (m/reduce conj (m/ap (let [ms (m/?> ##Inf (m/seed [300 100 400 200]))]
                                (m/? (m/sleep ms ms))))))
 #_=> [100 200 300 400]
 ```
