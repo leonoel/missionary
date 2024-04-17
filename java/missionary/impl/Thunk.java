@@ -6,7 +6,6 @@ import clojure.lang.IFn;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
 public interface Thunk {
 
@@ -31,63 +30,61 @@ public interface Thunk {
     Executor cpu = Cpu.POOL;
     Executor blk = Blk.POOL;
 
-    AtomicReferenceFieldUpdater<Process, Object> STATE =
-            AtomicReferenceFieldUpdater.newUpdater(Process.class, Object.class, "state");
-
     final class Process extends AFn {
         static {
             Util.printDefault(Process.class);
         }
 
-        IFn thunk;
-        IFn success;
-        IFn failure;
+        final IFn thunk;
+        final IFn success;
+        final IFn failure;
 
-        volatile Object state = this;
+        Object thread;
+
+        public Process(Executor e, IFn t, IFn s, IFn f) {
+            thunk = t;
+            success = s;
+            failure = f;
+            e.execute(this);
+        }
 
         @Override
         public void run() {
-            Thread t = Thread.currentThread();
-            for(;;) {
-                Object x = state;
-                if (x == null) {
-                    t.interrupt();
-                    break;
-                } else if (STATE.compareAndSet(this, x, t)) break;
+            synchronized (this) {
+                Thread t = Thread.currentThread();
+                if (thread == this) t.interrupt();
+                else thread = t;
             }
+            Object x;
+            IFn cont;
             try {
-                success.invoke(thunk.invoke());
-            } catch (Throwable error) {
-                failure.invoke(error);
+                x = thunk.invoke();
+                cont = success;
+            } catch (Throwable e) {
+                x = e;
+                cont = failure;
             }
-            cancel(this);
-            Thread.interrupted();
+            synchronized (this) {
+                if (thread == this) Thread.interrupted();
+                else thread = this;
+            }
+            cont.invoke(x);
         }
 
         @Override
         public Object invoke() {
-            cancel(this);
+            synchronized (this) {
+                Object t = thread;
+                if (t != this) {
+                    thread = this;
+                    if (t != null) ((Thread) t).interrupt();
+                }
+            }
             return null;
         }
     }
 
-    static void cancel(Process ps) {
-        for(;;) {
-            Object x = ps.state;
-            if (x == null) break;
-            if (STATE.compareAndSet(ps, x, null)) {
-                if (x != ps) ((Thread) x).interrupt();
-                break;
-            }
-        }
-    }
-
     static Process run(Executor e, IFn t, IFn s, IFn f) {
-        Process ps = new Process();
-        ps.thunk = t;
-        ps.success = s;
-        ps.failure = f;
-        e.execute(ps);
-        return ps;
+        return new Process(e, t, s, f);
     }
 }
