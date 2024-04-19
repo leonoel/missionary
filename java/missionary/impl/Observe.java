@@ -35,8 +35,12 @@ public interface Observe {
         synchronized (ps) {
             cb = ps.notifier;
             if (cb != null) {
-                if (ps.value != ps) cb = null;
-                ps.value = ps.notifier = null;
+                ps.notifier = null;
+                if (ps.value != ps) {
+                    ps.value = ps;
+                    ps.notifyAll();
+                    cb = null;
+                }
             }
         }
         if (cb != null) cb.invoke();
@@ -50,6 +54,7 @@ public interface Observe {
         } else synchronized (ps) {
             Object x = ps.value;
             ps.value = ps;
+            ps.notify();
             return x;
         }
     }
@@ -65,25 +70,25 @@ public interface Observe {
                 public Object invoke(Object x) {
                     IFn cb;
                     synchronized (ps) {
-                        cb = ps.notifier;
-                        if (cb != null) {
-                            if (ps.value != ps) throw new Error("Can't process event - observer is not ready.");
-                            ps.value = x;
+                        while (ps.value != ps) try {
+                            ps.wait();
+                        } catch (InterruptedException e) {
+                            clojure.lang.Util.sneakyThrow(e);
                         }
+                        cb = ps.notifier;
+                        if (cb != null) ps.value = x;
                     }
                     return cb == null ? null : cb.invoke();
                 }
             });
         } catch (Throwable e) {
-            ps.notifier = null;
             ps.unsub = new AFn() {
                 @Override
                 public Object invoke() {
                     return clojure.lang.Util.sneakyThrow(e);
                 }
             };
-            if (ps.value == ps) n.invoke();
-            else ps.value = ps;
+            kill(ps);
         }
         return ps;
     }
