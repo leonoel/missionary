@@ -30,6 +30,9 @@
                   (l/insert :f)
                   #(do)))
               (l/signal :f :x (l/notified :main))
+              #(.interrupt (Thread/currentThread))
+              (lc/call 0)
+              (lc/drop 0)
               (l/signal-error :f :x))))))
 
 ;; unsubscribe fn is called after cancellation
@@ -57,7 +60,7 @@
   (t/is (= []
           (lc/run
             (l/store
-              (m/observe (fn [!] (! :foo) (! :bar)))
+              (m/observe (fn [!] (! :foo) (assert false)))
               (l/spawn :main
                 (l/notified :main))
               (l/crash :main
