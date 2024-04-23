@@ -69,3 +69,12 @@
                 (l/transferred :y (l/terminate :y) :y2)
                 (l/terminated :main))
               (l/check #{[:x1 :y1]}))))))
+
+(t/deftest empty-input
+  (t/is (= []
+          (lc/run
+            (l/store
+              (m/zip vector (l/flow :input))
+              (l/spawn :main
+                (l/spawned :input (l/terminate :input))
+                (l/terminated :main)))))))
