@@ -20,6 +20,9 @@
                 (l/terminated :main))
               (l/check #(instance? Cancelled %)))))))
 
+(defn interrupt-current! []
+  #?(:clj (.interrupt (Thread/currentThread))))
+
 (t/deftest overflow
   (t/is (= []
           (lc/run
@@ -30,7 +33,7 @@
                   (l/insert :f)
                   #(do)))
               (l/signal :f :x (l/notified :main))
-              #(.interrupt (Thread/currentThread))
+              interrupt-current!
               (lc/call 0)
               (lc/drop 0)
               (l/signal-error :f :x))))))
