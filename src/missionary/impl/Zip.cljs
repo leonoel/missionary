@@ -1,67 +1,66 @@
 (ns missionary.impl.Zip)
 
 (declare cancel transfer)
-(deftype Process
-  [combinator notifier flusher
-   iterators results
-   ^number pending]
+(deftype Process [combine step done inputs ^number pending]
   IFn
   (-invoke [z] (cancel z))
   IDeref
   (-deref [z] (transfer z)))
 
-(defn cancel [^Process z]
-  (let [its (.-iterators z)]
-    (dotimes [i (alength its)]
-      (when-some [it (aget its i)] (it)))))
+(defn ready [^Process ps]
+  (if-some [s (.-step ps)]
+    (s) (let [inputs (.-inputs ps)
+              arity (alength inputs)]
+          (loop [i 0 c 0]
+            (if (< i arity)
+              (let [input (aget inputs i)]
+                (if (identical? input ps)
+                  (recur (inc i) c)
+                  (do (try @input (catch :default _))
+                      (recur (inc i) (inc c)))))
+              (let [p (set! (.-pending ps) (+ (.-pending ps) c))]
+                (if (zero? c) ((.-done ps)) (when (zero? p) (ready ps)))))))))
 
-(defn transfer [^Process z]
-  (let [its (.-iterators z)
-        res (.-results z)]
-    (try (set! (.-pending z) (dec (.-pending z)))
-         (dotimes [i (alength its)]
-           (set! (.-pending z) (inc (.-pending z)))
-           (aset res i @(aget its i)))
-         (.apply (.-combinator z) nil res)
+(defn cancel [^Process ps]
+  (let [inputs (.-inputs ps)]
+    (dotimes [i (alength inputs)]
+      (let [input (aget inputs i)]
+        (when-not (identical? input ps)
+          (input))))))
+
+(defn transfer [^Process ps]
+  (let [c (volatile! 0)
+        inputs (.-inputs ps)
+        arity (alength inputs)
+        buffer (object-array arity)]
+    (try (dotimes [i arity]
+           (vswap! c inc)
+           (aset buffer i @(aget inputs i)))
+         (.apply (.-combine ps) nil buffer)
          (catch :default e
-           (set! (.-notifier z) (.-flusher z))
+           (set! (.-step ps) nil)
            (throw e))
          (finally
-           (set! (.-pending z) (inc (.-pending z)))
-           (when (zero? (.-pending z)) ((.-notifier z)))
-           (when (identical? (.-notifier z) (.-flusher z)) (cancel z))))))
+           (let [p (set! (.-pending ps) (+ (.-pending ps) @c))]
+             (when (nil? (.-step ps)) (cancel ps))
+             (when (zero? p) (ready ps)))))))
 
-(defn run [f fs n t]
-  (let [c (count fs)
-        i (iter fs)
-        z (->Process f n nil (object-array c) (object-array c) 0)]
-    (set! (.-flusher z)
-      #(let [its (.-iterators z)
-             cnt (alength its)]
-         (loop []
-           (let [flushed (loop [i 0
-                                f 0]
-                           (if (< i cnt)
-                             (recur
-                               (inc i)
-                               (if-some [it (aget its i)]
-                                 (do (try @it (catch :default _))
-                                     (inc f)) f)) f))]
-             (if (zero? flushed)
-               (t) (when (zero? (set! (.-pending z) (+ (.-pending z) flushed)))
-                     (recur)))))))
-    (loop [index 0]
-      (aset (.-iterators z) index
-        ((.next i)
-         #(let [p (dec (.-pending z))]
-            (set! (.-pending z) p)
-            (when (zero? p) ((.-notifier z))))
-         #(do (aset (.-iterators z) index nil)
-              (set! (.-notifier z) (.-flusher z))
-              (let [p (set! (.-pending z) (dec (.-pending z)))]
-                (when-not (neg? p)
-                  (cancel z)
-                  (when (zero? p) ((.-notifier z))))))))
-      (when (.hasNext i) (recur (inc index))))
-    (when (zero? (set! (.-pending z) (+ (.-pending z) c)))
-      ((.-notifier z))) z))
+(defn run [f fs s d]
+  (let [arity (count fs)
+        inputs (object-array arity)
+        ps (->Process f s d inputs 0)
+        it (iter fs)]
+    (loop [i 0]
+      (let [input ((.next it)
+                   #(let [p (set! (.-pending ps) (dec (.-pending ps)))]
+                      (when (zero? p) (ready ps)))
+                   #(do (aset (.-inputs ps) i ps)
+                        (set! (.-step ps) nil)
+                        (let [p (set! (.-pending ps) (dec (.-pending ps)))]
+                          (when-not (neg? p) (cancel ps))
+                          (when (zero? p) (ready ps)))))]
+        (when (nil? (aget inputs i)) (aset inputs i input))
+        (when (.hasNext it) (recur (inc i)))))
+    (let [p (set! (.-pending ps) (+ (.-pending ps) arity))]
+      (when (nil? (.-step ps)) (cancel ps))
+      (when (zero? p) (ready ps)) ps)))

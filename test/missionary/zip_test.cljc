@@ -47,6 +47,34 @@
                (l/transferred :x :x1)
                (l/transferred :y :y1)
                f-called
-               (l/cancelled :x)
-               (l/cancelled :y))
+               (l/cancelled :x
+                 (l/terminate :x
+                   (l/cancelled :y
+                     (l/terminate :y
+                       (l/terminated :main))))))
              (l/check #{err}))))))
+
+(t/deftest doesnt-overconsume
+  (t/is (= []
+          (lc/run
+            (l/store
+              (init (m/zip vector (l/flow :x) (l/flow :y)))
+              (l/notify :x)
+              (l/notify :y
+                (l/notified :main))
+              (l/transfer :main
+                (l/transferred :x (l/terminate :x) :x1)
+                (l/transferred :y (l/notify :y) :y1)
+                (l/cancelled :y)
+                (l/transferred :y (l/terminate :y) :y2)
+                (l/terminated :main))
+              (l/check #{[:x1 :y1]}))))))
+
+(t/deftest empty-input
+  (t/is (= []
+          (lc/run
+            (l/store
+              (m/zip vector (l/flow :input))
+              (l/spawn :main
+                (l/spawned :input (l/terminate :input))
+                (l/terminated :main)))))))
