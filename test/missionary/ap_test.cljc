@@ -107,3 +107,20 @@
                 (l/notified :main))
               (l/transfer= 1 :main
                 (l/terminated :main)))))))
+
+(t/deftest switch-amb
+  (t/is (= []
+          (lc/run
+            (l/store
+              (m/ap
+                (m/?< (l/flow :input))
+                (try (loop []
+                       (m/amb (m/? m/never)
+                         (recur)))
+                     (catch missionary.Cancelled _
+                       (m/amb))))
+              (l/spawn :main
+                (l/spawned :input (l/notify :input))
+                (l/transferred :input 1))
+              (l/notify :input
+                (l/transferred :input 2)))))))
