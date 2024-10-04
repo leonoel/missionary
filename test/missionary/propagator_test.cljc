@@ -281,5 +281,5 @@
       (l/cancelled :eff2
         (l/notify :eff1)
         (l/cancel :sub1
-          (l/cancelled :eff1)))
-      (l/notified :sub1))))
+          (l/cancelled :eff1)
+          (l/notified :sub1))))))
