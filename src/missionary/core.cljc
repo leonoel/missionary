@@ -75,6 +75,56 @@ Example :
 
 (defn
   ^{:static true
+    :arglists '([c task])
+    :doc "
+Returns a task running given `task` but returning `c`.
+
+If `task` succeeds, `const` completes with constant `c` regardless of `task` return value.
+
+If `task` fails, `const` fails with this error.
+
+Cancelling propogates to `task`.
+
+Example :
+```clojure
+(? (const 42 (sleep 1000 1)))
+#_=> 42               ;; 1 second later
+```
+"} const
+  [c task]
+  (fn [s f]
+    (task
+      (fn [_]
+        (try (s c)
+             (catch #?(:clj Throwable
+                       :cljs :default) e
+               (f e)))) f)))
+
+
+(defn
+  ^{:static true
+    :arglists '([task])
+    :doc "
+Returns a task running given `task` but returning nil.
+
+If `task` succeeds, `null` completes with nil regardless of `task` return value.
+
+If `task` fails, `const` fails with this error.
+
+Cancelling propogates to `task`.
+
+Example :
+```clojure
+(? (null (sleep 1000 1)))
+#_=> nil              ;; 1 second later
+```
+"} null
+  [task]
+  (const nil task))
+
+
+(defn
+  ^{:static true
     :arglists '([f & tasks])
     :doc "
 Returns a task running given `tasks` concurrently.
@@ -1090,3 +1140,4 @@ Example :
       (fn
         ([flow] (Propagator/flow {} nil run sub step done tick accept reject flow))
         ([sg flow] (Propagator/flow sg nil run sub step done tick accept reject flow))))))
+
