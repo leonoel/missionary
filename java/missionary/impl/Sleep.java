@@ -1,19 +1,23 @@
 package missionary.impl;
 
-import clojure.lang.*;
+import clojure.lang.AFn;
+import clojure.lang.IFn;
 import missionary.Cancelled;
 
-import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 public interface Sleep {
-
-    AtomicReferenceFieldUpdater<Scheduler, IPersistentMap> PENDING =
-            AtomicReferenceFieldUpdater.newUpdater(Scheduler.class, IPersistentMap.class, "pending");
+    Scheduler S = new Scheduler();
+    Cancelled C = new Cancelled("Sleep cancelled.");
 
     final class Scheduler extends Thread {
-        static Scheduler INSTANCE = new Scheduler();
+        final Lock L = new ReentrantLock();
+        final Condition C = L.newCondition();
 
-        volatile IPersistentMap pending = PersistentTreeMap.EMPTY;
+        Process queue = null;
 
         Scheduler() {
             super("missionary scheduler");
@@ -24,20 +28,25 @@ public interface Sleep {
         @Override
         public void run() {
             for(;;) try {
-                IPersistentMap p = pending;
-                if (p.count() == 0) sleep(Long.MAX_VALUE);
-                else {
-                    IMapEntry e = (IMapEntry) p.iterator().next();
-                    long delay = ((Long) e.key()) - System.currentTimeMillis();
-                    if (0 < delay) sleep(delay);
-                    else if (PENDING.compareAndSet(this, p, p.without(e.key()))) {
-                        Object slot = e.val();
-                        if (slot instanceof Process) trigger((Process) slot);
-                        else for (Object x : (APersistentSet) slot) trigger((Process) x);
+                IFn s = null;
+                Object x = null;
+                L.lock();
+                Process head = queue;
+                if (head == null) C.await(); else {
+                    long d = head.time - System.currentTimeMillis();
+                    if (0 < d) C.await(d, TimeUnit.MILLISECONDS); else {
+                        s = head.success;
+                        x = head.payload;
+                        head.payload = null;
+                        head.success = null;
+                        head.failure = null;
+                        queue = dequeue(head);
                     }
                 }
-            } catch (InterruptedException _) {
-                interrupted();
+                L.unlock();
+                if (s != null) s.invoke(x);
+            } catch (Throwable e) {
+                e.printStackTrace();
             }
         }
     }
@@ -50,52 +59,52 @@ public interface Sleep {
         Object payload;
         IFn success;
         IFn failure;
-        Long time;
+        long time;
+        Process sibling;
+        Process child;
 
         @Override
         public Object invoke() {
-            cancel(this);
-            return null;
+            IFn f;
+            S.L.lock();
+            f = failure;
+            failure = null;
+            success = null;
+            payload = null;
+            S.L.unlock();
+            return f == null ? null : f.invoke(C);
         }
     }
 
-    static void trigger(Process s) {
-        s.success.invoke(s.payload);
-    }
-
-    static void schedule(Process s) {
-        for(;;) {
-            IPersistentMap p = Scheduler.INSTANCE.pending;
-            Object slot = p.valAt(s.time);
-            IPersistentMap n = p.assoc(s.time, slot == null ? s :
-                    slot instanceof Process ?
-                            PersistentHashSet.create(slot, s) :
-                            ((IPersistentSet) slot).cons(s));
-            if (PENDING.compareAndSet(Scheduler.INSTANCE, p, n)) {
-                if (((IMapEntry) n.iterator().next()).key().equals(s.time)
-                        && slot == null) Scheduler.INSTANCE.interrupt();
-                break;
-            }
+    static Process link(Process x, Process y) {
+        if (x.time < y.time) {
+            y.sibling = x.child;
+            x.child = y;
+            return x;
+        } else {
+            x.sibling = y.child;
+            y.child = x;
+            return y;
         }
     }
 
-    static void cancel(Process s) {
-        for(;;) {
-            IPersistentMap p = Scheduler.INSTANCE.pending;
-            Object item = p.valAt(s.time);
-            if (item == null) break;
-            IPersistentMap n;
-            if (item instanceof Process) {
-                if (item == s) n = p.without(s.time); else break;
-            } else {
-                IPersistentSet ss = ((IPersistentSet) item).disjoin(s);
-                if (ss.equals(item)) break; else n = p.assoc(s.time, ss);
+    static Process dequeue(Process ps) {
+        Process heap = null;
+        Process prev = null;
+        Process head = ps.child;
+        ps.child = ps;
+        while (head != null) {
+            Process next = head.sibling;
+            head.sibling = null;
+            if (prev == null) prev = head;
+            else {
+                head = link(prev, head);
+                heap = heap == null ? head : link(heap, head);
+                prev = null;
             }
-            if (PENDING.compareAndSet(Scheduler.INSTANCE, p, n)) {
-                s.failure.invoke(new Cancelled("Sleep cancelled."));
-                break;
-            }
+            head = next;
         }
+        return prev == null ? heap : heap == null ? prev : link(heap, prev);
     }
 
     static Process run(long d, Object x, IFn s, IFn f) {
@@ -104,7 +113,11 @@ public interface Sleep {
         ps.success = s;
         ps.failure = f;
         ps.time = System.currentTimeMillis() + d;
-        schedule(ps);
+        S.L.lock();
+        Process head = S.queue;
+        S.queue = head == null ? ps : link(head, ps);
+        S.C.signal();
+        S.L.unlock();
         return ps;
     }
 }
