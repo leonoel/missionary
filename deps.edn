@@ -1,6 +1,6 @@
 {:deps
  {org.reactivestreams/reactive-streams {:mvn/version "1.0.4"}
-  cloroutine/cloroutine {:mvn/version "12"}}
+  cloroutine/cloroutine {:mvn/version "13"}}
 
  :paths ["src" "target/classes"]
 
