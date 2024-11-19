@@ -3,7 +3,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>missionary</groupId>
   <artifactId>missionary</artifactId>
-  <version>b.41</version>
+  <version>b.42</version>
   <name>missionary</name>
   <description>A functional effect and streaming system for clojure and clojurescript.</description>
   <url>https://github.com/leonoel/missionary</url>
@@ -16,7 +16,7 @@
   <scm>
     <connection>scm:git:git://github.com/leonoel/missionary.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/leonoel/missionary.git</developerConnection>
-    <tag>fc37611fb8330bc0c8e577c624f8ff383f34dac3</tag>
+    <tag>df278e5984dff5fad3b97f35c82cd3bda1ed7664</tag>
     <url>https://github.com/leonoel/missionary</url>
   </scm>
   <distributionManagement>
