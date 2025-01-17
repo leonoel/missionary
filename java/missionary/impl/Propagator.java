@@ -58,8 +58,8 @@ public interface Propagator {
         Thread owner;
         Object input;
 
-        Process child;
-        Process sibling;
+        Object child;
+        Object sibling;
 
         Subscription ready;
         Subscription pending;
@@ -150,40 +150,42 @@ public interface Propagator {
         lock.set(pub, 0);
     }
 
-    static Process link(Process x, Process y) {
-        if (lt(x.parent.ranks, y.parent.ranks)) {
-            y.sibling = x.child;
-            x.child = y;
-            return x;
-        } else {
-            x.sibling = y.child;
-            y.child = x;
-            return y;
-        }
-    }
-
-    static Process dequeue(Process ps) {
-        Process heap = null;
-        Process prev = null;
-        Process head = ps.child;
-        ps.child = ps;
-        while (head != null) {
-            Process next = head.sibling;
-            head.sibling = null;
-            if (prev == null) prev = head;
-            else {
-                head = link(prev, head);
-                heap = heap == null ? head : link(heap, head);
-                prev = null;
+    PairingHeap.Impl impl = PairingHeap.impl(
+            new AFn() {
+                @Override
+                public Object invoke(Object inst, Object x, Object y) {
+                    return lt(((Process) x).parent.ranks, ((Process) y).parent.ranks);
+                }
+            },
+            new AFn() {
+                @Override
+                public Object invoke(Object inst, Object x) {
+                    return ((Process) x).child;
+                }
+            }, new AFn() {
+                @Override
+                public Object invoke(Object inst, Object x, Object y) {
+                    ((Process) x).child = y;
+                    return null;
+                }
+            },
+            new AFn() {
+                @Override
+                public Object invoke(Object inst, Object x) {
+                    return ((Process) x).sibling;
+                }
+            }, new AFn() {
+                @Override
+                public Object invoke(Object inst, Object x, Object y) {
+                    ((Process) x).sibling = y;
+                    return null;
+                }
             }
-            head = next;
-        }
-        return prev == null ? heap : heap == null ? prev : link(heap, prev);
-    }
+    );
 
     static Process enqueue(Process r, Process p) {
         p.child = null;
-        return r == null ? p : link(p, r);
+        return r == null ? p : (Process) PairingHeap.meld(impl, null, p, r);
     }
 
     static void schedule(Process ps) {
@@ -393,7 +395,7 @@ public interface Propagator {
                 do {
                     Publisher pub = ps.parent;
                     ctx.cursor = pub.ranks;
-                    ctx.reacted = dequeue(ps);
+                    ctx.reacted = (Process) PairingHeap.dmin(impl, null, ps);
                     acquire(pub);
                     if (ps.failed) if (ps.owner == null) failedEmit(ps); else {
                         ps.owner = null;

@@ -105,9 +105,24 @@
                 (l/compose
                   (l/check #{:x1})
                   (l/notify :x)
-                  nil)
+                  :res)
+                (l/notified :main))
+              (l/check #{:res})
+              (l/transfer :main
                 (l/transferred :x :x2)
                 (l/compose
                   (l/check #{:x2})
                   :res))
               (l/check #{:res}))))))
+
+(t/deftest zero-input
+  (t/is (= []
+          (lc/run
+            (l/store
+              (m/latest (fn [] (lc/event :f)))
+              (l/spawn :main
+                (l/notified :main))
+              (l/transfer :main
+                (f-called)
+                (l/terminated :main))
+              (l/check nil?))))))

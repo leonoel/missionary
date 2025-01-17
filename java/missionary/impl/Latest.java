@@ -4,10 +4,12 @@ import clojure.lang.AFn;
 import clojure.lang.IDeref;
 import clojure.lang.IFn;
 import clojure.lang.RT;
-
 import java.util.Iterator;
+import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
 public interface Latest {
+
+    AtomicReferenceFieldUpdater<Process, Object> SYNC = AtomicReferenceFieldUpdater.newUpdater(Process.class, Object.class, "sync");
 
     class Process extends AFn implements IDeref {
 
@@ -15,18 +17,22 @@ public interface Latest {
             Util.printDefault(Process.class);
         }
 
+        IFn step;
+        IFn done;
         IFn combinator;
-        IFn notifier;
-        IFn terminator;
         Object value;
+        Object owner;
         Object[] args;
         Object[] inputs;
-        int[] dirty;
-        int alive;
+        Object[] children;
+        Object[] siblings;
+        int pending;
+        Integer head;
+        volatile Object sync;
 
         @Override
         public Object invoke() {
-            kill(this);
+            cancel(this);
             return null;
         }
 
@@ -34,98 +40,188 @@ public interface Latest {
         public Object deref() {
             return transfer(this);
         }
+
     }
 
-    static void kill(Process ps) {
-        for (Object it : ps.inputs)
-            ((IFn) it).invoke();
+    PairingHeap.Impl IMPL = PairingHeap.impl(new AFn() {
+        @Override
+        public Object invoke(Object ps, Object i, Object j) {
+            return (Integer) i < (Integer) j;
+        }
+    }, new AFn() {
+        @Override
+        public Object invoke(Object ps, Object x) {
+            return ((Process) ps).children[(Integer) x];
+        }
+    }, new AFn() {
+        @Override
+        public Object invoke(Object ps, Object x, Object y) {
+            ((Process) ps).children[(Integer) x] = y;
+            return null;
+        }
+    }, new AFn() {
+        @Override
+        public Object invoke(Object ps, Object x) {
+            return ((Process) ps).siblings[(Integer) x];
+        }
+    }, new AFn() {
+        @Override
+        public Object invoke(Object ps, Object x, Object y) {
+            ((Process) ps).siblings[(Integer) x] = y;
+            return null;
+        }
+    });
+
+    Object IDLE = new Object();
+
+    static boolean terminated(Process ps, Integer i) {
+        return ps.children[i] == IDLE;
+    }
+
+    static void event(Process ps, Integer i) {
+        ps.pending -= 1;
+        ps.siblings[i] = null;
+        if (!terminated(ps, i)) {
+            Object h = ps.head;
+            ps.head = h == null ? i : (Integer) PairingHeap.meld(IMPL, ps, h, i);
+        }
+    }
+
+    static void consume(Process ps, Integer i) {
+        for(;;) {
+            Object s = ps.siblings[i];
+            event(ps, i);
+            if (s == null) break; else i = (Integer) s;
+        }
+    }
+
+    static int dequeue(Process ps) {
+        ps.pending++;
+        Integer h = ps.head;
+        ps.head = (Integer) PairingHeap.dmin(IMPL, ps, h);
+        ps.siblings[h] = IDLE;
+        return h;
+    }
+
+    static void cancel(Process ps) {
+        for (Object it : ps.inputs) ((IFn) it).invoke();
+    }
+
+    static void ready(Process ps) {
+        IFn step = ps.step;
+        IFn done = ps.done;
+        for(;;) if (ps.head == null) if (0 == ps.pending) {
+            done.invoke();
+            break;
+        } else {
+            if (SYNC.compareAndSet(ps, null, IDLE)) break; else for(;;) {
+                Object s = SYNC.get(ps);
+                if (SYNC.compareAndSet(ps, s, null)) {
+                    consume(ps, (Integer) s);
+                    break;
+                }
+            }
+        } else if (step == null) {
+            ps.owner = Thread.currentThread();
+            Util.discard(ps.inputs[dequeue(ps)]);
+            ps.owner = null;
+        } else {
+            step.invoke();
+            break;
+        }
     }
 
     static Object transfer(Process ps) {
-        IFn c = ps.combinator;
-        Object[] args = ps.args;
-        Object[] inputs = ps.inputs;
-        int[] dirty = ps.dirty;
-        Object x = ps.value;
-        synchronized (ps) {
-            try {
-                ps.value = ps;
-                if (args == null) throw new Error("Undefined continuous flow.");
-                for(;;) {
-                    int i = Heap.dequeue(dirty);
-                    Object p = args[i];
-                    args[i] = ((IDeref) inputs[i]).deref();
-                    x = x == ps ? x : clojure.lang.Util.equiv(p, args[i]) ? x : ps;
-                    if (0 == Heap.size(dirty)) if (x == ps) {
-                        x = Util.apply(c, args);
-                        if (0 == Heap.size(dirty)) break;
-                    } else break;
-                }
-            } catch (Throwable e) {
-                kill(ps);
-                while (0 < Heap.size(dirty)) try {
-                    ((IDeref) inputs[Heap.dequeue(dirty)]).deref();
-                } catch (Throwable f) {}
-                ps.notifier = null;
-                x = e;
-            }
-            ps.value = x;
+        if (ps.step == null) {
+            ready(ps);
+            throw new Error("Uninitialized continuous flow.");
         }
-        if (ps.alive == 0) ps.terminator.invoke();
-        return ps.notifier == null ? clojure.lang.Util.sneakyThrow((Throwable) x) : x;
+        ps.owner = Thread.currentThread();
+        try {
+            int p = ps.pending;
+            if (0 < p) {
+                Object s = SYNC.get(ps);
+                if (s != null) {
+                    while (!SYNC.compareAndSet(ps, s, null))
+                        s = SYNC.get(ps);
+                    consume(ps, (Integer) s);
+                }
+            }
+            Object x = ps.value;
+            Object[] args = ps.args;
+            Object[] inputs = ps.inputs;
+            while (ps.head != null) {
+                int i = dequeue(ps);
+                Object prev = args[i];
+                Object curr = args[i] = ((IDeref) inputs[i]).deref();
+                if (x != ps && !clojure.lang.Util.equiv(prev, curr)) x = ps;
+            }
+            return x == ps ? ps.value = Util.apply(ps.combinator, args) : x;
+        } catch (Throwable e) {
+            ps.step = null;
+            cancel(ps);
+            throw e;
+        } finally {
+            ps.owner = null;
+            ready(ps);
+        }
     }
 
-    static Process run(IFn c, Object fs, IFn n, IFn t) {
-        int arity = RT.count(fs);
-        Iterator it = RT.iter(fs);
-        Object[] args = new Object[arity];
-        Object[] inputs = new Object[arity];
-        int[] dirty = Heap.create(arity);
-        Process ps = new Process();
-        ps.notifier = n;
-        ps.terminator = t;
-        ps.combinator = c;
-        ps.value = ps;
-        ps.alive = arity;
-        ps.inputs = inputs;
-        ps.dirty = dirty;
-        IFn done = new AFn() {
-            @Override
-            public Object invoke() {
-                boolean last;
-                synchronized (ps) {
-                    last = --ps.alive == 0 && ps.value != ps;
+    static void step(Process ps, Integer i) {
+        if (ps.owner == Thread.currentThread()) event(ps, i); else for(;;) {
+            Object s = SYNC.get(ps);
+            if (s == IDLE) {
+                if (SYNC.compareAndSet(ps, IDLE, null)) {
+                    event(ps, i);
+                    ready(ps);
+                    break;
                 }
-                if (last) ps.terminator.invoke();
-                return null;
-            }
-        };
-        synchronized (ps) {
-            for(int i = 0; i < arity; i++) {
-                int index = i;
-                inputs[i] = ((IFn) it.next()).invoke(new AFn() {
-                    @Override
-                    public Object invoke() {
-                        boolean race;
-                        synchronized (ps) {
-                            Heap.enqueue(dirty, index);
-                            race = Heap.size(dirty) == 1 && ps.value != ps;
-                        }
-                        if (race) {
-                            IFn n = ps.notifier;
-                            if (n == null) synchronized (ps) {
-                                do try {
-                                    ((IDeref) inputs[Heap.dequeue(dirty)]).deref();
-                                } catch (Throwable f) {} while (0 < Heap.size(dirty));
-                            } else n.invoke();
-                        }
-                        return null;
-                    }
-                }, done);
+            } else {
+                ps.siblings[i] = s;
+                if (SYNC.compareAndSet(ps, s, i)) break;
             }
         }
-        if (Heap.size(dirty) == arity) ps.args = args;
-        n.invoke();
+    }
+
+    static boolean spawn(Process ps, Integer i, IFn flow) {
+        int p = ps.pending;
+        ps.args[i] = ps;
+        ps.siblings[i] = IDLE;
+        ps.inputs[i] = flow.invoke(new AFn() {
+            @Override
+            public Object invoke() {
+                step(ps, i);
+                return null;
+            }
+        }, new AFn() {
+            @Override
+            public Object invoke() {
+                ps.children[i] = IDLE;
+                step(ps, i);
+                return null;
+            }
+        });
+        return p == ps.pending || terminated(ps, i);
+    }
+
+    static Process run(IFn c, Object fs, IFn s, IFn d) {
+        int arity = RT.count(fs);
+        Iterator it = RT.iter(fs);
+        Process ps = new Process();
+        ps.done = d;
+        ps.combinator = c;
+        ps.value = ps;
+        ps.pending = arity;
+        ps.args = new Object[arity];
+        ps.inputs = new Object[arity];
+        ps.children = new Object[arity];
+        ps.siblings = new Object[arity];
+        ps.owner = Thread.currentThread();
+        int initialized = 0;
+        for (int i = 0; i < arity; i++) initialized = spawn(ps, i, (IFn) it.next()) ? initialized : initialized + 1;
+        if (arity == initialized) ps.step = s; else cancel(ps);
+        ps.owner = null;
+        s.invoke();
         return ps;
     }
 }

@@ -1,4 +1,5 @@
 (ns missionary.impl.Propagator
+  (:require [missionary.impl.PairingHeap :as ph])
   (:import missionary.Cancelled))
 
 (declare sub unsub transfer)
@@ -59,31 +60,17 @@
 
 (defn release [_])
 
-(defn link [^Process x ^Process y]
-  (if (lt (.-ranks (.-parent x)) (.-ranks (.-parent y)))
-    (do (set! (.-sibling y) (.-child x))
-        (set! (.-child x) y) x)
-    (do (set! (.-sibling x) (.-child y))
-        (set! (.-child y) x) y)))
-
-(defn dequeue [^Process ps]
-  (let [head (.-child ps)]
-    (set! (.-child ps) ps)
-    (loop [heap nil
-           prev nil
-           head head]
-      (if (nil? head)
-        (if (nil? prev) heap (if (nil? heap) prev (link heap prev)))
-        (let [next (.-sibling head)]
-          (set! (.-sibling head) nil)
-          (if (nil? prev)
-            (recur heap head next)
-            (let [head (link prev head)]
-              (recur (if (nil? heap) head (link heap head)) nil next))))))))
+(def impl
+  (ph/impl
+    (fn [_ ^Process x ^Process y] (lt (.-ranks (.-parent x)) (.-ranks (.-parent y))))
+    (fn [_ ^Process x] (.-child x))
+    (fn [_ ^Process x y] (set! (.-child x) y))
+    (fn [_ ^Process x] (.-sibling x))
+    (fn [_ ^Process x y] (set! (.-sibling x) y))))
 
 (defn enqueue [^Process r ^Process p]
   (set! (.-child p) nil)
-  (if (nil? r) p (link p r)))
+  (if (nil? r) p (ph/meld impl nil p r)))
 
 (defn schedule [^Process ps]
   (let [^Context ctx context
@@ -254,7 +241,7 @@
         (loop [^Process ps ps]
           (let [^Publisher pub (.-parent ps)]
             (set! (.-cursor ctx) (.-ranks pub))
-            (set! (.-reacted ctx) (dequeue ps))
+            (set! (.-reacted ctx) (ph/dmin impl nil ps))
             (acquire pub)
             (if ^boolean (.-failed ps)
               (if ^boolean (.-owned ps)
