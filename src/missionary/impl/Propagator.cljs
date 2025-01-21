@@ -32,6 +32,8 @@
 
 (def children 0)
 
+(def ceiling (make-array 0))
+
 (defn ^boolean lt [x y]
   (let [xl (alength x)
         yl (alength y)
@@ -99,12 +101,12 @@
             ((if (.-flag sub) (.-lcb sub) (.-rcb sub)))
             (recur n)))))))
 
-(defn exit [^Context ctx ^boolean top ^Process p ^Subscription s]
+(defn exit [^Context ctx ^boolean top ^boolean idle ^Process p ^Subscription s]
   (when top (propagate ctx))
-  (if (nil? p)
-    (do (set! (.-sub ctx) nil)
-        (loop [ps (.-reacted ctx)]
-          (when-not (nil? ps)
+  (if idle
+    (do (loop []
+          (when-some [ps (.-delayed ctx)]
+            (set! (.-delayed ctx) nil)
             (loop [ps ps]
               (set! (.-reacted ctx) (dequeue ps))
               (let [pub (.-parent ps)]
@@ -116,10 +118,8 @@
                   (propagate ctx)))
               (when-some [ps (.-reacted ctx)]
                 (recur ps)))
-            (let [ps (.-delayed ctx)]
-              (set! (.-delayed ctx) nil)
-              (set! (.-time ctx) (inc (.-time ctx)))
-              (recur ps))))
+            (set! (.-time ctx) (inc (.-time ctx)))
+            (recur)))
         (set! (.-process ctx) nil)
         (set! (.-cursor ctx) nil))
     (do (set! (.-sub ctx) s)
@@ -171,11 +171,17 @@
             (recur n))))
       (set! (.-sub ctx) s))))
 
+(defn touch [^Context ctx]
+  (if (nil? (.-cursor ctx))
+    (do (set! (.-cursor ctx) ceiling)
+        true) false))
+
 (defn accept [^Subscription sub]
   (let [ctx context
         ps (.-target sub)
         pub (.-parent ps)
         top (enter pub)
+        idle (touch ctx)
         p (.-process ctx)
         s (.-sub ctx)]
     (try (set! (.-process ctx) ps)
@@ -188,7 +194,7 @@
            (do (detach sub)
                (attach (.-waiting ps) (set! (.-waiting ps) sub))
                ((.-accept pub))))
-         (finally (exit ctx top p s)))))
+         (finally (exit ctx top idle p s)))))
 
 (defn cancel [^Process ps]
   (let [pub (.-parent ps)]
@@ -202,6 +208,7 @@
         ps (.-target sub)
         pub (.-parent ps)
         top (enter pub)
+        idle (touch ctx)
         p (.-process ctx)
         s (.-sub ctx)]
     (try (set! (.-process ctx) ps)
@@ -223,30 +230,33 @@
                      (cancel ps)
                      (do (set! (.-flag sub) true)
                          (dispatch sub))))))))
-         nil (finally (exit ctx top p s)))))
+         nil (finally (exit ctx top idle p s)))))
 
 (defn bind [^Process ps f]
   (fn
     ([]
      (let [ctx context
            top (enter (.-parent ps))
+           idle (touch ctx)
            p (.-process ctx)
            s (.-sub ctx)]
        (try (set! (.-process ctx) ps)
             (set! (.-sub ctx) nil)
-            (f) (finally (exit ctx top p s)))))
+            (f) (finally (exit ctx top idle p s)))))
     ([x]
      (let [ctx context
            top (enter (.-parent ps))
+           idle (touch ctx)
            p (.-process ctx)
            s (.-sub ctx)]
        (try (set! (.-process ctx) ps)
             (set! (.-sub ctx) nil)
-            (f x) (finally (exit ctx top p s)))))))
+            (f x) (finally (exit ctx top idle p s)))))))
 
 (defn sub [^Publisher pub lcb rcb]
   (let [ctx context
         top (enter pub)
+        idle (touch ctx)
         p (.-process ctx)
         s (.-sub ctx)]
     (try (let [ps (if-some [ps (.-current pub)]
@@ -266,7 +276,7 @@
            (attach (.-waiting ps) (set! (.-waiting ps) sub))
            (set! (.-sub ctx) sub)
            ((.-subscribe pub)) sub)
-         (finally (exit ctx top p s)))))
+         (finally (exit ctx top idle p s)))))
 
 (defn ranks []
   (if-some [^Process ps (.-process context)]
@@ -336,7 +346,7 @@
         cursor (.-cursor ctx)]
     (if (or (nil? (.-process ps)) (not (identical? ps (.-current pub))))
       ((.-tick pub))
-      (if (or (nil? cursor) (lt cursor (.-ranks pub)))
+      (if (lt cursor (.-ranks pub))
         (set! (.-reacted ctx) (enqueue (.-reacted ctx) ps))
         (set! (.-delayed ctx) (enqueue (.-delayed ctx) ps))))))
 

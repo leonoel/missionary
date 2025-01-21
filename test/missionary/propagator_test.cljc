@@ -283,3 +283,32 @@
         (l/cancel :sub1
           (l/cancelled :eff1)
           (l/notified :sub1))))))
+
+(t/deftest no-reentrant-propagation
+  (let [x (m/signal l/effect)
+        y (m/signal l/effect)]
+    (l/run
+      x (l/perform :x-sub
+          (l/performed :x-ps
+            (l/notify :x-ps))
+          (l/notified :x-sub))
+      y (l/perform :y-sub
+          (l/performed :y-ps
+            (l/notify :y-ps))
+          (l/notified :y-sub))
+      (l/transfer :x-sub
+        (l/transferred :x-ps :x1))
+      (l/check #{:x1})
+      (l/transfer :y-sub
+        (l/transferred :y-ps :y1))
+      (l/check #{:y1})
+      (l/notify :y-ps
+        (l/notified :y-sub
+          (l/transfer :y-sub
+            (l/transferred :y-ps :y2))
+          (l/check #{:y2})
+          (l/notify :x-ps))
+        (l/notified :x-sub
+          (l/transfer :x-sub
+            (l/transferred :x-ps :x2))
+          (l/check #{:x2}))))))

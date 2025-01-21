@@ -122,6 +122,8 @@ public interface Propagator {
 
     AtomicInteger children = new AtomicInteger();
 
+    int[] ceiling = new int[0];
+
     static boolean lt(int[] x, int[] y) {
         int xl = x.length;
         int yl = y.length;
@@ -198,12 +200,12 @@ public interface Propagator {
         }
     }
 
-    static void exit(Context ctx, boolean top, Process p, Subscription s) {
+    static void exit(Context ctx, boolean top, boolean idle, Process p, Subscription s) {
         if (top) propagate(ctx);
-        if (p == null) {
-            ctx.sub = null;
-            Process ps = ctx.reacted;
-            while (ps != null) {
+        if (idle) {
+            Process ps;
+            while ((ps = ctx.delayed) != null) {
+                ctx.delayed = null;
                 do {
                     ctx.reacted = dequeue(ps);
                     Publisher pub = ps.parent;
@@ -214,10 +216,7 @@ public interface Propagator {
                         pub.tick.invoke();
                         propagate(ctx);
                     }
-                    ps = ctx.reacted;
-                } while (ps != null);
-                ps = ctx.delayed;
-                ctx.delayed = null;
+                } while ((ps = ctx.reacted) != null);
                 ctx.time++;
             }
             ctx.process = null;
@@ -282,11 +281,19 @@ public interface Propagator {
         }
     }
 
+    static boolean touch(Context ctx) {
+        if (ctx.cursor == null) {
+            ctx.cursor = ceiling;
+            return true;
+        } else return false;
+    }
+
     static Object accept(Subscription sub) {
         Context ctx = context.get();
         Process ps = sub.target;
         Publisher pub = ps.parent;
         boolean top = enter(pub);
+        boolean idle = touch(ctx);
         Process p = ctx.process;
         Subscription s = ctx.sub;
         try {
@@ -303,7 +310,7 @@ public interface Propagator {
                 return pub.accept.invoke();
             }
         } finally {
-            exit(ctx, top, p, s);
+            exit(ctx, top, idle, p, s);
         }
     }
 
@@ -319,6 +326,7 @@ public interface Propagator {
         Process ps = sub.target;
         Publisher pub = ps.parent;
         boolean top = enter(pub);
+        boolean idle = touch(ctx);
         Process p = ctx.process;
         Subscription s = ctx.sub;
         try {
@@ -338,7 +346,7 @@ public interface Propagator {
             }
             return null;
         } finally {
-            exit(ctx, top, p, s);
+            exit(ctx, top, idle, p, s);
         }
     }
 
@@ -348,6 +356,7 @@ public interface Propagator {
             public Object invoke() {
                 Context ctx = context.get();
                 boolean top = enter(ps.parent);
+                boolean idle = touch(ctx);
                 Process p = ctx.process;
                 Subscription s = ctx.sub;
                 try {
@@ -355,7 +364,7 @@ public interface Propagator {
                     ctx.sub = null;
                     return f.invoke();
                 } finally {
-                    exit(ctx, top, p, s);
+                    exit(ctx, top, idle, p, s);
                 }
             }
 
@@ -363,6 +372,7 @@ public interface Propagator {
             public Object invoke(Object x) {
                 Context ctx = context.get();
                 boolean top = enter(ps.parent);
+                boolean idle = touch(ctx);
                 Process p = ctx.process;
                 Subscription s = ctx.sub;
                 try {
@@ -370,7 +380,7 @@ public interface Propagator {
                     ctx.sub = null;
                     return f.invoke(x);
                 } finally {
-                    exit(ctx, top, p, s);
+                    exit(ctx, top, idle, p, s);
                 }
             }
         };
@@ -379,6 +389,7 @@ public interface Propagator {
     static Subscription sub(Publisher pub, IFn lcb, IFn rcb) {
         Context ctx = context.get();
         boolean top = enter(pub);
+        boolean idle = touch(ctx);
         Process p = ctx.process;
         Subscription s = ctx.sub;
         try {
@@ -400,7 +411,7 @@ public interface Propagator {
             pub.subscribe.invoke();
             return sub;
         } finally {
-            exit(ctx, top, p, s);
+            exit(ctx, top, idle, p, s);
         }
     }
 
@@ -483,10 +494,9 @@ public interface Propagator {
         Context ctx = context.get();
         Process ps = ctx.process;
         Publisher pub = ps.parent;
-        int[] cursor = ctx.cursor;
         if (ps.process == null || pub.current != ps)
             pub.tick.invoke();
-        else if (cursor == null || lt(cursor, pub.ranks))
+        else if (lt(ctx.cursor, pub.ranks))
             ctx.reacted = enqueue(ctx.reacted, ps);
         else
             ctx.delayed = enqueue(ctx.delayed, ps);
