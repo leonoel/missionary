@@ -36,6 +36,12 @@ public interface Observe {
             cb = ps.notifier;
             if (cb != null) {
                 ps.notifier = null;
+                try {
+                    ((IFn) ps.unsub).invoke();
+                    ps.unsub = new Cancelled("Observe cancelled.");
+                } catch (Throwable e) {
+                    ps.unsub = e;
+                }
                 if (ps.value != ps) {
                     ps.value = ps;
                     ps.notifyAll();
@@ -49,8 +55,7 @@ public interface Observe {
     static Object transfer(Process ps) {
         if (ps.notifier == null) {
             ps.terminator.invoke();
-            ((IFn) ps.unsub).invoke();
-            return clojure.lang.Util.sneakyThrow(new Cancelled("Observe cancelled."));
+            return clojure.lang.Util.sneakyThrow((Throwable) ps.unsub);
         } else synchronized (ps) {
             Object x = ps.value;
             ps.value = ps;
@@ -82,13 +87,16 @@ public interface Observe {
                 }
             });
         } catch (Throwable e) {
-            ps.unsub = new AFn() {
-                @Override
-                public Object invoke() {
-                    return clojure.lang.Util.sneakyThrow(e);
+            IFn cb = n;
+            synchronized (ps) {
+                ps.unsub = e;
+                ps.notifier = null;
+                if (ps.value != ps) {
+                    ps.value = ps;
+                    cb = null;
                 }
-            };
-            kill(ps);
+            }
+            if (cb != null) cb.invoke();
         }
         return ps;
     }

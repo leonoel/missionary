@@ -50,12 +50,12 @@
                   (lc/drop 0)
                   #(lc/event :unsub)))
               (l/cancel :main
-                (l/notified :main))
-              (l/crash :main
-                (l/terminated :main)
                 (l/compose
                   (l/check #{:unsub})
-                  nil))
+                  nil)
+                (l/notified :main))
+              (l/crash :main
+                (l/terminated :main))
               (l/check #(instance? Cancelled %)))))))
 
 ;; subject throws exception after callback

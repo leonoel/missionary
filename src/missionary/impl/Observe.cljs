@@ -12,6 +12,10 @@
 (defn kill [^Process ps]
   (when-some [cb (.-notifier ps)]
     (set! (.-notifier ps) nil)
+    (try ((.-unsub ps))
+         (set! (.-unsub ps) (Cancelled. "Observe cancelled."))
+         (catch :default e
+           (set! (.-unsub ps) e)))
     (let [x (.-value ps)]
       (set! (.-value ps) nil)
       (when (identical? x ps) (cb)))))
@@ -19,8 +23,7 @@
 (defn transfer [^Process ps]
   (if (nil? (.-notifier ps))
     (do ((.-terminator ps))
-        ((.-unsub ps))
-        (throw (Cancelled. "Observe cancelled.")))
+        (throw (.-unsub ps)))
     (let [x (.-value ps)]
       (set! (.-value ps) ps) x)))
 
@@ -34,8 +37,7 @@
                     (do (set! (.-value ps) x) (cb))
                     (throw (js/Error. "Can't process event - consumer is not ready.")))))))
          (catch :default e
+           (set! (.-unsub ps) e)
            (set! (.-notifier ps) nil)
-           (set! (.-unsub ps) #(throw e))
            (if (identical? ps (.-value ps))
              (n) (set! (.-value ps) ps)))) ps))
-
