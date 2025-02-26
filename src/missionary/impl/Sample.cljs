@@ -5,7 +5,7 @@
 (deftype Process [combinator notifier terminator args inputs
                   ^boolean busy ^boolean done ^number alive]
   IFn
-  (-invoke [_] ((aget inputs (dec (alength inputs)))))
+  (-invoke [_] (dotimes [i (alength inputs)] ((aget inputs i))))
   IDeref
   (-deref [p] (transfer p)))
 

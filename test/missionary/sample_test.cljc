@@ -24,6 +24,8 @@
                 (l/transferred :sampler :sampler1))
               (l/check #{[:x1 :y1 :sampler1]})
               (l/cancel :main
+                (l/cancelled :x)
+                (l/cancelled :y)
                 (l/cancelled :sampler))
               (l/terminate :sampler
                 (l/cancelled :x)
@@ -41,6 +43,8 @@
                 (l/transferred :sampler :sampler1))
               (l/check #{[:x2 :y1 :sampler1]})
               (l/cancel :main
+                (l/cancelled :x)
+                (l/cancelled :y)
                 (l/cancelled :sampler))
               (l/terminate :sampler
                 (l/cancelled :x)

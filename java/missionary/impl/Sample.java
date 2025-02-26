@@ -26,7 +26,8 @@ public interface Sample {
 
         @Override
         public Object invoke() {
-            return ((IFn) inputs[inputs.length - 1]).invoke();
+            for (Object input : inputs) ((IFn) input).invoke();
+            return null;
         }
 
         @Override
