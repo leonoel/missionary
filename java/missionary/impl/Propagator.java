@@ -6,50 +6,43 @@ import clojure.lang.IFn;
 import missionary.Cancelled;
 
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
 public interface Propagator {
 
-    class Publisher extends AFn implements Comparable<Publisher> {
-        static {
-            Util.printDefault(Publisher.class);
+    static boolean lt(int[] x, int[] y) {
+        int xl = x.length;
+        int yl = y.length;
+        int ml = Math.min(xl, yl);
+        for(int i = 0; i < ml; i++) {
+            int xi = x[i];
+            int yi = y[i];
+            if (xi != yi) return xi < yi;
         }
+        return xl > yl;
+    }
 
+    class Publisher extends AFn implements Comparable<Publisher> {
         final int[] ranks;
-        final Object initp;
-        final Object inits;
-        final IFn perform;
-        final IFn subscribe;
-        final IFn lcb;
-        final IFn rcb;
-        final IFn tick;
-        final IFn accept;
-        final IFn reject;
+        final Strategy strategy;
+        final Object arg;
+        final IFn effect;
 
-        final ReentrantLock lock = new ReentrantLock();
-        final AtomicInteger children = new AtomicInteger();
+        volatile int node;
+        volatile int lock;
 
-        IFn effect;
         Process current;
 
-        Publisher(int[] ranks, Object initp, Object inits, IFn perform, IFn subscribe,
-                  IFn lcb, IFn rcb, IFn tick, IFn accept, IFn reject, IFn effect) {
+        Publisher(int[] ranks, Strategy strategy, Object arg, IFn effect) {
             this.ranks = ranks;
-            this.initp = initp;
-            this.inits = inits;
-            this.perform = perform;
-            this.subscribe = subscribe;
-            this.lcb = lcb;
-            this.rcb = rcb;
-            this.tick = tick;
-            this.accept = accept;
-            this.reject = reject;
+            this.strategy = strategy;
+            this.arg = arg;
             this.effect = effect;
         }
 
         @Override
-        public Object invoke(Object l, Object r) {
-            return sub(this, (IFn) l, (IFn) r);
+        public Object invoke(Object lcb, Object rcb) {
+            return sub(this, (IFn) lcb, (IFn) rcb);
         }
 
         @Override
@@ -60,14 +53,21 @@ public interface Propagator {
 
     class Process {
         final Publisher parent;
+        volatile int pressure;
 
-        Object state;
-        Object process;
-        Subscription waiting;
-        Subscription pending;
+        Thread owner;
+        Object input;
+
         Process child;
         Process sibling;
-        Subscription prop;
+
+        Subscription ready;
+        Subscription pending;
+
+        boolean failed;
+        boolean dirty;
+        boolean flag;
+        Object state;
 
         Process(Publisher parent) {
             this.parent = parent;
@@ -86,10 +86,9 @@ public interface Propagator {
 
         Subscription prev;
         Subscription next;
-        Subscription prop;
 
+        boolean ready;
         Object state;
-        boolean flag;          // if task : success. if flow : pending
 
         Subscription(Process source, Process target, IFn lcb, IFn rcb) {
             this.source = source;
@@ -105,35 +104,50 @@ public interface Propagator {
 
         @Override
         public Object deref() {
-            return accept(this);
+            return transfer(this);
         }
     }
 
     class Context {
-        long time;               // time increment
-        Process process;         // process currently running
-        Subscription sub;        // subscription currently running
-        int[] cursor;            // progress of current propagation turn
-        Process reacted;         // pairing heap of processes scheduled for this turn
-        Process delayed;         // pairing heap of processes scheduled for next turn
+        int[] cursor;
+        Process process;
+        Process reacted;
+        Process delayed;
+        Subscription[] buffer = new Subscription[1];
+    }
+
+    interface Strategy {
+        void tick(Process ps);
+        void publish(Process ps);
+        void refresh(Process ps);
+        void subscribe(Subscription sub, boolean idle);
+        void unsubscribe(Subscription sub, boolean idle);
+        Object accept(Subscription sub, boolean idle);
+        Object reject(Subscription sub, boolean idle);
     }
 
     ThreadLocal<Context> context = ThreadLocal.withInitial(Context::new);
 
-    AtomicInteger children = new AtomicInteger();
-
     int[] ceiling = new int[0];
 
-    static boolean lt(int[] x, int[] y) {
-        int xl = x.length;
-        int yl = y.length;
-        int ml = Math.min(xl, yl);
-        for(int i = 0; i < ml; i++) {
-            int xi = x[i];
-            int yi = y[i];
-            if (xi != yi) return xi < yi;
-        }
-        return xl > yl;
+    AtomicInteger root = new AtomicInteger();
+
+    AtomicIntegerFieldUpdater<Publisher> node =
+            AtomicIntegerFieldUpdater.newUpdater(Publisher.class, "node");
+
+    AtomicIntegerFieldUpdater<Publisher> lock =
+            AtomicIntegerFieldUpdater.newUpdater(Publisher.class, "lock");
+
+    AtomicIntegerFieldUpdater<Process> pressure =
+            AtomicIntegerFieldUpdater.newUpdater(Process.class, "pressure");
+
+    static void acquire(Publisher pub) {
+        for(;;) if (lock.get(pub) == 1) Thread.yield();
+        else if (0 == lock.getAndSet(pub, 1)) break;
+    }
+
+    static void release(Publisher pub) {
+        lock.set(pub, 0);
     }
 
     static Process link(Process x, Process y) {
@@ -172,351 +186,614 @@ public interface Propagator {
         return r == null ? p : link(p, r);
     }
 
-    static boolean enter(Publisher pub) {
-        boolean top = !pub.lock.isHeldByCurrentThread();
-        if (top) pub.lock.lock();
-        return top;
+    static void schedule(Process ps) {
+        Publisher pub = ps.parent;
+        Context ctx = context.get();
+        if (lt(ctx.cursor, pub.ranks))
+            ctx.reacted = enqueue(ctx.reacted, ps);
+        else
+            ctx.delayed = enqueue(ctx.delayed, ps);
     }
 
-    static void propagate(Context ctx) {
-        Process ps = ctx.process;
+    static void crash(Process ps, Throwable e) {
         Publisher pub = ps.parent;
-        Subscription sub = ps.prop;
-        ps.prop = null;
-        pub.lock.unlock();
-        ctx.sub = null;
-        if (pub.accept == null) while (sub != null) {
-            Subscription n = sub.prop;
-            sub.prop = null;
-            ctx.process = sub.source;
-            (sub.flag ? sub.lcb : sub.rcb).invoke(sub.state);
-            sub = n;
-        } else while (sub != null) {
-            Subscription n = sub.prop;
-            sub.prop = null;
-            ctx.process = sub.source;
-            (sub.flag ? sub.lcb : sub.rcb).invoke();
-            sub = n;
+        ps.state = e;
+        ps.failed = true;
+        if (pub.current == ps) ((IFn) ps.input).invoke();
+    }
+
+    static boolean ack(Process ps) {
+        return 0 == pressure.decrementAndGet(ps);
+    }
+
+    static Subscription detach(Subscription s) {
+        Subscription p = s.prev;
+        Subscription n = s.next;
+        s.prev = null;
+        s.next = null;
+        if (p == s) return null; else {
+            p.next = n;
+            n.prev = p;
+            return p;
         }
     }
 
-    static void exit(Context ctx, boolean top, boolean idle, Process p, Subscription s) {
-        if (top) propagate(ctx);
+    static void attach(Subscription p, Subscription s) {
+        if (p == null) {
+            s.prev = s;
+            s.next = s;
+        } else {
+            Subscription n = p.next;
+            p.next = s;
+            s.prev = p;
+            s.next = n;
+            n.prev = s;
+        }
+    }
+
+    static void union(Subscription p, Subscription s) {
+        if (p != null) {
+            Subscription n = p.next;
+            Subscription t = s.next;
+            p.next = t;
+            t.prev = p;
+            s.next = n;
+            n.prev = s;
+        }
+    }
+
+    static void clear(Subscription head) {
+        Subscription sub = head;
+        do {
+            Subscription n = sub.next;
+            sub.next = sub.prev = null;
+            sub = n;
+        } while (sub != head);
+    }
+
+    static void bufferize(Context ctx, Subscription head) {
+        Subscription[] buf = ctx.buffer;
+        int i = 0;
+        Subscription sub = head;
+        do {
+            sub.ready = false;
+            buf[i++] = sub;
+            sub = sub.next;
+            int cap = buf.length;
+            if (i == cap) {
+                Subscription[] arr = new Subscription[cap << 1];
+                System.arraycopy(buf, 0, arr, 0, cap);
+                buf = arr;
+            }
+        } while (sub != head);
+        ctx.buffer = buf;
+    }
+
+    static void terminate(Context ctx, Process ps) {
+        Publisher pub = ps.parent;
+        ps.input = null;
+        Subscription ready = ps.ready;
+        if (ready != null) {
+            ps.ready = null;
+            bufferize(ctx, ready);
+            clear(ready);
+        }
+        release(pub);
+    }
+
+    static void invalidate(Context ctx, Process ps) {
+        Publisher pub = ps.parent;
+        ps.dirty = true;
+        Subscription ready = ps.ready;
+        if (ready != null) {
+            ps.ready = null;
+            bufferize(ctx, ready);
+            union(ps.pending, ps.pending = ready);
+        }
+        release(pub);
+    }
+
+    static void stepAll(Process ps) {
+        Context ctx = context.get();
+        invalidate(ctx, ps);
+        int i = 0;
+        Subscription[] buf = ctx.buffer;
+        Subscription sub = buf[i];
+        while (sub != null) {
+            buf[i++] = null;
+            ctx.process = sub.source;
+            sub.lcb.invoke();
+            sub = buf[i];
+        }
+    }
+
+    static void doneAll(Process ps) {
+        Context ctx = context.get();
+        terminate(ctx, ps);
+        int i = 0;
+        Subscription[] buf = ctx.buffer;
+        Subscription sub = buf[i];
+        while (sub != null) {
+            buf[i++] = null;
+            ctx.process = sub.source;
+            sub.rcb.invoke();
+            sub = buf[i];
+        }
+    }
+
+    static void successAll(Process ps) {
+        Context ctx = context.get();
+        terminate(ctx, ps);
+        int i = 0;
+        Subscription[] buf = ctx.buffer;
+        Subscription sub = buf[i];
+        while (sub != null) {
+            buf[i++] = null;
+            ctx.process = sub.source;
+            sub.lcb.invoke(ps.state);
+            sub = buf[i];
+        }
+    }
+
+    static void failureAll(Process ps) {
+        Context ctx = context.get();
+        terminate(ctx, ps);
+        int i = 0;
+        Subscription[] buf = ctx.buffer;
+        Subscription sub = buf[i];
+        while (sub != null) {
+            buf[i++] = null;
+            ctx.process = sub.source;
+            sub.rcb.invoke(ps.state);
+            sub = buf[i];
+        }
+    }
+
+    static void streamAck(Subscription sub) {
+        Process ps = sub.target;
+        if (null == (ps.pending = detach(sub))) {
+            if (ps.owner == null) {
+                ps.state = ps;
+                if (ack(ps)) schedule(ps);
+            }
+        }
+    }
+
+    static void streamEmit(Process ps) {
+        if (ps.flag) doneAll(ps); else {
+            ps.owner = Thread.currentThread();
+            schedule(ps);
+            stepAll(ps);
+        }
+    }
+
+    static void signalEmit(Process ps) {
+        if (ps.flag) doneAll(ps); else stepAll(ps);
+    }
+
+    static void failedEmit(Process ps) {
+        Publisher pub = ps.parent;
+        for(;;) if (ps.flag) {
+            doneAll(ps);
+            break;
+        } else {
+            Util.discard(ps.input);
+            if (!ack(ps)) {
+                release(pub);
+                break;
+            }
+        }
+    }
+
+    static void leave(Context ctx, boolean idle) {
         if (idle) {
             Process ps;
             while ((ps = ctx.delayed) != null) {
                 ctx.delayed = null;
                 do {
-                    ctx.reacted = dequeue(ps);
                     Publisher pub = ps.parent;
-                    if (ps == pub.current) {
-                        ctx.process = ps;
-                        ctx.cursor = pub.ranks;
-                        pub.lock.lock();
-                        pub.tick.invoke();
-                        propagate(ctx);
-                    }
+                    ctx.cursor = pub.ranks;
+                    ctx.reacted = dequeue(ps);
+                    acquire(pub);
+                    if (ps.failed) if (ps.owner == null) failedEmit(ps); else {
+                        ps.owner = null;
+                        if (ack(ps)) failedEmit(ps);
+                        else release(pub);
+                    } else pub.strategy.tick(ps);
                 } while ((ps = ctx.reacted) != null);
-                ctx.time++;
             }
-            ctx.process = null;
             ctx.cursor = null;
-        } else {
-            ctx.sub = s;
-            ctx.process = p;
+            ctx.process = null;
         }
     }
 
-    static void attach(Subscription n, Subscription s) {
-        if (n == null) {
-            s.prev = s;
-            s.next = s;
-        } else {
-            Subscription p = n.prev;
-            s.next = n;
-            s.prev = p;
-            p.next = s;
-            n.prev = s;
-        }
-    }
-
-    static void dispatch(Subscription s) {
-        Process ps = s.target;
-        Subscription p = s.prev;
-        Subscription n = s.next;
-        s.prev = s.next = null;
-        if (p == s) ps.waiting = null; else {
-            n.prev = p;
-            p.next = n;
-            ps.waiting = n;
-        }
-        s.prop = ps.prop;
-        ps.prop = s;
-    }
-
-    static void detach(Subscription s) {
-        Process ps = s.target;
-        Subscription p = s.prev;
-        Subscription n = s.next;
-        s.prev = s.next = null;
-        if (p == s) ps.pending = null; else {
-            n.prev = p;
-            p.next = n;
-            ps.pending = n;
-        }
-    }
-
-    static void foreach(Context ctx, Subscription subs, IFn f) {
-        if (subs != null) {
-            Subscription s = ctx.sub;
-            Subscription sub = subs.next;
-            for(;;) {
-                Subscription n = sub.next;
-                ctx.sub = sub;
-                f.invoke();
-                if (sub == subs) break;
-                else sub = n;
-            }
-            ctx.sub = s;
-        }
-    }
-
-    static boolean touch(Context ctx) {
+    static boolean enter(Context ctx) {
         if (ctx.cursor == null) {
             ctx.cursor = ceiling;
             return true;
         } else return false;
     }
 
-    static Object accept(Subscription sub) {
-        Context ctx = context.get();
+    static void request(Subscription sub, boolean idle) {
         Process ps = sub.target;
         Publisher pub = ps.parent;
-        boolean top = enter(pub);
-        boolean idle = touch(ctx);
-        Process p = ctx.process;
-        Subscription s = ctx.sub;
-        try {
-            ctx.process = ps;
-            ctx.sub = sub;
-            sub.flag = false;
-            if (sub.next == null) {
-                sub.prop = ps.prop;
-                ps.prop = sub;
-                return clojure.lang.Util.sneakyThrow(new Cancelled("Flow publisher cancelled."));
-            } else {
-                detach(sub);
-                attach(ps.waiting, ps.waiting = sub);
-                return pub.accept.invoke();
-            }
-        } finally {
-            exit(ctx, top, idle, p, s);
-        }
-    }
-
-    static void cancel(Process ps) {
-        Publisher pub = ps.parent;
-        pub.current = null;
-        ((IFn) ps.process).invoke();
-        if (ps.child != ps) pub.tick.invoke();
-    }
-
-    static Object unsub(Subscription sub) {
         Context ctx = context.get();
+        sub.ready = true;
+        attach(ps.ready, ps.ready = sub);
+        release(pub);
+        leave(ctx, idle);
+    }
+
+    static void step(Subscription sub, boolean idle) {
         Process ps = sub.target;
         Publisher pub = ps.parent;
-        boolean top = enter(pub);
-        boolean idle = touch(ctx);
-        Process p = ctx.process;
-        Subscription s = ctx.sub;
-        try {
-            ctx.process = ps;
-            ctx.sub = sub;
-            if (sub.next != null) if (pub.effect != null) if (pub.current == ps) {
-                if (pub.accept == null) if (sub.next == sub) cancel(ps); else {
-                    sub.state = new Cancelled("Task publisher cancelled.");
-                    dispatch(sub);
-                } else if (sub.flag) if (sub.next == sub && ps.waiting == null) cancel(ps); else {
-                    detach(sub);
-                    pub.reject.invoke();
-                } else if (sub.next == sub && ps.pending == null) cancel(ps); else {
-                    sub.flag = true;
-                    dispatch(sub);
-                }
-            }
-            return null;
-        } finally {
-            exit(ctx, top, idle, p, s);
-        }
+        Context ctx = context.get();
+        attach(ps.pending, ps.pending = sub);
+        release(pub);
+        sub.lcb.invoke();
+        leave(ctx, idle);
     }
 
-    static IFn bind(Process ps, IFn f) {
-        return new AFn() {
-            @Override
-            public Object invoke() {
-                Context ctx = context.get();
-                boolean top = enter(ps.parent);
-                boolean idle = touch(ctx);
-                Process p = ctx.process;
-                Subscription s = ctx.sub;
-                try {
-                    ctx.process = ps;
-                    ctx.sub = null;
-                    return f.invoke();
-                } finally {
-                    exit(ctx, top, idle, p, s);
-                }
-            }
+    static void done(Subscription sub, boolean idle) {
+        Process ps = sub.target;
+        Publisher pub = ps.parent;
+        Context ctx = context.get();
+        release(pub);
+        sub.rcb.invoke();
+        leave(ctx, idle);
+    }
 
-            @Override
-            public Object invoke(Object x) {
-                Context ctx = context.get();
-                boolean top = enter(ps.parent);
-                boolean idle = touch(ctx);
-                Process p = ctx.process;
-                Subscription s = ctx.sub;
-                try {
-                    ctx.process = ps;
-                    ctx.sub = null;
-                    return f.invoke(x);
-                } finally {
-                    exit(ctx, top, idle, p, s);
-                }
-            }
-        };
+    static void success(Subscription sub, boolean idle) {
+        Process ps = sub.target;
+        Publisher pub = ps.parent;
+        Context ctx = context.get();
+        release(pub);
+        sub.lcb.invoke(ps.state);
+        leave(ctx, idle);
+    }
+
+    static void failure(Subscription sub, boolean idle) {
+        Process ps = sub.target;
+        Publisher pub = ps.parent;
+        Context ctx = context.get();
+        release(pub);
+        sub.rcb.invoke(ps.state);
+        leave(ctx, idle);
+    }
+
+    static void ready(Process ps) {
+        if (ps.owner == Thread.currentThread()) ps.owner = null;
+        else if (0 == pressure.incrementAndGet(ps)) {
+            Context ctx = context.get();
+            boolean idle = enter(ctx);
+            schedule(ps);
+            leave(ctx, idle);
+        }
     }
 
     static Subscription sub(Publisher pub, IFn lcb, IFn rcb) {
         Context ctx = context.get();
-        boolean top = enter(pub);
-        boolean idle = touch(ctx);
-        Process p = ctx.process;
-        Subscription s = ctx.sub;
-        try {
-            Process ps = pub.current;
-            if (ps == null) {
-                ps = new Process(pub);
-                ps.state = pub.initp;
-                ps.child = ps;
-                pub.current = ps;
+        boolean idle = enter(ctx);
+        acquire(pub);
+        Process source = ctx.process;
+        Process target = pub.current;
+        if (target == null) {
+            Process ps = new Process(pub);
+            ps.owner = Thread.currentThread();
+            ps.child = ps;
+            ps.state = ps;
+            pub.current = ps;
+            ctx.process = ps;
+            ps.input = pub.effect.invoke(new AFn() {
+                @Override
+                public Object invoke() {
+                    ready(ps);
+                    return null;
+                }
+                @Override
+                public Object invoke(Object x) {
+                    ps.state = x;
+                    ready(ps);
+                    return null;
+                }
+            }, new AFn() {
+                @Override
+                public Object invoke() {
+                    ps.flag = true;
+                    ready(ps);
+                    return null;
+                }
+                @Override
+                public Object invoke(Object x) {
+                    ps.flag = true;
+                    ps.state = x;
+                    ready(ps);
+                    return null;
+                }
+            });
+            ctx.process = source;
+            pub.strategy.publish(ps);
+            target = ps;
+        }
+        Subscription sub = new Subscription(source, target, lcb, rcb);
+        if (target.failed) step(sub, idle); else pub.strategy.subscribe(sub, idle);
+        return sub;
+    }
+
+    static Object unsub(Subscription sub) {
+        Process ps = sub.target;
+        Publisher pub = ps.parent;
+        Context ctx = context.get();
+        boolean idle = enter(ctx);
+        acquire(pub);
+        if (sub.next == null || ps.input == null || pub.current != ps) {
+            release(pub);
+            leave(ctx, idle);
+        } else if (null == (sub.ready ? ps.pending : ps.ready) && sub.next == sub) {
+            pub.current = null;
+            ((IFn) ps.input).invoke();
+            release(pub);
+            leave(ctx, idle);
+        } else pub.strategy.unsubscribe(sub, idle);
+        return null;
+    }
+
+    static Object transfer(Subscription sub) {
+        Process ps = sub.target;
+        Publisher pub = ps.parent;
+        Context ctx = context.get();
+        boolean idle = enter(ctx);
+        acquire(pub);
+        if (sub.next == null) return pub.strategy.reject(sub, idle); else {
+            if (ps.dirty) {
+                ps.dirty = false;
+                Process p = ctx.process;
                 ctx.process = ps;
-                ctx.sub = null;
-                pub.perform.invoke();
-                ps.process = pub.effect.invoke(bind(ps, pub.lcb), bind(ps, pub.rcb));
-            } else ctx.process = ps;
-            Subscription sub = new Subscription(p, ps, lcb, rcb);
-            sub.state = pub.inits;
-            attach(ps.waiting, ps.waiting = sub);
-            ctx.sub = sub;
-            pub.subscribe.invoke();
-            return sub;
-        } finally {
-            exit(ctx, top, idle, p, s);
+                pub.strategy.refresh(ps);
+                ctx.process = p;
+            }
+            if (ps.failed) {
+                ps.pending = detach(sub);
+                if (ps.input == null) done(sub, idle); else request(sub, idle);
+                return clojure.lang.Util.sneakyThrow((Throwable) ps.state);
+            } else return pub.strategy.accept(sub, idle);
         }
     }
 
-    static int[] ranks() {
-        Process ps = context.get().process;
-        if (ps == null) return new int[] {children.getAndIncrement()}; else {
+    static int[] ranks(Context ctx) {
+        Process ps = ctx.process;
+        if (ps == null) return new int[] {root.getAndIncrement()}; else {
             Publisher p = ps.parent;
             int[] r = p.ranks;
             int s = r.length;
             int[] ranks = new int[s + 1];
             System.arraycopy(r, 0, ranks, 0, s);
-            ranks[s] = p.children.getAndIncrement();
+            ranks[s] = node.getAndIncrement(p);
             return ranks;
         }
     }
 
-    // public API
-
-    static long time() {
-        return context.get().time;
+    static Publisher publisher(Strategy strategy, Object arg, IFn effect) {
+        return new Publisher(ranks(context.get()), strategy, arg, effect);
     }
 
-    static Object transfer() {
-        return ((IDeref) context.get().process.process).deref();
-    }
+    Strategy memo = new Strategy() {
+        @Override
+        public void tick(Process ps) {
+            if (ps.flag) failureAll(ps);
+            else successAll(ps);
+        }
 
-    static Object getp() {
-        return context.get().process.state;
-    }
+        @Override
+        public void publish(Process ps) {
+            if (ps.owner == null) {
+                ps.input = null;
+            } else {
+                ps.owner = null;
+                if (ack(ps)) schedule(ps);
+            }
+        }
 
-    static void setp(Object x) {
-        context.get().process.state = x;
-    }
+        @Override
+        public void refresh(Process ps) {
+            throw new UnsupportedOperationException();
+        }
 
-    static Object gets() {
-        return context.get().sub.state;
-    }
+        @Override
+        public void subscribe(Subscription sub, boolean idle) {
+            Process ps = sub.target;
+            if (ps.input == null) if (ps.flag) failure(sub, idle);
+            else success(sub, idle);
+            else request(sub, idle);
+        }
 
-    static void sets(Object x) {
-        context.get().sub.state = x;
-    }
+        @Override
+        public void unsubscribe(Subscription sub, boolean idle) {
+            Process ps = sub.target;
+            Publisher pub = ps.parent;
+            ps.ready = detach(sub);
+            release(pub);
+            sub.rcb.invoke(new Cancelled("Memo subscription cancelled."));
+            leave(context.get(), idle);
+        }
 
-    static void success(Object x) {
-        Subscription sub = context.get().sub;
-        sub.flag = true;
-        sub.state = x;
-        dispatch(sub);
-    }
+        @Override
+        public Object accept(Subscription sub, boolean idle) {
+            throw new UnsupportedOperationException();
+        }
 
-    static void failure(Object x) {
-        Subscription sub = context.get().sub;
-        sub.state = x;
-        dispatch(sub);
-    }
+        @Override
+        public Object reject(Subscription sub, boolean idle) {
+            throw new UnsupportedOperationException();
+        }
+    };
 
-    static void step() {
-        Subscription sub = context.get().sub;
-        sub.flag = true;
-        dispatch(sub);
-        Process ps = sub.target;
-        attach(ps.pending, ps.pending = sub);
-    }
+    Strategy stream = new Strategy() {
+        @Override
+        public void tick(Process ps) {
+            Publisher pub = ps.parent;
+            if (ps.owner == null) streamEmit(ps); else {
+                ps.owner = null;
+                if (null == ps.pending) {
+                    ps.state = ps;
+                    if (ack(ps)) streamEmit(ps);
+                    else release(pub);
+                } else release(pub);
+            }
+        }
 
-    static void done() {
-        Subscription sub = context.get().sub;
-        dispatch(sub);
-    }
+        @Override
+        public void publish(Process ps) {
+            if (ps.owner == null) if (ps.flag) {
+                ps.input = null;
+            } else {
+                ps.dirty = true;
+                ps.owner = Thread.currentThread();
+                schedule(ps);
+            } else {
+                ps.owner = null;
+                if (ack(ps)) schedule(ps);
+            }
+        }
 
-    static void waiting(IFn f) {
-        Context ctx = context.get();
-        foreach(ctx, ctx.process.waiting, f);
-    }
+        @Override
+        public void refresh(Process ps) {
+            Thread o = ps.owner;
+            try {
+                ps.owner = null;
+                ps.state = ((IDeref) ps.input).deref();
+                ps.owner = o;
+            } catch (Throwable e) {
+                crash(ps, e);
+                ps.owner = o;
+                if (o == null && ack(ps)) schedule(ps);
+            }
+        }
 
-    static void pending(IFn f) {
-        Context ctx = context.get();
-        foreach(ctx, ctx.process.pending, f);
-    }
+        @Override
+        public void subscribe(Subscription sub, boolean idle) {
+            Process ps = sub.target;
+            if (ps.input == null) done(sub, idle);
+            else if (ps.owner == Thread.currentThread()) step(sub, idle);
+            else request(sub, idle);
+        }
 
-    static void schedule() {
-        Context ctx = context.get();
-        Process ps = ctx.process;
-        Publisher pub = ps.parent;
-        if (ps.process == null || pub.current != ps)
-            pub.tick.invoke();
-        else if (lt(ctx.cursor, pub.ranks))
-            ctx.reacted = enqueue(ctx.reacted, ps);
-        else
-            ctx.delayed = enqueue(ctx.delayed, ps);
-    }
+        @Override
+        public void unsubscribe(Subscription sub, boolean idle) {
+            Process ps = sub.target;
+            Publisher pub = ps.parent;
+            if (sub.ready) {
+                ps.ready = detach(sub);
+                release(pub);
+                sub.lcb.invoke();
+            } else {
+                streamAck(sub);
+                release(pub);
+            }
+            leave(context.get(), idle);
+        }
 
-    static void resolve() {
-        Process ps = context.get().process;
-        Publisher pub = ps.parent;
-        if (ps == pub.current) pub.effect = null;
-    }
+        @Override
+        public Object accept(Subscription sub, boolean idle) {
+            Process ps = sub.target;
+            Object result = ps.state;
+            streamAck(sub);
+            if (ps.input == null) done(sub, idle); else request(sub, idle);
+            return result;
+        }
 
-    static Publisher task(Object initp, Object inits,
-                          IFn perform, IFn subscribe, IFn success, IFn failure,
-                          IFn tick, IFn task) {
-        return new Publisher(ranks(), initp, inits, perform, subscribe, success, failure, tick, null, null, task);
-    }
+        @Override
+        public Object reject(Subscription sub, boolean idle) {
+            done(sub, idle);
+            return clojure.lang.Util.sneakyThrow(new Cancelled("Stream subscription cancelled."));
+        }
+    };
 
-    static Publisher flow(Object initp, Object inits,
-                          IFn perform, IFn subscribe, IFn step, IFn done,
-                          IFn tick, IFn accept, IFn reject, IFn flow) {
-        return new Publisher(ranks(), initp, inits, perform, subscribe, step, done, tick, accept, reject, flow);
-    }
+    Strategy signal = new Strategy() {
+        @Override
+        public void tick(Process ps) {
+            Publisher pub = ps.parent;
+            if (ps.owner == null) signalEmit(ps); else {
+                ps.owner = null;
+                if (ack(ps)) signalEmit(ps);
+                else release(pub);
+            }
+        }
+
+        @Override
+        public void publish(Process ps) {
+            if (ps.owner == null) if (ps.flag) {
+                crash(ps, new Error("Empty flow."));
+                ps.input = null;
+            } else {
+                ps.dirty = true;
+            } else {
+                crash(ps, new Error("Uninitialized flow."));
+                schedule(ps);
+            }
+        }
+
+        @Override
+        public void refresh(Process ps) {
+            Publisher pub = ps.parent;
+            ps.owner = Thread.currentThread();
+            schedule(ps);
+            try {
+                IDeref input = (IDeref) ps.input;
+                IFn sg = (IFn) pub.arg;
+                Object r = input.deref();
+                while (ps.owner == null && !ps.flag) {
+                    ps.owner = Thread.currentThread();
+                    r = sg.invoke(r, input.deref());
+                }
+                ps.state = ps.state == ps ? r : sg.invoke(ps.state, r);
+                Subscription head = ps.pending;
+                Subscription sub = head;
+                do {
+                    sub.state = sub.state == ps ? r : sg.invoke(sub.state, r);
+                    sub = sub.next;
+                } while (sub != head);
+            } catch (Throwable e) {
+                crash(ps, e);
+            }
+        }
+
+        @Override
+        public void subscribe(Subscription sub, boolean idle) {
+            Process ps = sub.target;
+            sub.state = ps.state;
+            step(sub, idle);
+        }
+
+        @Override
+        public void unsubscribe(Subscription sub, boolean idle) {
+            Process ps = sub.target;
+            Publisher pub = ps.parent;
+            if (sub.ready) {
+                ps.ready = detach(sub);
+                release(pub);
+                sub.lcb.invoke();
+            } else {
+                ps.pending = detach(sub);
+                release(pub);
+            }
+            leave(context.get(), idle);
+        }
+
+        @Override
+        public Object accept(Subscription sub, boolean idle) {
+            Process ps = sub.target;
+            Object result = sub.state;
+            sub.state = ps;
+            ps.pending = detach(sub);
+            if (ps.input == null) done(sub, idle); else request(sub, idle);
+            return result;
+        }
+
+        @Override
+        public Object reject(Subscription sub, boolean idle) {
+            done(sub, idle);
+            return clojure.lang.Util.sneakyThrow(new Cancelled("Signal subscription cancelled."));
+        }
+    };
 }

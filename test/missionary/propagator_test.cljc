@@ -281,8 +281,8 @@
       (l/cancelled :eff2
         (l/notify :eff1)
         (l/cancel :sub1
-          (l/cancelled :eff1)
-          (l/notified :sub1))))))
+          (l/cancelled :eff1)))
+      (l/notified :sub1))))        ;; TBD : should step be synchronous with cancellation ?
 
 (t/deftest no-reentrant-propagation
   (let [x (m/signal l/effect)
@@ -312,3 +312,57 @@
           (l/transfer :x-sub
             (l/transferred :x-ps :x2))
           (l/check #{:x2}))))))
+
+(t/deftest uninitialized-signal
+  (l/run
+    (m/signal l/effect)
+    (l/perform :sub
+      (l/performed :eff)
+      (l/cancelled :eff
+        (l/notify :eff))
+      (l/notified :sub)
+      (l/crashed :eff
+        (l/terminate :eff)
+        (Cancelled.)))
+    (l/crash :sub
+      (l/terminated :sub))
+    (lc/drop 1)))
+
+(t/deftest empty-signal
+  (l/run
+    (m/signal l/effect)
+    (l/perform :sub
+      (l/performed :eff
+        (l/terminate :eff))
+      (l/cancelled :eff)
+      (l/notified :sub))
+    (l/crash :sub
+      (l/terminated :sub))
+    (lc/drop 1)))
+
+(t/deftest stream-subscribe-after-termination
+  (let [s (m/stream (m/seed (range 10)))
+        t (m/reduce conj s)]
+    (l/run
+      t (l/perform :sub1 (l/succeeded :sub1 #{(range 10)}))
+      t (l/perform :sub2 (l/succeeded :sub2 #{()})))))
+
+(t/deftest signal-unsub-after-termination-while-pending
+  (let [s (m/signal l/effect)]
+    (l/run
+      s (l/perform :sub1
+          (l/performed :eff
+            (l/notify :eff))
+          (l/notified :sub1))
+      s (l/perform :sub2
+          (l/notified :sub2))
+      (l/transfer :sub2
+        (l/transferred :eff
+          (l/terminate :eff)
+          :foo)
+        (l/terminated :sub2))
+      (l/check #{:foo})
+      (l/cancel :sub1)
+      (l/transfer :sub1
+        (l/terminated :sub1))
+      (l/check #{:foo}))))

@@ -829,7 +829,7 @@ Example :
   signal! (fn [f] (Reactor/publish f true)))
 
 
-(def
+(defn
   ^{:static true
     :arglists '([t])
     :doc "
@@ -859,24 +859,10 @@ Example :
 (fib42 prn prn)                 ;; expensive computation starts here, result is eventually printed
 (fib42 prn prn)                 ;; expensive computation doesn't run again, previous result is reused
 ```
-"} memo
-  (letfn [(run [])
-          (sub []
-            (when-some [f (Propagator/getp)] (f)))
-          (success [x]
-            (Propagator/resolve)
-            (Propagator/setp #(Propagator/success x))
-            (Propagator/schedule))
-          (failure [x]
-            (Propagator/resolve)
-            (Propagator/setp #(Propagator/failure x))
-            (Propagator/schedule))
-          (tick []
-            (Propagator/waiting (Propagator/getp)))]
-    (fn [task] (Propagator/task nil nil run sub success failure tick task))))
+"} memo [task] (Propagator/publisher Propagator/memo nil task))
 
 
-(def
+(defn
   ^{:static true
     :arglists '([f])
     :doc "
@@ -906,83 +892,10 @@ Example :
    (m/reduce counter 0 (m/eduction (take 4) >clock)))
  prn prn)                                                 ;; After 4 seconds, prints [3 4]
 ```
-"} stream
-  (let [slot-ready 0
-        slot-failed 1
-        slot-done 2
-        slot-value 3
-        slot-pending 4
-        slot-thread 5
-        slot-time 6
-        slots 7]
-    (letfn [(thread []
-              #?(:clj (Thread/currentThread) :cljs nil))
-            (propagate-step []
-              (let [^objects state (Propagator/getp)]
-                (aset state slot-pending
-                  (inc (aget state slot-pending)))
-                (Propagator/step)))
-            (propagate-done []
-              (Propagator/done))
-            (emit [^objects state]
-              (aset state slot-value state)
-              (aset state slot-ready false)
-              (aset state slot-thread (thread))
-              (aset state slot-time (Propagator/time))
-              (Propagator/waiting propagate-step))
-            (ack [^objects state]
-              (when (zero? (aset state slot-pending
-                             (dec (aget state slot-pending))))
-                (when (aget state slot-ready) (emit state))))
-            (run []
-              (let [state (object-array slots)]
-                (aset state slot-ready false)
-                (aset state slot-failed false)
-                (aset state slot-done false)
-                (aset state slot-pending 0)
-                (aset state slot-time -1)
-                (Propagator/setp state)))
-            (sub []
-              (let [^objects state (Propagator/getp)]
-                (when (identical? (thread) (aget state slot-thread))
-                  (when (== (Propagator/time) (aget state slot-time))
-                    (aset state slot-pending
-                      (inc (aget state slot-pending)))
-                    (Propagator/step)))))
-            (step []
-              (Propagator/schedule))
-            (done []
-              (Propagator/resolve)
-              (let [^objects state (Propagator/getp)]
-                (aset state slot-done true)
-                (Propagator/waiting propagate-done)))
-            (tick []
-              (let [^objects state (Propagator/getp)]
-                (aset state slot-ready true)
-                (when (zero? (aget state slot-pending))
-                  (emit state))))
-            (accept []
-              (let [^objects state (Propagator/getp)
-                    x (aget state slot-value)]
-                (if (identical? x state)
-                  (try (let [x (Propagator/transfer)]
-                         (aset state slot-value x)
-                         (ack state) x)
-                       (catch #?(:clj Throwable :cljs :default) e
-                         (aset state slot-failed true)
-                         (aset state slot-value e)
-                         (ack state) (throw e)))
-                  (do (when (aget state slot-done)
-                        (Propagator/done))
-                      (ack state)
-                      (if (aget state slot-failed)
-                        (throw x) x)))))
-            (reject []
-              (ack (Propagator/getp)))]
-      (fn [flow] (Propagator/flow nil nil run sub step done tick accept reject flow)))))
+"} stream [flow] (Propagator/publisher Propagator/stream nil flow))
 
 
-(def
+(defn
   ^{:static true
     :arglists '([flow] [sg flow])
     :doc "
@@ -1016,77 +929,5 @@ Example :
 (dispose!)                                     ; cleanup, deregisters the atom watch
 ```
 "} signal
-  (let [slot-sg 0
-        slot-done 1
-        slot-busy 2
-        slot-failed 3
-        slot-value 4
-        slots 5]
-    (letfn [(propagate-step []
-              (Propagator/step))
-            (propagate-done []
-              (Propagator/done))
-            (collapse []
-              (let [^objects state (Propagator/getp)
-                    f (aget state slot-sg)
-                    x (aget state slot-value)
-                    r (Propagator/gets)]
-                (Propagator/sets
-                  (if (identical? r state)
-                    x (f r x)))))
-            (run []
-              (let [state (object-array slots)]
-                (aset state slot-sg (Propagator/getp))
-                (aset state slot-done false)
-                (aset state slot-busy false)
-                (aset state slot-failed false)
-                (aset state slot-value state)
-                (Propagator/setp state)))
-            (sub []
-              (let [^objects state (Propagator/getp)]
-                (Propagator/sets (aget state slot-value))
-                (Propagator/step)))
-            (step []
-              (let [^objects state (Propagator/getp)]
-                (when (aset state slot-busy (not (aget state slot-busy)))
-                  (Propagator/schedule))))
-            (done []
-              (Propagator/resolve)
-              (let [^objects state (Propagator/getp)]
-                (aset state slot-done true)
-                (Propagator/schedule)))
-            (tick []
-              (let [^objects state (Propagator/getp)]
-                (Propagator/waiting
-                  (if (aget state slot-done)
-                    propagate-done
-                    propagate-step))))
-            (accept []
-              (let [^objects state (Propagator/getp)
-                    y (Propagator/gets)]
-                (Propagator/sets state)
-                (if (aget state slot-busy)
-                  (try
-                    (loop [y y]
-                      (let [r (aget state slot-value)]
-                        (aset state slot-value (Propagator/transfer))
-                        (Propagator/pending collapse)
-                        (let [f (aget state slot-sg)
-                              x (aget state slot-value)
-                              y (if (identical? y state) x (f y x))]
-                          (when-not (identical? r state)
-                            (aset state slot-value (f r x)))
-                          (if (aset state slot-busy
-                                (not (aget state slot-busy)))
-                            (recur y) y))))
-                    (catch #?(:clj Throwable :cljs :default) e
-                      (aset state slot-failed true)
-                      (aset state slot-value e)
-                      (throw e)))
-                  (do (when (aget state slot-done) (Propagator/done))
-                      (if (aget state slot-failed)
-                        (throw (aget state slot-value)) y)))))
-            (reject [])]
-      (fn
-        ([flow] (Propagator/flow {} nil run sub step done tick accept reject flow))
-        ([sg flow] (Propagator/flow sg nil run sub step done tick accept reject flow))))))
+  ([flow] (Propagator/publisher Propagator/signal {} flow))
+  ([sg flow] (Propagator/publisher Propagator/signal sg flow)))
