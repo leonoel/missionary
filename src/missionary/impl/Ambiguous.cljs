@@ -294,7 +294,7 @@
                     (if (nil? curr)
                       (ack p)
                       (when (instance? Processor curr)
-                        (let [pivot (.-child pr)]
+                        (let [pivot (.-child curr)]
                           (set! (.-current b) pivot)
                           (set! (.-parent pivot) b)
                           (loop [pr ^Processor curr]
