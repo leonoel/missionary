@@ -3,7 +3,7 @@
   (:require [cloroutine.core :refer [cr] :include-macros true])
   (:import (missionary.impl Reduce Reductions GroupBy Relieve Latest Sample Reactor Fiber Sequential Ambiguous
                             Continuous Watch Observe Buffer Rendezvous Dataflow Mailbox Semaphore RaceJoin Sleep
-                            Never Seed Eduction Zip Propagator #?(:clj Thunk) #?(:clj Pub) #?(:clj Sub))
+                            Never Seed Eduction Zip Propagator Store #?(:clj Thunk) #?(:clj Pub) #?(:clj Sub))
            #?(:clj org.reactivestreams.Publisher))
   #?(:cljs (:require-macros [missionary.core :refer [sp ap cp amb amb> amb= ! ? ?> ?< ?? ?! ?= holding reactor]])))
 
@@ -931,3 +931,20 @@ Example :
 "} signal
   ([flow] (Propagator/publisher Propagator/signal {} flow))
   ([sg flow] (Propagator/publisher Propagator/signal sg flow)))
+
+
+(defn
+  ^{:static true
+    :arglists '([init] [sg init])
+    :doc "
+Returns a new store with initial delta `init` and grouping subsequent deltas with optional 2-arity function `sg`, which
+must be associative. `sg` defaults to `{}`, i.e. discard all but latest.
+
+A store is a stateful concurrent object with 3 methods :
+* used as a flow, read the successive deltas or grouped deltas appended to the store since its creation, as soon as
+they're available. A reader terminates when the store is frozen. Concurrent readers are not allowed.
+* used as a 1-arity function, append a delta to the store.
+* used as a 0-arity function, freeze the store. A frozen store ignores any subsequent delta.
+"} store
+  ([init] (store {} init))
+  ([sg init] (Store/make sg init)))
