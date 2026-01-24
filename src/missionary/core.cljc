@@ -197,19 +197,20 @@ evaluation context defaults to the current thread if the host platform supports 
 
 
 (defmacro ? "
-Parks current evaluation context by given task. Evaluation resumes when the task completes, result is returned or
-rethrown according to completion status. Interrupting the evaluation context cancels the parking task. The evaluation
-context defaults to the current thread if the host platform supports it, and can be redefined with `sp` or `ap`.
+Parks current evaluation context to run the given task. Evaluation resumes when the task completes, returning its
+result or throwing according to completion status. Interrupting the evaluation context cancels the parking task. The
+evaluation context defaults to the current thread if the host platform supports it, and can be redefined with `sp` or
+`ap`.
 " [task] `(park ~task))
 
 
 (defmacro ?> "
-Forks current evaluation context by given flow. Evaluation resumes whenever the flow transfers, result is returned or
-rethrown according to transfer status. Each transfer creates a new processing branch and defines a new evaluation
-context inherited from its parent. `par` is an optional positive number, defaulting to 1, defining the maximal count
-of processing branches allowed to be run concurrently. Interrupting the parent evaluation context cancels the forking
-flow and interrupts all processing branches currently being run and those subsequently run. The evaluation context is
-undefined by default and can be defined with `ap`.
+Forks current evaluation context for each value of the given flow. Evaluation resumes when the flow is ready to
+transfer a value, throwing if the transfer fails. Each transfer creates a new processing branch and defines a new
+evaluation context inherited from its parent. `par` is an optional positive number, defaulting to 1, defining the
+maximal count of processing branches allowed to be run concurrently. Interrupting the parent evaluation context
+cancels the forking flow and interrupts all processing branches currently running or ready to run. The evaluation
+context is undefined by default and can be defined with `ap`.
 
 Example :
 ```clojure
@@ -237,12 +238,12 @@ Example :
 
 
 (defmacro ?< "
-Forks current evaluation context by given flow. Evaluation resumes whenever the flow transfers, result is returned or
-rethrown according to transfer status. Each transfer creates a new processing branch and defines a new evaluation
-context inherited from its parent. Concurrent processing branches are not allowed, and the current processing branch is
-interrupted when the forking flow becomes ready to transfer again. Interrupting the parent evaluation context cancels
-the forking flow and interrupts all processing branches currently being run and those subsequently run. The evaluation
-context is undefined by default and can be defined with `ap` or `cp`.
+Forks current evaluation context for each value of the given flow. Evaluation resumes when the flow is ready to
+transfer a value, throwing if the transfer fails. Each transfer creates a new processing branch and defines a new
+evaluation context inherited from its parent. Concurrent processing branches are not allowed, and the current
+processing branch is interrupted when the forking flow becomes ready to transfer again. Interrupting the parent
+evaluation context cancels the forking flow and interrupts all processing branches currently running or ready to run.
+The evaluation context is undefined by default and can be defined with `ap` or `cp`.
 
 Example :
 ```clojure
