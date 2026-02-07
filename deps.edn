@@ -22,4 +22,12 @@
   {:extra-deps  {olical/cljs-test-runner {:mvn/version "3.8.0"}
                  org.clojure/clojurescript {:mvn/version "1.11.60"}}
    :extra-paths ["test" "cljs-test-runner-out/gen"]
-   :main-opts   ["-m" "cljs-test-runner.main"]}}}
+   :main-opts   ["-m" "cljs-test-runner.main"]}
+
+  :cljs-repl
+  {:extra-deps {org.clojure/clojurescript {:mvn/version "1.11.60"}
+                cider/piggieback {:mvn/version "0.5.3"}
+                nrepl/nrepl {:mvn/version "1.0.0"}}
+   :main-opts ["-m" "nrepl.cmdline"
+               "--middleware" "[cider.piggieback/wrap-cljs-repl]"
+               "-p" "7778"]}}}
