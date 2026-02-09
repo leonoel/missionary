@@ -20,10 +20,10 @@
   cpu #?(:clj Thunk/cpu))
 
 
-(defn
-  ^{:static true
-    :arglists '([executor thunk])
-    :doc "
+(defn via-call
+  {:static true
+   :arglists '([executor thunk])
+   :doc "
 Same as `via`, except the expression to evaluate is provided as a zero-arity function on second argument.
 
 Not supported on clojurescript.
@@ -32,16 +32,17 @@ Not supported on clojurescript.
 (? (via-call blk read-line))
 ;; reads a line from stdin and returns it
 ```
-"} via-call [e t]
+"}
+  [e t]
   (fn [s f]
     #?(:clj (Thunk/run e t s f)
        :cljs (throw (js/Error. "Unsupported operation.")))))
 
 
-(defmacro
-  ^{:arglists     '([executor & body])
-    :style/indent 1
-    :doc          "
+(defmacro via
+  {:arglists     '([executor & body])
+   :style/indent 1
+   :doc          "
 Returns a task evaluating body (in an implicit `do`) on given `java.util.concurrent.Executor` and completing with its result.
 
 Cancellation interrupts the evaluating thread.
@@ -52,13 +53,14 @@ Example :
 ```clojure
 
 ```
-"} via [exec & body] `(via-call ~exec #(do ~@body)))
+"}
+  [exec & body] `(via-call ~exec #(do ~@body)))
 
 
-(defn
-  ^{:static true
-    :arglists '([duration] [duration value])
-    :doc "
+(defn sleep
+  {:static true
+   :arglists '([duration] [duration value])
+   :doc "
 Returns a task completing with given value (nil if not provided) after given duration (in milliseconds).
 
 Cancelling a sleep task makes it fail immediately.
@@ -68,15 +70,15 @@ Example :
 (? (sleep 1000 42))
 #_=> 42               ;; 1 second later
 ```
-"} sleep
+"}
   ([d] (sleep d nil))
   ([d x] (fn [s f] (Sleep/run d x s f))))
 
 
-(defn
-  ^{:static true
-    :arglists '([f & tasks])
-    :doc "
+(defn join
+  {:static true
+   :arglists '([f & tasks])
+   :doc "
 Returns a task running given `tasks` concurrently.
 
 If every task succeeds, `join` completes with the result of applying `f` to these results.
@@ -90,19 +92,19 @@ Example :
 (? (join vector (sleep 1000 1) (sleep 1000 2)))
 #_=> [1 2]            ;; 1 second later
 ```
-"} join
+"}
   ([c] (fn [s _] (s (c)) #(do)))
   ([c & ts] (fn [s f] (RaceJoin/run false c ts s f))))
 
 
-(defn ^{:static true :no-doc true} race-failure [& errors]
+(defn race-failure {:static true :no-doc true} [& errors]
   (ex-info "Race failure." {::errors errors}))
 
 
-(defn
-  ^{:static true
-    :arglists '([& tasks])
-    :doc "
+(defn race
+  {:static true
+   :arglists '([& tasks])
+   :doc "
 Returns a task running given `tasks` concurrently.
 
 If any task succeeds, others are cancelled then `race` completes with this result.
@@ -116,33 +118,35 @@ Example :
 (? (race (sleep 1000 1) (sleep 2000 2)))
 #_=> 1                 ;; 1 second later
 ```
-"} race
+"}
   ([] (fn [_ f] (f (race-failure)) #(do)))
   ([& ts] (fn [s f] (RaceJoin/run true race-failure ts s f))))
 
 
-(defn
-  ^{:static true
-    :arglists '([task])
-    :doc "
+(defn attempt
+  {:static true
+   :arglists '([task])
+   :doc "
 Returns a task always succeeding with result of given `task` wrapped in a zero-argument function returning result if successful or throwing exception if failed.
-"} attempt [task]
+"}
+  [task]
   (fn [s _] (task (fn [x] (s #(-> x))) (fn [e] (s #(throw e))))))
 
 
-(defn
-  ^{:static true
-    :arglists '([task])
-    :doc "
+(defn absolve
+  {:static true
+   :arglists '([task])
+   :doc "
 Returns a task running given `task` completing with a zero-argument function and completing with the result of this function call.
-"} absolve [task]
+"}
+  [task]
   (fn [s f]
     (task
-      (fn [t]
-        (try (s (t))
-             (catch #?(:clj Throwable
-                       :cljs :default) e
-               (f e)))) f)))
+     (fn [t]
+       (try (s (t))
+            (catch #?(:clj Throwable
+                      :cljs :default) e
+              (f e)))) f)))
 
 
 (def
@@ -232,9 +236,10 @@ Example :
   ([par flow] `(fork ~par ~flow)))
 
 
-(defmacro ^{:deprecated true
-            :doc "Alias for `?>`"}
-  ?? [f] `(?> ~f))
+(defmacro ??
+  {:deprecated true
+   :doc "Alias for `?>`"}
+  [f] `(?> ~f))
 
 
 (defmacro ?< "
@@ -264,53 +269,54 @@ Example :
 " [flow] `(switch ~flow))
 
 
-(defmacro ^{:deprecated true
-            :doc "Alias for `?<`"}
-  ?! [f] `(?< ~f))
+(defmacro ?!
+  {:deprecated true
+   :doc "Alias for `?<`"}
+  [f] `(?< ~f))
 
 
-(defmacro
-  ^{:arglists '([flow])
-    :deprecated true
-    :doc "Alias for `(?> ##Inf flow)`"}
-  ?= [flow] `(?> ##Inf ~flow))
+(defmacro ?=
+  {:arglists '([flow])
+   :deprecated true
+   :doc "Alias for `(?> ##Inf flow)`"}
+  [flow] `(?> ##Inf ~flow))
 
 
-(defmacro
-  ^{:arglists     '([& body])
-    :style/indent 0
-    :doc          "
+(defmacro sp
+  {:arglists     '([& body])
+   :style/indent 0
+   :doc          "
 Returns a task evaluating `body` (in an implicit `do`) in a new evaluation context and completing its result. Body
 evaluation can be parked by a task with `?`. Cancelling a `sp` process interrupts its evaluation context.
-"} sp [& body]
+"} [& body]
   `(partial
      (cr {park unpark}
        ~@body) sp-run))
 
 (defn ^:no-doc cp* [cr] (Continuous/flow cr))
 
-(defmacro
-  ^{:arglists     '([& body])
-    :style/indent 0
-    :doc          "
+(defmacro cp
+  {:arglists     '([& body])
+   :style/indent 0
+   :doc          "
 Returns a continuous flow evaluating `body` (in an implicit `do`) in a new evaluation context and producing values of
 each subsequent fork. Body evaluation can be forked by a continuous flow with `?<`. Evaluation and transfers are lazy,
 driven by downstream sampling. Cancelling an `cp` process interrupts its root evaluation context.
-"} cp [& body]
+"} [& body]
   `(cp*
      (cr {switch unpark}
        ~@body)))
 
 
-(defmacro
-  ^{:arglists     '([& body])
-    :style/indent 0
-    :doc          "
+(defmacro ap
+  {:arglists     '([& body])
+   :style/indent 0
+   :doc          "
 Returns a discrete flow evaluating `body` (in an implicit `do`) in a new evaluation context and producing values of each
 subsequent fork. Body evaluation can be parked by a task with `?` and forked by a flow with `?>` and `?<`. Evaluation
 and transfers are eager, backpressured by downstream transfers. Cancelling an `ap` process interrupts its root
 evaluation context.
-"} ap [& body]
+"} [& body]
   `(partial
      (cr {park unpark
           fork unpark
@@ -318,32 +324,33 @@ evaluation context.
        ~@body) ap-run))
 
 
-(defn
-  ^{:static true
-    :arglists '([task])
-    :doc "
+(defn compel
+  {:static true
+   :arglists '([task])
+   :doc "
 Inhibits cancellation signal of given `task`.
-"} compel [task]
+"}
+  [task]
   (fn [s f] (task s f) #(do)))
 
 
-(defn
-  ^{:static true
-    :arglists '([])
-    :doc "
+(defn dfv
+  {:static true
+   :arglists '([])
+   :doc "
 Creates an instance of dataflow variable (aka single-assignment).
 
 A dataflow variable is a function implementing `assign` on 1-arity and `deref` on 2-arity (as task). `assign` immediately binds the variable to given value if not already bound and returns bound value. `deref` is a task completing with the value bound to the variable as soon as it's available.
 
 Cancelling a `deref` task makes it fail immediately.
 ```
-"} dfv [] (Dataflow/make))
+"} [] (Dataflow/make))
 
 
-(defn
-  ^{:static true
-    :arglists '([])
-    :doc "
+(defn mbx
+  {:static true
+   :arglists '([])
+   :doc "
 Creates an instance of mailbox.
 
 A mailbox is a function implementing `post` on 1-arity and `fetch` on 2-arity (as task). `post` immediately pushes given value to mailbox and returns nil. `fetch` is a task pulling a value from mailbox as soon as it's non-empty and completing with this value.
@@ -377,13 +384,13 @@ Example : an actor is a mailbox associated with a process consuming messages.
 (counter prn)                                             ;; prints 1
 (counter prn)                                             ;; prints 2
 ```
-"} mbx [] (Mailbox/make))
+"} [] (Mailbox/make))
 
 
-(defn
-  ^{:static true
-    :arglists '([])
-    :doc "
+(defn rdv
+  {:static true
+   :arglists '([])
+   :doc "
 Creates an instance of synchronous rendez-vous.
 
 A synchronous rendez-vous is a function implementing `give` on its 1-arity and `take` on its 2-arity (as task). `give` takes a value to be transferred and returns a task completing with nil as soon as a taker is available. `take` is a task completing with transferred value as soon as a giver is available.
@@ -411,13 +418,13 @@ Example : producer / consumer stream communication
 
 (? (join {} (iterator stream (range 100)) (reducer + 0 stream)))      ;; returns 4950
 ```
-"} rdv [] (Rendezvous/make))
+"} [] (Rendezvous/make))
 
 
-(defn
-  ^{:static true
-    :arglists '([] [n])
-    :doc "
+(defn sem
+  {:static true
+   :arglists '([] [n])
+   :doc "
 Creates a semaphore initialized with n tokens (1 if not provided, aka mutex).
 
 A semaphore is a function implementing `release` on 0-arity and `acquire` on 2-arity (as task). `release` immediately makes a token available and returns nil. `acquire` is a task completing with nil as soon as a token is available.
@@ -447,24 +454,25 @@ Example : dining philosophers
        (phil \"kant\"      (forks 0) (forks 4)))
      10000))
 ```
-"} sem
+"}
   ([] (sem 1))
   ([n] (Semaphore/make n)))
 
 
-(defmacro
-  ^{:arglists     '([semaphore & body])
-    :style/indent 1
-    :doc          "
+(defmacro holding
+  {:arglists     '([semaphore & body])
+   :style/indent 1
+   :doc          "
 `acquire`s given `semaphore` and evaluates `body` (in an implicit `do`), ensuring `semaphore` is `release`d after evaluation.
-"} holding [lock & body]
+"} [lock & body]
   `(let [l# ~lock] (? l#) (try ~@body (finally (l#)))))
 
 
-(def never
+(def
   ^{:static true
     :doc "
 A task never succeeding. Cancelling makes it fail immediately."}
+  never
   (fn [_ f] (Never/run f)))
 
 
@@ -481,12 +489,13 @@ Example :
 "} none (fn [_ t] (t) #(do)))
 
 
-(defn
-  ^{:static true
-    :arglists '([collection])
-    :doc "
+(defn seed
+  {:static true
+   :arglists '([collection])
+   :doc "
 Returns a discrete flow producing values from given `collection`. Cancelling before having reached the end makes the flow fail immediately.
-"} seed [coll]
+"}
+  [coll]
   (fn [n t] (Seed/run coll n t)))
 
 (def ^{:deprecated true
@@ -494,10 +503,9 @@ Returns a discrete flow producing values from given `collection`. Cancelling bef
   enumerate seed)
 
 
-(defmacro
-  ^{:arglists '([& forms])
-    :doc "In an `ap` block, evaluates each form sequentially and returns successive results."}
-  amb
+(defmacro amb
+  {:arglists '([& forms])
+   :doc "In an `ap` block, evaluates each form sequentially and returns successive results."}
   ([] `(?> none))
   ([form] form)
   ([form & forms]
@@ -506,10 +514,9 @@ Returns a discrete flow producing values from given `collection`. Cancelling bef
         ~@(interleave (range) (cons form forms))))))
 
 
-(defmacro
-  ^{:arglists '([& forms])
-    :doc "In an `ap` block, evaluates each form concurrently and returns results in order of availability."}
-  amb=
+(defmacro amb=
+  {:arglists '([& forms])
+   :doc "In an `ap` block, evaluates each form concurrently and returns results in order of availability."}
   ([] `(?> none))
   ([form] form)
   ([form & forms]
@@ -518,17 +525,17 @@ Returns a discrete flow producing values from given `collection`. Cancelling bef
         ~@(interleave (range) (cons form forms))))))
 
 
-(defmacro
-  ^{:deprecated true
-    :arglists '([& forms])
-    :doc "Alias for `amb`"}
-  amb> [& forms] (cons `amb forms))
+(defmacro amb>
+  {:deprecated true
+   :arglists '([& forms])
+   :doc "Alias for `amb`"}
+  [& forms] (cons `amb forms))
 
 
-(defn
-  ^{:static true
-    :arglists '([rf flow] [rf init flow])
-    :doc "
+(defn reduce
+  {:static true
+   :arglists '([rf flow] [rf init flow])
+   :doc "
 Returns a task reducing values produced by given discrete `flow` with `rf`, starting with `init` (or, if not provided, the result of calling `rf` with no argument).
 
 Cancelling propagates to upstream flow. Early termination by `rf` (via `reduced` or throwing) cancels upstream flow.
@@ -538,7 +545,7 @@ Example :
 (? (reduce + (seed (range 10))))
 #_=> 45
 ```
-"} reduce
+"}
   ([rf flow] (fn [s f] (Reduce/run rf flow s f)))
   ([rf i flow] (reduce (fn ([] i) ([r x] (rf r x))) flow)))
 
@@ -547,29 +554,29 @@ Example :
   aggregate reduce)
 
 
-(defn
-  ^{:static true
-    :arglists '([reference])
-    :doc "
+(defn watch
+  {:static true
+   :arglists '([reference])
+   :doc "
 Returns a continuous flow reflecting the current state of a reference type. `reference` must support `add-watch`,
 `remove-watch` and `deref`. On initialization, the process is ready to transfer. On transfer, the current state is
 returned. Whenever the state of the reference changes and a transfer is not pending, the process becomes ready to
 transfer again. Cancelling the process makes it fail immediately with an instance of `missionary.Cancelled` and
 terminates the process.
-"} watch [r] (fn [n t] (Watch/run r n t)))
+"} [r] (fn [n t] (Watch/run r n t)))
 
 
-(defn
-  ^{:static true
-    :arglists '([subject])
-    :doc "
+(defn observe
+  {:static true
+   :arglists '([subject])
+   :doc "
 Returns a discrete flow observing values produced by a subject. `subject` must be a function taking a callback and
 returning a cleanup thunk. On initialization, the process calls the subject with a fresh callback. Passing a value to
 the callback makes the process ready to transfer this value. While a transfer is pending, the callback blocks the
 calling thread until the transfer is complete. If the host platform doesn't support blocking, the callback throws an
 error instead. Cancelling the process makes it fail immediately with an instance of `missionary.Cancelled`. After the
 process is cancelled, the callback has no effect anymore. The cleanup thunk is called on termination.
-"} observe [s] (fn [n t] (Observe/run s n t)))
+"} [s] (fn [n t] (Observe/run s n t)))
 
 
 (def
@@ -598,10 +605,10 @@ Example :
   transform eduction)
 
 
-(defn
-  ^{:static true
-    :arglists '([rf flow] [rf init flow])
-    :doc "
+(defn reductions
+  {:static true
+   :arglists '([rf flow] [rf init flow])
+   :doc "
 Returns a discrete flow running given discrete `flow` and emitting given `init` value (or, if not provided, the result of calling `rf` with no argument) followed by successive reductions (by rf) of upstream values with previously emitted value.
 
 Cancelling propagates to upstream flow. Early termination by `rf` (via `reduced` or throwing) cancels upstream flow.
@@ -614,7 +621,7 @@ Example :
         (reduce conj)))
 #_=> [0 1 3 6 10 15]
 ```
-"} reductions
+"}
   ([rf f] (fn [n t] (Reductions/run rf f n t)))
   ([rf i f] (reductions (fn ([] i) ([r x] (rf r x))) f)))
 
@@ -623,22 +630,24 @@ Example :
   integrate reductions)
 
 
-(defn
-  ^{:static true
-    :arglists '([flow])
-    :doc "
+(defn publisher
+  {:static true
+   :arglists '([flow])
+   :doc "
 Returns a `org.reactivestreams.Publisher` running given discrete `flow` on each subscription.
-"} publisher [f]
+"}
+  [f]
   #?(:clj (reify Publisher (subscribe [_ s] (Pub/run f s)))
      :cljs (throw (js/Error. "Unsupported operation."))))
 
 
-(defn
-  ^{:static true
-    :arglists '([pub])
-    :doc "
+(defn subscribe
+  {:static true
+   :arglists '([pub])
+   :doc "
 Returns a discrete flow subscribing to given `org.reactivestreams.Publisher`.
-"} subscribe [pub]
+"}
+  [pub]
   #?(:clj (fn [n t] (Sub/run pub n t))
      :cljs (throw (js/Error. "Unsupported operation."))))
 
@@ -673,12 +682,13 @@ Example :
     ([sg f] (fn [n t] (Relieve/run sg f n t)))))
 
 
-(defn
-  ^{:static true
-    :arglists '([capacity flow])
-    :doc "
+(defn buffer
+  {:static true
+   :arglists '([capacity flow])
+   :doc "
 Returns a discrete flow producing values emitted by given discrete `flow`, accumulating upstream overflow up to `capacity` items.
-"} buffer [c f]
+"}
+  [c f]
   (assert (pos? c) "Non-positive buffer capacity.")
   (Buffer/flow c f))
 
@@ -748,10 +758,10 @@ Example :
 "} sample (fn [c f & fs] (fn [n t] (Sample/run c f fs n t))))
 
 
-(defn
-  ^{:static true
-    :arglists '([f & flows])
-    :doc "
+(defn zip
+  {:static true
+   :arglists '([f & flows])
+   :doc "
 Returns a discrete flow running given discrete `flows` concurrently and emitting the result of applying `f` to the set of first values emitted by each upstream flow, followed by the result of applying `f` to the set of second values and so on, until any upstream flow terminates, at which point the flow will cancel all other upstream flows and wait for their termination.
 
 Cancelling propagates to every upstream flow. If any upstream flow fails or if `f` throws, the flow is cancelled.
@@ -764,13 +774,13 @@ Example :
           (m/reduce conj)))
 #_=> [[1 :a] [2 :b] [3 :c]]
 ```
-"} zip [c f & fs] (fn [n t] (Zip/run c (cons f fs) n t)))
+"} [c f & fs] (fn [n t] (Zip/run c (cons f fs) n t)))
 
 
-(defn
-  ^{:static true
-    :arglists '([kf >f])
-    :doc "
+(defn group-by
+  {:static true
+   :arglists '([kf >f])
+   :doc "
 Returns a discrete flow running given discrete flow, calling given key function on each produced value, grouping values
 according to keys returned by the function, and producing a key-group pair for each grouping found. A group is a flow
 consuming values matching a key. Upstream values are dispatched in constant time to their group consumer.
@@ -800,7 +810,7 @@ Example :
       [\\A 3] [\"Air\" \"Ant\"],
       [\\C 5] [\"Chunk\" \"Check\"]}
 ```
-"} group-by [kf f] (fn [n t] (GroupBy/run kf f n t)))
+"} [kf f] (fn [n t] (GroupBy/run kf f n t)))
 
 
 (def
@@ -810,10 +820,10 @@ Example :
   reactor-call (fn [i] (fn [s f] (Reactor/run i s f))))
 
 
-(defmacro
-  ^{:arglists '([& body])
-    :doc "Use lazy publishers instead - memo, stream, signal."}
-  reactor [& body] `(reactor-call (fn [] ~@body)))
+(defmacro reactor
+  {:arglists '([& body])
+   :doc "Use lazy publishers instead - memo, stream, signal."}
+  [& body] `(reactor-call (fn [] ~@body)))
 
 
 (def
@@ -830,10 +840,10 @@ Example :
   signal! (fn [f] (Reactor/publish f true)))
 
 
-(defn
-  ^{:static true
-    :arglists '([t])
-    :doc "
+(defn memo
+  {:static true
+   :arglists '([t])
+   :doc "
 Returns a new publisher memoizing the result of task `t`.
 
 As long as the task process did not terminate spontaneously, running the publisher as a task registers a subscription.
@@ -860,13 +870,13 @@ Example :
 (fib42 prn prn)                 ;; expensive computation starts here, result is eventually printed
 (fib42 prn prn)                 ;; expensive computation doesn't run again, previous result is reused
 ```
-"} memo [task] (Propagator/publisher Propagator/memo nil task))
+"} [task] (Propagator/publisher Propagator/memo nil task))
 
 
-(defn
-  ^{:static true
-    :arglists '([f])
-    :doc "
+(defn stream
+  {:static true
+   :arglists '([f])
+   :doc "
 Returns a new publisher distributing successive items emitted by flow `f` while collecting subscribers' backpressure.
 
 As long as the flow process did not terminate spontaneously, running the publisher as a flow registers a subscription.
@@ -893,13 +903,13 @@ Example :
    (m/reduce counter 0 (m/eduction (take 4) >clock)))
  prn prn)                                                 ;; After 4 seconds, prints [3 4]
 ```
-"} stream [flow] (Propagator/publisher Propagator/stream nil flow))
+"} [flow] (Propagator/publisher Propagator/stream nil flow))
 
 
-(defn
-  ^{:static true
-    :arglists '([flow] [sg flow])
-    :doc "
+(defn signal
+  {:static true
+   :arglists '([flow] [sg flow])
+   :doc "
 Returns a new publisher exposing successive values of `flow` regardless of subscribers' sampling rate. The set of
 transferred values must form a semigroup with given function `sg` as the internal binary operation, i.e. `sg` must be
 associative. If `sg` is not provided, `{}` is used by default, i.e. all values but the latest are discarded.
@@ -929,15 +939,15 @@ Example :
 
 (dispose!)                                     ; cleanup, deregisters the atom watch
 ```
-"} signal
+"}
   ([flow] (Propagator/publisher Propagator/signal {} flow))
   ([sg flow] (Propagator/publisher Propagator/signal sg flow)))
 
 
-(defn
-  ^{:static true
-    :arglists '([init] [sg init])
-    :doc "
+(defn store
+  {:static true
+   :arglists '([init] [sg init])
+   :doc "
 Returns a new store with initial delta `init` and grouping subsequent deltas with optional 2-arity function `sg`, which
 must be associative. `sg` defaults to `{}`, i.e. discard all but latest.
 
@@ -946,6 +956,6 @@ A store is a stateful concurrent object with 3 methods :
 they're available. A reader terminates when the store is frozen. Concurrent readers are not allowed.
 * used as a 1-arity function, append a delta to the store.
 * used as a 0-arity function, freeze the store. A frozen store ignores any subsequent delta.
-"} store
+"}
   ([init] (store {} init))
   ([sg init] (Store/make sg init)))
