@@ -9,20 +9,17 @@
 
 
 (def
-  ^{:static true
-    :doc "A `java.util.concurrent.Executor` optimized for blocking evaluation."}
+  ^{:doc "A `java.util.concurrent.Executor` optimized for blocking evaluation."}
   blk #?(:clj Thunk/blk))
 
 
 (def
-  ^{:static true
-    :doc "A `java.util.concurrent.Executor` optimized for non-blocking evaluation."}
+  ^{:doc "A `java.util.concurrent.Executor` optimized for non-blocking evaluation."}
   cpu #?(:clj Thunk/cpu))
 
 
 (defn via-call
-  {:static true
-   :arglists '([executor thunk])
+  {:arglists '([executor thunk])
    :doc "
 Same as `via`, except the expression to evaluate is provided as a zero-arity function on second argument.
 
@@ -58,8 +55,7 @@ Example :
 
 
 (defn sleep
-  {:static true
-   :arglists '([duration] [duration value])
+  {:arglists '([duration] [duration value])
    :doc "
 Returns a task completing with given value (nil if not provided) after given duration (in milliseconds).
 
@@ -76,8 +72,7 @@ Example :
 
 
 (defn join
-  {:static true
-   :arglists '([f & tasks])
+  {:arglists '([f & tasks])
    :doc "
 Returns a task running given `tasks` concurrently.
 
@@ -97,13 +92,12 @@ Example :
   ([c & ts] (fn [s f] (RaceJoin/run false c ts s f))))
 
 
-(defn race-failure {:static true :no-doc true} [& errors]
+(defn race-failure {:no-doc true} [& errors]
   (ex-info "Race failure." {::errors errors}))
 
 
 (defn race
-  {:static true
-   :arglists '([& tasks])
+  {:arglists '([& tasks])
    :doc "
 Returns a task running given `tasks` concurrently.
 
@@ -124,8 +118,7 @@ Example :
 
 
 (defn attempt
-  {:static true
-   :arglists '([task])
+  {:arglists '([task])
    :doc "
 Returns a task always succeeding with result of given `task` wrapped in a zero-argument function returning result if successful or throwing exception if failed.
 "}
@@ -134,8 +127,7 @@ Returns a task always succeeding with result of given `task` wrapped in a zero-a
 
 
 (defn absolve
-  {:static true
-   :arglists '([task])
+  {:arglists '([task])
    :doc "
 Returns a task running given `task` completing with a zero-argument function and completing with the result of this function call.
 "}
@@ -150,8 +142,7 @@ Returns a task running given `task` completing with a zero-argument function and
 
 
 (def
-  ^{:static true
-    :arglists '([task delay] [task delay value])
+  ^{:arglists '([task delay] [task delay value])
     :doc "
 Returns a task running given `task` and completing with its result if available within specified `delay` (in
 milliseconds). Otherwise, input is cancelled and the process succeeds with `value`, or `nil` if not provided.
@@ -325,8 +316,7 @@ evaluation context.
 
 
 (defn compel
-  {:static true
-   :arglists '([task])
+  {:arglists '([task])
    :doc "
 Inhibits cancellation signal of given `task`.
 "}
@@ -335,8 +325,7 @@ Inhibits cancellation signal of given `task`.
 
 
 (defn dfv
-  {:static true
-   :arglists '([])
+  {:arglists '([])
    :doc "
 Creates an instance of dataflow variable (aka single-assignment).
 
@@ -348,8 +337,7 @@ Cancelling a `deref` task makes it fail immediately.
 
 
 (defn mbx
-  {:static true
-   :arglists '([])
+  {:arglists '([])
    :doc "
 Creates an instance of mailbox.
 
@@ -388,8 +376,7 @@ Example : an actor is a mailbox associated with a process consuming messages.
 
 
 (defn rdv
-  {:static true
-   :arglists '([])
+  {:arglists '([])
    :doc "
 Creates an instance of synchronous rendez-vous.
 
@@ -422,8 +409,7 @@ Example : producer / consumer stream communication
 
 
 (defn sem
-  {:static true
-   :arglists '([] [n])
+  {:arglists '([] [n])
    :doc "
 Creates a semaphore initialized with n tokens (1 if not provided, aka mutex).
 
@@ -469,16 +455,14 @@ Example : dining philosophers
 
 
 (def
-  ^{:static true
-    :doc "
+  ^{:doc "
 A task never succeeding. Cancelling makes it fail immediately."}
   never
   (fn [_ f] (Never/run f)))
 
 
 (def
-  ^{:static true
-    :doc "
+  ^{:doc "
 The empty flow. Doesn't produce any value and terminates immediately. Cancelling has no effect.
 
 Example :
@@ -490,8 +474,7 @@ Example :
 
 
 (defn seed
-  {:static true
-   :arglists '([collection])
+  {:arglists '([collection])
    :doc "
 Returns a discrete flow producing values from given `collection`. Cancelling before having reached the end makes the flow fail immediately.
 "}
@@ -533,8 +516,7 @@ Returns a discrete flow producing values from given `collection`. Cancelling bef
 
 
 (defn reduce
-  {:static true
-   :arglists '([rf flow] [rf init flow])
+  {:arglists '([rf flow] [rf init flow])
    :doc "
 Returns a task reducing values produced by given discrete `flow` with `rf`, starting with `init` (or, if not provided, the result of calling `rf` with no argument).
 
@@ -555,8 +537,7 @@ Example :
 
 
 (defn watch
-  {:static true
-   :arglists '([reference])
+  {:arglists '([reference])
    :doc "
 Returns a continuous flow reflecting the current state of a reference type. `reference` must support `add-watch`,
 `remove-watch` and `deref`. On initialization, the process is ready to transfer. On transfer, the current state is
@@ -567,8 +548,7 @@ terminates the process.
 
 
 (defn observe
-  {:static true
-   :arglists '([subject])
+  {:arglists '([subject])
    :doc "
 Returns a discrete flow observing values produced by a subject. `subject` must be a function taking a callback and
 returning a cleanup thunk. On initialization, the process calls the subject with a fresh callback. Passing a value to
@@ -580,8 +560,7 @@ process is cancelled, the callback has no effect anymore. The cleanup thunk is c
 
 
 (def
-  ^{:static true
-    :arglists '([xf* flow])
+  ^{:arglists '([xf* flow])
     :doc "
 Returns a discrete flow running given discrete `flow` and transforming values with the composition of given transducers `xf*`.
 
@@ -606,8 +585,7 @@ Example :
 
 
 (defn reductions
-  {:static true
-   :arglists '([rf flow] [rf init flow])
+  {:arglists '([rf flow] [rf init flow])
    :doc "
 Returns a discrete flow running given discrete `flow` and emitting given `init` value (or, if not provided, the result of calling `rf` with no argument) followed by successive reductions (by rf) of upstream values with previously emitted value.
 
@@ -631,8 +609,7 @@ Example :
 
 
 (defn publisher
-  {:static true
-   :arglists '([flow])
+  {:arglists '([flow])
    :doc "
 Returns a `org.reactivestreams.Publisher` running given discrete `flow` on each subscription.
 "}
@@ -642,8 +619,7 @@ Returns a `org.reactivestreams.Publisher` running given discrete `flow` on each 
 
 
 (defn subscribe
-  {:static true
-   :arglists '([pub])
+  {:arglists '([pub])
    :doc "
 Returns a discrete flow subscribing to given `org.reactivestreams.Publisher`.
 "}
@@ -653,8 +629,7 @@ Returns a discrete flow subscribing to given `org.reactivestreams.Publisher`.
 
 
 (def
-  ^{:static true
-    :arglists '([flow] [sg flow])
+  ^{:arglists '([flow] [sg flow])
     :doc "
 Returns a flow consuming input `flow` as fast as possible and producing aggregates of successive values according to
 downstream transfer rate. The set of transferred values must form a semigroup with given function `sg` as the internal
@@ -683,8 +658,7 @@ Example :
 
 
 (defn buffer
-  {:static true
-   :arglists '([capacity flow])
+  {:arglists '([capacity flow])
    :doc "
 Returns a discrete flow producing values emitted by given discrete `flow`, accumulating upstream overflow up to `capacity` items.
 "}
@@ -694,8 +668,7 @@ Returns a discrete flow producing values emitted by given discrete `flow`, accum
 
 
 (def
-  ^{:static true
-    :arglists '([f & flows])
+  ^{:arglists '([f & flows])
     :doc "
 Returns a flow running an arbitrary number of flows concurrently. The process is ready to transfer when at least one
 input is ready to transfer. On transfer, all ready inputs are transferred, the function is called with the latest
@@ -726,8 +699,7 @@ inputs are terminated. Cancelling the process cancels all inputs.
 
 
 (def
-  ^{:static true
-    :arglists '([f sampled* sampler])
+  ^{:arglists '([f sampled* sampler])
     :doc "
 Returns a flow running an arbitrary number of sampled flows concurrently with a sampler flow. The process is ready to
 transfer when the sampler is ready to transfer. On transfer, all ready inputs are transferred, the function is called
@@ -759,8 +731,7 @@ Example :
 
 
 (defn zip
-  {:static true
-   :arglists '([f & flows])
+  {:arglists '([f & flows])
    :doc "
 Returns a discrete flow running given discrete `flows` concurrently and emitting the result of applying `f` to the set of first values emitted by each upstream flow, followed by the result of applying `f` to the set of second values and so on, until any upstream flow terminates, at which point the flow will cancel all other upstream flows and wait for their termination.
 
@@ -778,8 +749,7 @@ Example :
 
 
 (defn group-by
-  {:static true
-   :arglists '([kf >f])
+  {:arglists '([kf >f])
    :doc "
 Returns a discrete flow running given discrete flow, calling given key function on each produced value, grouping values
 according to keys returned by the function, and producing a key-group pair for each grouping found. A group is a flow
@@ -814,8 +784,7 @@ Example :
 
 
 (def
-  ^{:static true
-    :arglists '([boot])
+  ^{:arglists '([boot])
     :doc "Use lazy publishers instead - memo, stream, signal."}
   reactor-call (fn [i] (fn [s f] (Reactor/run i s f))))
 
@@ -827,22 +796,19 @@ Example :
 
 
 (def
-  ^{:static true
-    :arglists '([flow])
+  ^{:arglists '([flow])
     :doc "Use stream instead."}
   stream! (fn [f] (Reactor/publish f false)))
 
 
 (def
-  ^{:static true
-    :arglists '([flow])
+  ^{:arglists '([flow])
     :doc "Use signal instead."}
   signal! (fn [f] (Reactor/publish f true)))
 
 
 (defn memo
-  {:static true
-   :arglists '([t])
+  {:arglists '([t])
    :doc "
 Returns a new publisher memoizing the result of task `t`.
 
@@ -874,8 +840,7 @@ Example :
 
 
 (defn stream
-  {:static true
-   :arglists '([f])
+  {:arglists '([f])
    :doc "
 Returns a new publisher distributing successive items emitted by flow `f` while collecting subscribers' backpressure.
 
@@ -907,8 +872,7 @@ Example :
 
 
 (defn signal
-  {:static true
-   :arglists '([flow] [sg flow])
+  {:arglists '([flow] [sg flow])
    :doc "
 Returns a new publisher exposing successive values of `flow` regardless of subscribers' sampling rate. The set of
 transferred values must form a semigroup with given function `sg` as the internal binary operation, i.e. `sg` must be
@@ -945,8 +909,7 @@ Example :
 
 
 (defn store
-  {:static true
-   :arglists '([init] [sg init])
+  {:arglists '([init] [sg init])
    :doc "
 Returns a new store with initial delta `init` and grouping subsequent deltas with optional 2-arity function `sg`, which
 must be associative. `sg` defaults to `{}`, i.e. discard all but latest.
