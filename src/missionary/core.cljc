@@ -101,7 +101,7 @@ Example :
    :doc "
 Returns a task running given `tasks` concurrently.
 
-If any task succeeds, others are cancelled then `race` completes with this result.
+If any task succeeds, others are cancelled then `race` completes with the result of that first successful task.
 
 If every task fails, `race` fails.
 
@@ -121,6 +121,7 @@ Example :
   {:arglists '([task])
    :doc "
 Returns a task always succeeding with result of given `task` wrapped in a zero-argument function returning result if successful or throwing exception if failed.
+Use `absolve` on the returned task to get another that fails in the normal way, thus enabling a \"delayed\" failure.
 "}
   [task]
   (fn [s _] (task (fn [x] (s #(-> x))) (fn [e] (s #(throw e))))))
@@ -130,6 +131,7 @@ Returns a task always succeeding with result of given `task` wrapped in a zero-a
   {:arglists '([task])
    :doc "
 Returns a task running given `task` completing with a zero-argument function and completing with the result of this function call.
+Typically used with tasks created by `attempt`.
 "}
   [task]
   (fn [s f]
