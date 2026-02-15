@@ -1,10 +1,10 @@
 (ns ^:no-doc missionary.impl.Relieve)
 
 (declare transfer)
-(deftype Process [reducer notifier terminator iterator current ^boolean busy ^boolean done]
-  IFn
+(deftype Process [^:mutable reducer ^:mutable notifier terminator ^:mutable iterator ^:mutable current ^:mutable busy ^:mutable done]
+  #?(:cljs IFn :cljd cljd.core/IFn)
   (-invoke [_] (iterator))
-  IDeref
+  #?(:cljs IDeref :cljd cljd.core/IDeref)
   (-deref [p] (transfer p)))
 
 (defn transfer [^Process ps]
@@ -28,12 +28,12 @@
                           (set! (.-current ps)
                             (if (identical? r ps)
                               x ((.-reducer ps) r x))))
-                        (catch :default e
+                        (catch #?(:cljs :default :cljd Exception) e
                           (set! (.-current ps) e)
                           (set! (.-notifier ps) nil)
                           ((.-iterator ps))))
                    (if (identical? r ps) n cb))
-                 (do (try @(.-iterator ps) (catch :default _)) cb)))) cb)))
+                 (do (try @(.-iterator ps) (catch #?(:cljs :default :cljd Exception) _)) cb)))) cb)))
 
 (defn run [rf f n t]
   (let [ps (->Process rf n t nil nil true false)]
