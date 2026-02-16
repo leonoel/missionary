@@ -552,12 +552,14 @@ terminates the process.
 (defn observe
   {:arglists '([subject])
    :doc "
-Returns a discrete flow observing values produced by a subject. `subject` must be a function taking a callback and
-returning a cleanup thunk. On initialization, the process calls the subject with a fresh callback. Passing a value to
-the callback makes the process ready to transfer this value. While a transfer is pending, the callback blocks the
-calling thread until the transfer is complete. If the host platform doesn't support blocking, the callback throws an
-error instead. Cancelling the process makes it fail immediately with an instance of `missionary.Cancelled`. After the
-process is cancelled, the callback has no effect anymore. The cleanup thunk is called on termination.
+Returns a discrete flow observing values produced by a subject (some external producer emitting values).
+`subject` must be an initialization function taking an emit callback and returning a cleanup thunk.
+On initialization, the process calls the subject with a fresh callback.
+Passing a value to the callback makes the process ready to transfer this value.
+While a transfer is pending, the callback blocks the calling thread until the transfer is complete.
+If the host platform doesn't support blocking, the callback throws an error instead.
+Cancelling the process makes it fail immediately with an instance of `missionary.Cancelled`.
+After the process is cancelled, the callback has no effect anymore. The cleanup thunk is called on termination.
 "} [s] (fn [n t] (Observe/run s n t)))
 
 
