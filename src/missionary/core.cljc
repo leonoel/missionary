@@ -812,9 +812,9 @@ Example :
 (defn memo
   {:arglists '([t])
    :doc "
-Returns a new publisher memoizing the result of task `t`.
+Returns a new publisher task memoizing the result of task `t` which will run only once.
 
-As long as the task process did not terminate spontaneously, running the publisher as a task registers a subscription.
+As long as the given task did not terminate spontaneously, running the publisher as a task registers a subscription.
 Cancelling a subscription deregisters it. A new task process is spawned when the first subscription is registered and
 cancelled when the last subscription is deregistered. After the task process terminated spontaneously, every registered
 subscription and any subsequent subscription terminates immediately with the process result.
