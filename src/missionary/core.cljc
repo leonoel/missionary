@@ -320,7 +320,7 @@ evaluation context.
 (defn compel
   {:arglists '([task])
    :doc "
-Inhibits cancellation signal of given `task`.
+Return a new task performing the given task, and ignoring any cancellation signal by returning a no-op cancel function.
 "}
   [task]
   (fn [s f] (task s f) #(do)))
