@@ -71,6 +71,15 @@ Example :
   ([d x] (fn [s f] (Sleep/run d x s f))))
 
 
+(defn cps-call
+  {:no-doc true}
+  [t s f]
+  (try (s (t))
+       (catch #?(:clj Throwable
+                 :cljs :default) e
+         (f e))))
+
+
 (defn join
   {:arglists '([f & tasks])
    :doc "
@@ -88,7 +97,7 @@ Example :
 #_=> [1 2]            ;; 1 second later
 ```
 "}
-  ([c] (fn [s _] (s (c)) #(do)))
+  ([c] (fn [s f] (cps-call c s f) #(do)))
   ([c & ts] (fn [s f] (RaceJoin/run false c ts s f))))
 
 
@@ -135,12 +144,7 @@ Typically used with tasks created by `attempt`.
 "}
   [task]
   (fn [s f]
-    (task
-     (fn [t]
-       (try (s (t))
-            (catch #?(:clj Throwable
-                      :cljs :default) e
-              (f e)))) f)))
+    (task (fn [t] (cps-call t s f)) f)))
 
 
 (defn any
