@@ -101,7 +101,7 @@ Example :
    :doc "
 Returns a task running given `tasks` concurrently.
 
-If any task succeeds, others are cancelled then `race` completes with this result.
+If any task succeeds, others are cancelled then `race` completes with the result of that first successful task.
 
 If every task fails, `race` fails.
 
@@ -121,6 +121,7 @@ Example :
   {:arglists '([task])
    :doc "
 Returns a task always succeeding with result of given `task` wrapped in a zero-argument function returning result if successful or throwing exception if failed.
+Use `absolve` on the returned task to get another that fails in the normal way, thus enabling a \"delayed\" failure.
 "}
   [task]
   (fn [s _] (task (fn [x] (s #(-> x))) (fn [e] (s #(throw e))))))
@@ -130,6 +131,7 @@ Returns a task always succeeding with result of given `task` wrapped in a zero-a
   {:arglists '([task])
    :doc "
 Returns a task running given `task` completing with a zero-argument function and completing with the result of this function call.
+Typically used with tasks created by `attempt`.
 "}
   [task]
   (fn [s f]
@@ -318,7 +320,7 @@ evaluation context.
 (defn compel
   {:arglists '([task])
    :doc "
-Inhibits cancellation signal of given `task`.
+Return a new task performing the given task, and ignoring any cancellation signal by returning a no-op cancel function.
 "}
   [task]
   (fn [s f] (task s f) #(do)))
@@ -550,12 +552,14 @@ terminates the process.
 (defn observe
   {:arglists '([subject])
    :doc "
-Returns a discrete flow observing values produced by a subject. `subject` must be a function taking a callback and
-returning a cleanup thunk. On initialization, the process calls the subject with a fresh callback. Passing a value to
-the callback makes the process ready to transfer this value. While a transfer is pending, the callback blocks the
-calling thread until the transfer is complete. If the host platform doesn't support blocking, the callback throws an
-error instead. Cancelling the process makes it fail immediately with an instance of `missionary.Cancelled`. After the
-process is cancelled, the callback has no effect anymore. The cleanup thunk is called on termination.
+Returns a discrete flow observing values produced by a subject (some external producer emitting values).
+`subject` must be an initialization function taking an emit callback and returning a cleanup thunk.
+On initialization, the process calls the subject with a fresh callback.
+Passing a value to the callback makes the process ready to transfer this value.
+While a transfer is pending, the callback blocks the calling thread until the transfer is complete.
+If the host platform doesn't support blocking, the callback throws an error instead.
+Cancelling the process makes it fail immediately with an instance of `missionary.Cancelled`.
+After the process is cancelled, the callback has no effect anymore. The cleanup thunk is called on termination.
 "} [s] (fn [n t] (Observe/run s n t)))
 
 
@@ -810,9 +814,9 @@ Example :
 (defn memo
   {:arglists '([t])
    :doc "
-Returns a new publisher memoizing the result of task `t`.
+Returns a new publisher task memoizing the result of task `t` which will run only once.
 
-As long as the task process did not terminate spontaneously, running the publisher as a task registers a subscription.
+As long as the given task did not terminate spontaneously, running the publisher as a task registers a subscription.
 Cancelling a subscription deregisters it. A new task process is spawned when the first subscription is registered and
 cancelled when the last subscription is deregistered. After the task process terminated spontaneously, every registered
 subscription and any subsequent subscription terminates immediately with the process result.
