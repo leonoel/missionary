@@ -143,6 +143,62 @@ Typically used with tasks created by `attempt`.
               (f e)))) f)))
 
 
+(defn any
+  {:arglists '([& tasks])
+   :doc "
+Returns a task running given `tasks` concurrently. When any of them completes, whether by success or failure,
+others are cancelled and `any` completes with the success or failure of that first completed task.
+
+Cancelling propagates to children tasks.
+
+See also `race` which acts similarly but completes upon the first successful task.
+
+Example :
+```clojure
+(require '[missionary.core :as m])
+((m/any
+   (m/sp (m/? (m/sleep 2000)) :foo)
+   (m/sp (m/? (m/sleep 1000))
+         (throw (ex-info \"Error.\" {}))))
+ prn (fn [_] (prn :failure)))
+;; 1 second
+:failure
+```
+"}
+  ([] (race))
+  ([x] (race x))
+  ([x y] (absolve (race (attempt x) (attempt y))))
+  ([x y & zs] (absolve (apply race (attempt x) (attempt y) (map attempt zs)))))
+
+
+(defn all
+  {:arglists '([f & tasks])
+   :doc "
+Returns a task running given `tasks` concurrently. When all of them complete, whether by success or failure,
+`f` is called with the results of these tasks each wrapped in a zero-argument function returning result if successful
+or throwing exception if failed, then `all` completes with the result of `f`.
+
+Cancelling propagates to children tasks.
+
+See also `join` which fails on the first failed task.
+
+Example :
+```clojure
+(require '[missionary.core :as m])
+((m/all (fn [f g] (f))
+   (m/sp (m/? (m/sleep 2000)) :foo)
+   (m/sp (m/? (m/sleep 1000))
+         (throw (ex-info \"Error.\" {}))))
+ prn (fn [_] (prn :failure)))
+;; 2 seconds
+:foo
+```"}
+  ([f] (join f))
+  ([f x] (join f (attempt x)))
+  ([f x y] (join f (attempt x) (attempt y)))
+  ([f x y & zs] (apply join f (attempt x) (attempt y) (map attempt zs))))
+
+
 (def
   ^{:arglists '([task delay] [task delay value])
     :doc "
@@ -155,13 +211,11 @@ milliseconds). Otherwise, input is cancelled and the process succeeds with `valu
 (m/? (m/timeout (m/sleep 20 :a) 15))    ;; nil after 15ms
 ```
 "} timeout
-  (fn timeout
-    ([task delay] (timeout task delay nil))
+  (fn
+    ([task delay]
+     (any task (sleep delay)))
     ([task delay value]
-     (-> task
-       (attempt)
-       (race (sleep delay #(-> value)))
-       (absolve)))))
+     (any task (sleep delay value)))))
 
 
 (defn ^:no-doc check []
