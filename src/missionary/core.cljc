@@ -91,6 +91,8 @@ If any task fails, others are cancelled then `join` fails with this error.
 
 Cancelling propagates to children tasks.
 
+See also `all` which waits for all tasks to complete and combine their results.
+
 Example :
 ```clojure
 (? (join vector (sleep 1000 1) (sleep 1000 2)))
@@ -115,6 +117,8 @@ If any task succeeds, others are cancelled then `race` completes with the result
 If every task fails, `race` fails.
 
 Cancelling propagates to children tasks.
+
+See also `any` which acts similarly but completes with the result of the first completed task (success or failure).
 
 Example :
 ```clojure
