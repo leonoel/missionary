@@ -1,0 +1,21 @@
+# IDE/Editor
+.calva/
+.clj-kondo/
+.lsp/
+.idea/
+*.iml
+
+# REPL
+.nrepl-port
+.cljs_node_repl/
+conjure_scratch.clj
+scratch.clj
+
+# Build outputs
+out/
+target/
+
+# ClojureDart
+cljd-test/.clojuredart/
+cljd-test/.dart_tool/
+cljd-test/lib/
