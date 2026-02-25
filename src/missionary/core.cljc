@@ -1,7 +1,6 @@
 (ns missionary.core
   (:refer-clojure :exclude [reduce reductions eduction group-by])
-  (:require [cloroutine.core :refer [cr] :include-macros true]
-            [missionary.impl.latest :as latest])
+  (:require [cloroutine.core :refer [cr] :include-macros true])
   (:import (missionary.impl Reduce Reductions GroupBy Relieve Latest Sample Reactor Fiber Sequential Ambiguous
                             Continuous Watch Observe Buffer Rendezvous Dataflow Mailbox Semaphore RaceJoin Sleep
                             Never Seed Eduction Zip Propagator Store #?(:clj Thunk) #?(:clj Pub) #?(:clj Sub))
@@ -758,9 +757,7 @@ inputs are terminated. Cancelling the process cancels all inputs.
 
 #_=> [[0 0] [24 0] [24 86] [79 12] [79 37] [67 37] [34 93]]
 ```
-"} latest
-  (fn [c & fs]
-    (latest/->Effect c (vec fs))))
+"} latest (fn [c & fs] (fn [n t] (Latest/run c fs n t))))
 
 
 (def

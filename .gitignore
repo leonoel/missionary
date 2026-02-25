@@ -20,3 +20,4 @@ pom.xml.asc
 /cljs-test-runner-out
 
 /.lsp
+/.claude

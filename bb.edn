@@ -1,0 +1,46 @@
+{:tasks
+ {:requires ([babashka.process :as p]
+             [clojure.string :as str])
+
+  -lincheck-cp
+  {:doc  "Resolve lincheck classpath (internal)"
+   :task (str/trim (:out (p/sh "clj" "-A:dev:lincheck" "-Spath")))}
+
+  lincheck:compile
+  {:doc "Compile lincheck Java sources"
+   :depends [-lincheck-cp]
+   :task (p/shell
+          "javac" "-cp" -lincheck-cp "-d" "lincheck-classes"
+          "lincheck/missionary/DummyFlow.java"
+          "lincheck/missionary/FlowLincheckTest.java"
+          "lincheck/missionary/PairingHeapLincheckTest.java"
+          "lincheck/missionary/PairingHeapSequential.java")}
+
+  lincheck:flow
+  {:doc  "Run FlowLincheckTest. Options: --test latest/2 --iterations N --threads N --actors N --invocations N"
+   :depends [lincheck:compile]
+   :task
+   (let [opts (apply hash-map *command-line-args*)
+         sys-props (->> {"iterations"    (opts "--iterations")
+                         "threads"       (opts "--threads")
+                         "actorsPerThread" (opts "--actors")
+                         "invocationsPerIteration" (opts "--invocations")}
+                        (keep (fn [[k v]] (when v (str "-Dmissionary.lincheck." k "=" v)))))
+         test-sel (if-let [t (opts "--test")]
+                    ["-m" (let [[op n] (str/split t (re-pattern "/") 2)]
+                             (str "missionary.FlowLincheckTest#test"
+                                  (str/capitalize op) (or n "")))]
+                    ["-c" "missionary.FlowLincheckTest"])]
+     (apply p/shell "java" (concat sys-props
+                                   ["-cp" -lincheck-cp
+                                    "org.junit.platform.console.ConsoleLauncher"
+                                    "execute"]
+                                   test-sel)))}
+
+  lincheck:heap
+  {:doc "Run PairingHeapLincheckTest (compiles first)"
+   :depends [lincheck:compile]
+   :task (p/shell
+          "java" "-cp" -lincheck-cp
+          "org.junit.platform.console.ConsoleLauncher"
+          "execute" "-c" "missionary.PairingHeapLincheckTest")}}}
