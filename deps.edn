@@ -37,4 +37,21 @@
   {:extra-deps  {olical/cljs-test-runner {:mvn/version "3.8.0"}
                  org.clojure/clojurescript {:mvn/version "1.11.60"}}
    :extra-paths ["test" "cljs-test-runner-out/gen"]
-   :main-opts   ["-m" "cljs-test-runner.main"]}}}
+   :main-opts   ["-m" "cljs-test-runner.main"]}
+
+  :lincheck
+  {:extra-deps  {org.jetbrains.lincheck/lincheck {:mvn/version "3.4"}
+                 org.junit.jupiter/junit-jupiter {:mvn/version "6.0.3"}
+                 org.junit.platform/junit-platform-console {:mvn/version "6.0.3"}
+                 ;; Override Lincheck's ASM 9.6 -> 9.9.1 for Java 25 support
+                 org.ow2.asm/asm {:mvn/version "9.9.1"}
+                 org.ow2.asm/asm-commons {:mvn/version "9.9.1"}
+                 org.ow2.asm/asm-tree {:mvn/version "9.9.1"}
+                 org.ow2.asm/asm-util {:mvn/version "9.9.1"}
+                 org.ow2.asm/asm-analysis {:mvn/version "9.9.1"}}
+   :extra-paths ["test" "lincheck-classes"]
+   :jvm-opts    ["--add-opens" "java.base/java.lang=ALL-UNNAMED"
+                 "--add-opens" "java.base/java.lang.invoke=ALL-UNNAMED"
+                 "--add-opens" "java.base/jdk.internal.misc=ALL-UNNAMED"
+                 "--add-opens" "java.base/sun.nio.ch=ALL-UNNAMED"
+                 "-XX:+EnableDynamicAgentLoading"]}}}
