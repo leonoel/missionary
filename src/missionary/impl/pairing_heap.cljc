@@ -4,49 +4,45 @@
 
 (def idle #?(:clj (Object.) :cljs (js-obj)))
 
-(defmacro init [{:keys [head tail]} o]
-  `(let [o# ~o]
-     (v/set ~head o# nil)
-     (v/set ~tail o# idle)))
+(defmacro init [{:keys [state]} o]
+  `(let [o# ~o] (v/set ~state o# idle)))
 
-(defmacro accept [{:keys [head tail child]} o]
+(defmacro accept [{:keys [state head tail child]} o]
   `(let [o# ~o]
      (loop []
-       (let [t# (v/get-volatile ~tail o#)
-             h# (v/get-volatile ~head o#)]
-         (when (identical? t# idle)
+       (let [s# (v/get-volatile ~state o#)]
+         (when (identical? s# idle)
            (throw (u/error "Illegal state - empty heap")))
-         (if (identical? h# t#)
-           (do (u/yield) (recur))
-           (if (v/compare-and-set ~tail o# t# idle)
-             (do (v/set ~child h# t#)
-                 (v/set-volatile ~head o# nil)
-                 h#) (recur)))))))
+         (let [h# (v/get ~head s#)
+               t# (v/get ~tail s#)]
+           (if (identical? h# t#)
+             (do (u/yield) (recur))
+             (if (v/compare-and-set ~state o# s# idle)
+               (do (v/set ~child h# t#) h#)
+               (recur))))))))
 
-(defmacro insert [{:keys [lt ready head tail child sibling]} o x]
+(defmacro insert [{:keys [lt ready state head tail child sibling mk-state]} o x]
   `(let [o# ~o
          x# ~x]
      (loop []
-       (let [t# (v/get-volatile ~tail o#)
-             h# (v/get-volatile ~head o#)]
-         (if (identical? t# idle)
-           (if (nil? h#)
-             (if (v/compare-and-set ~tail o# t# nil)
-               (do (v/set-volatile ~head o# x#)
-                   (~ready o#))
-               (recur))
-             (do (u/yield) (recur)))
-           (if (identical? h# t#)
-             (do (u/yield) (recur))
-             (if (~lt h# x#)
-               (do (v/set ~sibling x# t#)
-                   (when-not (v/compare-and-set ~tail o# t# x#)
-                     (v/set ~sibling x# nil)
-                     (recur)))
-               (if (v/compare-and-set ~tail o# t# h#)
-                 (do (v/set ~child h# t#)
-                     (v/set-volatile ~head o# x#))
-                 (recur)))))))))
+       (let [s# (v/get-volatile ~state o#)]
+         (if (identical? s# idle)
+           (if (v/compare-and-set ~state o# s# (~mk-state x# nil))
+             (~ready o#)
+             (recur))
+           (let [h# (v/get ~head s#)
+                 t# (v/get ~tail s#)]
+             (if (identical? h# t#)
+               (do (u/yield) (recur))
+               (if (~lt h# x#)
+                 (do (v/set ~sibling x# t#)
+                     (when-not (v/compare-and-set ~state o# s# (~mk-state h# x#))
+                       (v/set ~sibling x# nil)
+                       (recur)))
+                 (if (v/compare-and-set ~state o# s# (~mk-state h# h#))
+                   (do (v/set ~child h# t#)
+                       (v/set-volatile ~state o# (~mk-state x# h#)))
+                   (recur))))))))))
 
 (defmacro meld [{:keys [lt child sibling]} x y]
   `(let [x# ~x
@@ -117,8 +113,9 @@
        (cons ~f (cons ~(list `quote impl) ~args)))))
 
 (comment
+  (deftype HeapState [head tail])
   (deftype Node [id ^:unsynchronized-mutable child ^:unsynchronized-mutable sibling])
-  (deftype Heap [^:unsynchronized-mutable head ^:unsynchronized-mutable tail])
+  (deftype Heap [^:unsynchronized-mutable state])
 
   (defn id [^Node n]
     (.-id n))
@@ -129,16 +126,21 @@
   (defmacro lt [x y]
     `(< (id ~x) (id ~y)))
 
+  (defmacro mk-heap-state [h t]
+    `(->HeapState ~h ~t))
+
   (defimpl impl
-    :lt      lt
-    :ready   ready
-    :head    Heap/head
-    :tail    Heap/tail
-    :child   Node/child
-    :sibling Node/sibling)
+    :lt       lt
+    :ready    ready
+    :mk-state mk-heap-state
+    :state    Heap/state
+    :head     HeapState/head
+    :tail     HeapState/tail
+    :child    Node/child
+    :sibling  Node/sibling)
 
   (defn heap []
-    (let [h (->Heap nil nil)]
+    (let [h (->Heap nil)]
       (impl init h) h))
 
   (defn insert-node [h id]
