@@ -1,5 +1,6 @@
 {:deps
  {org.reactivestreams/reactive-streams {:mvn/version "1.0.4"}
+  org.replikativ/hasch {:mvn/version "0.3.97"}
   cloroutine/cloroutine {:mvn/version "13"}}
 
  :paths ["src" "target/classes"]
@@ -7,6 +8,8 @@
  :aliases
  {:tck
   {:extra-deps {org.reactivestreams/reactive-streams-tck {:mvn/version "1.0.4"}}}
+
+  :dev {:extra-paths ["test"]}
 
   :codox
   {:extra-deps {codox/codox {:mvn/version "0.10.8"}}
