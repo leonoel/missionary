@@ -41,6 +41,7 @@
              (if (~lt h# x#)
                (do (v/set ~sibling x# t#)
                    (when-not (v/compare-and-set ~tail o# t# x#)
+                     (v/set ~sibling x# nil)
                      (recur)))
                (if (v/compare-and-set ~tail o# t# h#)
                  (do (v/set ~child h# t#)
