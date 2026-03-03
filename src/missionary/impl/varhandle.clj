@@ -391,3 +391,6 @@
 
 (defmacro get-and-add [desc inst x]
   (emit-field-access &env :getAndAdd desc inst x))
+
+(defmacro get-and-set [desc inst x]
+  (emit-field-access &env :getAndSet desc inst x))

@@ -10,7 +10,6 @@ public class PairingHeapSequential {
     }
 
     public List<Integer> accept() {
-        if (elements.isEmpty()) return null;
         List<Integer> result = new ArrayList<>(elements);
         Collections.sort(result);
         elements.clear();

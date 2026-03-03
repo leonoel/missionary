@@ -43,15 +43,11 @@ public class PairingHeapLincheckTest {
 
     @Operation(nonParallelGroup = "reader")
     public List<Integer> accept() {
-        try {
-            Object result = ACCEPT_AS_VEC.invoke(heap);
-            List<?> v = (List<?>) result;
-            List<Integer> out = new ArrayList<>(v.size());
-            for (Object o : v) out.add(((Number) o).intValue());
-            return out;
-        } catch (Error e) {
-            return null;
-        }
+        Object result = ACCEPT_AS_VEC.invoke(heap);
+        List<?> v = (List<?>) result;
+        List<Integer> out = new ArrayList<>(v.size());
+        for (Object o : v) out.add(((Number) o).intValue());
+        return out;
     }
 
     @Test

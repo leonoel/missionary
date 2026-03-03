@@ -1,9 +1,8 @@
 (ns missionary.pairing-heap-test-impl
   (:require [missionary.impl.pairing-heap :as ph]))
 
-(deftype HeapState [head tail])
-(deftype Node [id ^:unsynchronized-mutable child ^:unsynchronized-mutable sibling])
-(deftype Heap [^:unsynchronized-mutable state ready?])
+(deftype Node [id ^:unsynchronized-mutable tail ^:unsynchronized-mutable child ^:unsynchronized-mutable sibling])
+(deftype Heap [^:unsynchronized-mutable head ready?])
 
 (defn id [^Node n]
   (.-id n))
@@ -15,32 +14,28 @@
 (defmacro lt [x y]
   `(< (id ~x) (id ~y)))
 
-(defmacro mk-heap-state [h t] `(->HeapState ~h ~t))
-
 (ph/defimpl impl
   :lt       lt
   :ready    set-ready!
-  :mk-state mk-heap-state
-  :state    Heap/state
-  :head     HeapState/head
-  :tail     HeapState/tail
+  :head     Heap/head
+  :tail     Node/tail
   :child    Node/child
   :sibling  Node/sibling)
 
 (defn heap []
-  (let [h (->Heap nil (atom false))]
-    (impl ph/init h) h))
+  (->Heap nil (atom false)))
 
 (defn insert-node [h id]
   (impl ph/insert h
-    (->Node id nil nil)) h)
+    (->Node id nil nil nil)) h)
 
 (defn dequeue-all [rf r n]
   (loop [n n
-         r (rf r (id n))]
-    (if (reduced? r)
-      @r (if-some [n (impl ph/dequeue3 n)]
-           (recur n (rf r (id n))) r))))
+         r r]
+    (if (nil? n)
+      r (let [r (rf r (id n))]
+          (if (reduced? r)
+            @r (recur (impl ph/dequeue n) r))))))
 
 (defn accept [h] (impl ph/accept h))
 
