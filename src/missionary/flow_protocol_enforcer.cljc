@@ -28,7 +28,9 @@
                   (when @!done? (violated nm "step after done"))
                   (when @!crashed? (violated nm "step after crash"))
                   (if (first (swap-vals! !should-step? not)) (cannot-throw nm step) (violated nm "double step")))
-           done (fn [] (if (first (reset-vals! !done? true)) (violated nm "done called twice") (cannot-throw nm done)))
+           done (fn []
+                  (when (false? @!should-step?) (violated nm "done after step without transfer"))
+                  (if (first (reset-vals! !done? true)) (violated nm "done called twice") (cannot-throw nm done)))
            cancel (try (input-flow step done)
                        (catch #?(:clj Throwable :cljs :default) e (violated nm "flow process creation threw" e)))]
        (when (= ::init @!should-step?) (violated nm "missing initial step"))

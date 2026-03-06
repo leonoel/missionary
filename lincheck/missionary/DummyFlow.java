@@ -12,8 +12,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * The iterator supports cancel (invoke) and transfer (deref).
  *
  * External control:
- *   step() — signal a new value is ready (CAS-guarded, respects DONE/CANCELLED/CRASHED)
- *   done() — signal termination (CAS-guarded, at most once, callable after crash)
+ *   step() — signal a new value is ready (CAS-guarded, respects DONE/CRASHED but NOT CANCELLED)
+ *   done() — signal termination (CAS-guarded, at most once, blocked by STEPPED and CANCELLED)
  *
  * step() and done() on the same DummyFlow are serialized by Lincheck's
  * nonParallelGroup (one group per flow). deref() runs on the consumer
@@ -67,13 +67,15 @@ public class DummyFlow extends AFn {
 
     /**
      * Externally trigger step. CAS-guarded: no step if already STEPPED,
-     * DONE, CANCELLED, or CRASHED. Serialized with done() via nonParallelGroup.
+     * DONE, or CRASHED. CANCELLED does not block step — a cancelled process
+     * can legitimately step (producer and consumer sides are independent).
+     * Serialized with done() via nonParallelGroup.
      */
     public String step() {
         int old;
         do {
             old = state.get();
-            if ((old & (STEPPED | DONE | CANCELLED | CRASHED)) != 0)
+            if ((old & (STEPPED | DONE | CRASHED)) != 0)
                 return "no:" + blockReason(old);
         } while (!state.compareAndSet(old, old | STEPPED));
         stepCb.invoke();
@@ -82,6 +84,7 @@ public class DummyFlow extends AFn {
 
     /**
      * Externally trigger termination. CAS-guarded: at most once.
+     * Blocked by STEPPED (must transfer first — flow protocol).
      * Serialized with step() via nonParallelGroup.
      */
     public String done() {
@@ -89,6 +92,7 @@ public class DummyFlow extends AFn {
         do {
             old = state.get();
             if ((old & DONE) != 0) return "no:already-done";
+            if ((old & STEPPED) != 0) return "no:stepped";
         } while (!state.compareAndSet(old, old | DONE));
         doneCb.invoke();
         return "ok";
@@ -97,7 +101,6 @@ public class DummyFlow extends AFn {
     static String blockReason(int s) {
         if ((s & CRASHED)   != 0) return "crashed";
         if ((s & DONE)      != 0) return "done";
-        if ((s & CANCELLED) != 0) return "cancelled";
         if ((s & STEPPED)   != 0) return "stepped";
         return "unknown";
     }
