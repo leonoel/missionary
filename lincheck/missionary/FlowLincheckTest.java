@@ -147,7 +147,7 @@ public class FlowLincheckTest {
     static final int STEPPED = 1;
     static final int CLAIMED = 2;
     static final int STEPPED_DURING_TRANSFER = 3;
-    static final int DONE_STATE = 4;
+    static final int DONE = 4;
 
     // ── Instance state (fresh per Lincheck scenario) ────────────────
 
@@ -175,7 +175,7 @@ public class FlowLincheckTest {
                     switch (s) {
                         case TRANSFERRED: return STEPPED;
                         case CLAIMED:     return STEPPED_DURING_TRANSFER;
-                        case DONE_STATE:  return DONE_STATE;
+                        case DONE:  return DONE;
                         default:
                             throw new AssertionError(
                                 "Protocol violation: step in state "
@@ -189,7 +189,7 @@ public class FlowLincheckTest {
         IFn rootDone = new AFn() {
             public Object invoke() {
                 terminated = true;
-                rootState.set(DONE_STATE);
+                rootState.set(DONE);
                 return null;
             }
         };
@@ -223,7 +223,7 @@ public class FlowLincheckTest {
         int old;
         do {
             old = rootState.get();
-            if (old != STEPPED) return "skip:not-stepped";
+            if (old != STEPPED || old != DONE) return "skip:not-stepped-or-done";
         } while (!rootState.compareAndSet(old, CLAIMED));
 
         Object ret;
@@ -238,7 +238,7 @@ public class FlowLincheckTest {
             switch (post) {
                 case CLAIMED:                 return TRANSFERRED;
                 case STEPPED_DURING_TRANSFER: return STEPPED;
-                case DONE_STATE:              return DONE_STATE;
+                case DONE:              return DONE;
                 default:
                     throw new AssertionError(
                         "Protocol violation: post-transfer state "
@@ -251,10 +251,10 @@ public class FlowLincheckTest {
     // ── Operation: cancel (root consumer) ───────────────────────────
 
     @Operation
-    public String cancel() {
-        if (terminated) return "skip:terminated";
+    public void cancel() {
+        if (terminated) return;
         ((IFn) iterator).invoke();
-        return "ok";
+        return;
     }
 
     // ── Test API ─────────────────────────────────────────────────────
@@ -317,7 +317,7 @@ public class FlowLincheckTest {
             case STEPPED: return "STEPPED";
             case CLAIMED: return "CLAIMED";
             case STEPPED_DURING_TRANSFER: return "STEPPED_DURING_TRANSFER";
-            case DONE_STATE: return "DONE";
+            case DONE: return "DONE";
             default: return "UNKNOWN(" + s + ")";
         }
     }

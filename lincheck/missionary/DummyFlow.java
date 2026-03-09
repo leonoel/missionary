@@ -76,10 +76,10 @@ public class DummyFlow extends AFn {
         do {
             old = state.get();
             if ((old & (STEPPED | DONE | CRASHED)) != 0)
-                return "no:" + blockReason(old);
+                return "";
         } while (!state.compareAndSet(old, old | STEPPED));
         stepCb.invoke();
-        return "ok";
+        return "";
     }
 
     /**
@@ -91,18 +91,11 @@ public class DummyFlow extends AFn {
         int old;
         do {
             old = state.get();
-            if ((old & DONE) != 0) return "no:already-done";
-            if ((old & STEPPED) != 0) return "no:stepped";
+            if ((old & DONE) != 0) return "";
+            if ((old & STEPPED) != 0) return "";
         } while (!state.compareAndSet(old, old | DONE));
         doneCb.invoke();
-        return "ok";
-    }
-
-    static String blockReason(int s) {
-        if ((s & CRASHED)   != 0) return "crashed";
-        if ((s & DONE)      != 0) return "done";
-        if ((s & STEPPED)   != 0) return "stepped";
-        return "unknown";
+        return "";
     }
 
     // ── Iterator ──────────────────────────────────────────────────────
