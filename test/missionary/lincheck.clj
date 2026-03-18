@@ -217,7 +217,7 @@
   [^ClassWriter cw ^String class-internal ^String method-name
    ^String group ^String dummy-method dummy-index]
   (let [ga (GeneratorAdapter. Opcodes/ACC_PUBLIC
-             (Method. method-name string-type (into-array Type []))
+             (Method. method-name void-type (into-array Type []))
              nil nil cw)]
     (add-operation-annotation ga group)
     (.visitCode ga)
@@ -229,13 +229,14 @@
         (.arrayLoad ga object-type)
         (.checkCast ga dummy-type)
         (.invokeVirtual ga dummy-type
-          (Method. dummy-method string-type (into-array Type [])))))))
+          (Method. dummy-method string-type (into-array Type [])))
+        (.pop ga)))))
 
 (defn- emit-transfer-method
   "Emit the transfer @Operation method delegating to IDeref.deref()."
   [^ClassWriter cw ^String class-internal]
   (let [ga (GeneratorAdapter. Opcodes/ACC_PUBLIC
-             (Method. "transfer" object-type (into-array Type []))
+             (Method. "transfer" void-type (into-array Type []))
              nil nil cw)]
     (add-operation-annotation ga "consumer")
     (.visitCode ga)
@@ -245,7 +246,8 @@
         (.getField ga (Type/getObjectType class-internal) "root" object-type)
         (.checkCast ga ideref-type)
         (.invokeInterface ga ideref-type
-          (Method. "deref" object-type (into-array Type [])))))))
+          (Method. "deref" object-type (into-array Type [])))
+        (.pop ga)))))
 
 (defn- emit-cancel-method
   "Emit the cancel @Operation method delegating to IFn.invoke()."

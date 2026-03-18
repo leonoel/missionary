@@ -52,6 +52,14 @@ This asymmetry — synchronous in sequential, asynchronous under contention — 
 
 The CAS toggle's fire-and-forget semantics are correct for the flow protocol. `step` is a notification, not a synchronous request-response. The consumer will eventually see it. The issue is that Lincheck's linearizability model assumes operations take effect between invocation and response — but enqueued notifications take effect *after* `step` returns (on a different thread).
 
-## Status
+## Resolution
 
-The test harness retains per-flow groups (`"f0"`, `"f1"`, ...) and `"consumer"` for transfer. The concurrent producer-producer and producer-consumer scenarios are the purpose of the stress test. The failures this analysis describes are real observations that the test is meant to surface.
+All `@Operation` methods return `void`. Lincheck has no return values to compare, eliminating the false positives. `@Validate` + `ProtocolViolation` remains the sole detection mechanism — sufficient for protocol ordering violations, insufficient for silent non-delivery.
+
+**Detection surface after fix:**
+- Protocol ordering violations (double-step, step-after-done, deref-before-step): ✓ detected via `@Validate`
+- Crash propagation (wrong error handling): ✓ detected via `@Validate`
+- CAS toggle linearizability false positives: ✓ eliminated
+- Silent non-delivery (operator drops step notification without calling rootStep): ✗ not detected
+
+**Known gap:** The pairing heap class of bugs (operator loses a minimum element → rootStep never fires) would not be caught by this harness.

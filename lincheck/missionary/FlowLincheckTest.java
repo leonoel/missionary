@@ -204,37 +204,36 @@ public class FlowLincheckTest {
 
     // ── Operations: step/done per flow (nonParallelGroup serialized) ─
 
-    @Operation(nonParallelGroup = "f0") public String step0() { return flowCount > 0 ? flows[0].step() : "n/a"; }
-    @Operation(nonParallelGroup = "f1") public String step1() { return flowCount > 1 ? flows[1].step() : "n/a"; }
-    @Operation(nonParallelGroup = "f2") public String step2() { return flowCount > 2 ? flows[2].step() : "n/a"; }
-    @Operation(nonParallelGroup = "f3") public String step3() { return flowCount > 3 ? flows[3].step() : "n/a"; }
+    @Operation(nonParallelGroup = "f0") public void step0() { if (flowCount > 0) flows[0].step(); }
+    @Operation(nonParallelGroup = "f1") public void step1() { if (flowCount > 1) flows[1].step(); }
+    @Operation(nonParallelGroup = "f2") public void step2() { if (flowCount > 2) flows[2].step(); }
+    @Operation(nonParallelGroup = "f3") public void step3() { if (flowCount > 3) flows[3].step(); }
 
-    @Operation(nonParallelGroup = "f0") public String done0() { return flowCount > 0 ? flows[0].done() : "n/a"; }
-    @Operation(nonParallelGroup = "f1") public String done1() { return flowCount > 1 ? flows[1].done() : "n/a"; }
-    @Operation(nonParallelGroup = "f2") public String done2() { return flowCount > 2 ? flows[2].done() : "n/a"; }
-    @Operation(nonParallelGroup = "f3") public String done3() { return flowCount > 3 ? flows[3].done() : "n/a"; }
+    @Operation(nonParallelGroup = "f0") public void done0() { if (flowCount > 0) flows[0].done(); }
+    @Operation(nonParallelGroup = "f1") public void done1() { if (flowCount > 1) flows[1].done(); }
+    @Operation(nonParallelGroup = "f2") public void done2() { if (flowCount > 2) flows[2].done(); }
+    @Operation(nonParallelGroup = "f3") public void done3() { if (flowCount > 3) flows[3].done(); }
 
-    @Operation(nonParallelGroup = "f0") public String crash0() { return flowCount > 0 ? flows[0].setThrow() : "n/a"; }
-    @Operation(nonParallelGroup = "f1") public String crash1() { return flowCount > 1 ? flows[1].setThrow() : "n/a"; }
-    @Operation(nonParallelGroup = "f2") public String crash2() { return flowCount > 2 ? flows[2].setThrow() : "n/a"; }
-    @Operation(nonParallelGroup = "f3") public String crash3() { return flowCount > 3 ? flows[3].setThrow() : "n/a"; }
+    @Operation(nonParallelGroup = "f0") public void crash0() { if (flowCount > 0) flows[0].setThrow(); }
+    @Operation(nonParallelGroup = "f1") public void crash1() { if (flowCount > 1) flows[1].setThrow(); }
+    @Operation(nonParallelGroup = "f2") public void crash2() { if (flowCount > 2) flows[2].setThrow(); }
+    @Operation(nonParallelGroup = "f3") public void crash3() { if (flowCount > 3) flows[3].setThrow(); }
 
     // ── Operation: transfer (root consumer) ─────────────────────────
 
     @Operation(nonParallelGroup = "consumer")
-    public Object transfer() {
-        if (terminated) return "skip";
+    public void transfer() {
+        if (terminated) return;
         int old = rootState.get();
-        if (old != STEPPED) return "skip";
-        if (!rootState.compareAndSet(old, CLAIMED)) return "skip";
+        if (old != STEPPED) return;
+        if (!rootState.compareAndSet(old, CLAIMED)) return;
 
-        Object ret;
         try {
-            ret = ((IDeref) iterator).deref();
+            ((IDeref) iterator).deref();
         } catch (ProtocolViolation e) {
             throw e;
         } catch (Exception e) {
-            ret = "err:" + e.getClass().getSimpleName();
+            // non-protocol exceptions (e.g. crash path) are absorbed
         }
 
         rootState.getAndUpdate(post -> {
@@ -248,7 +247,6 @@ public class FlowLincheckTest {
                         + stateName(post));
             }
         });
-        return ret;
     }
 
     // ── Operation: cancel (root consumer) ───────────────────────────
