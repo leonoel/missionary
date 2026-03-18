@@ -2,7 +2,6 @@ package missionary;
 
 import clojure.java.api.Clojure;
 import clojure.lang.AFn;
-import clojure.lang.ExceptionInfo;
 import clojure.lang.IDeref;
 import clojure.lang.IFn;
 import clojure.lang.PersistentVector;
@@ -22,7 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * All flows are wrapped with missionary.flow-protocol-enforcer/flow.
  *
  * Concurrency model:
- *   - step/done on the same DummyFlow are serialized via nonParallelGroup
+ *   - step/done/crash on the same DummyFlow are serialized via nonParallelGroup
  *     (one group per flow index: "f0", "f1", "f2", "f3").
  *   - transfer is in group "consumer" (single consumer per spec).
  *   - cancel has no group (can run concurrently with anything).
@@ -189,7 +188,13 @@ public class FlowLincheckTest {
         IFn rootDone = new AFn() {
             public Object invoke() {
                 terminated = true;
-                rootState.set(DONE);
+                rootState.getAndUpdate(s -> {
+                    switch (s) {
+                        case TRANSFERRED: return DONE;
+                        case DONE:        return DONE;
+                        default:          return s;  // keep STEPPED/CLAIMED/SDT
+                    }
+                });
                 return null;
             }
         };
@@ -214,23 +219,21 @@ public class FlowLincheckTest {
     @Operation(nonParallelGroup = "f2") public String crash2() { return flowCount > 2 ? flows[2].setThrow() : "n/a"; }
     @Operation(nonParallelGroup = "f3") public String crash3() { return flowCount > 3 ? flows[3].setThrow() : "n/a"; }
 
-
     // ── Operation: transfer (root consumer) ─────────────────────────
 
     @Operation(nonParallelGroup = "consumer")
     public Object transfer() {
-        if (terminated) return "skip:terminated";
-        int old;
-        do {
-            old = rootState.get();
-            if (old != STEPPED || old != DONE) return "skip:not-stepped-or-done";
-        } while (!rootState.compareAndSet(old, CLAIMED));
+        if (terminated) return "skip";
+        int old = rootState.get();
+        if (old != STEPPED) return "skip";
+        if (!rootState.compareAndSet(old, CLAIMED)) return "skip";
 
         Object ret;
         try {
             ret = ((IDeref) iterator).deref();
+        } catch (ProtocolViolation e) {
+            throw e;
         } catch (Exception e) {
-            if (isProtocolViolation(e)) throw e;
             ret = "err:" + e.getClass().getSimpleName();
         }
 
@@ -298,18 +301,6 @@ public class FlowLincheckTest {
     @Test public void testBuffer()     { stressTest(BUFFER, 1); }
 
     // ── Helpers ──────────────────────────────────────────────────────
-
-    static boolean isProtocolViolation(Throwable t) {
-        while (t != null) {
-            if (t instanceof ExceptionInfo &&
-                t.getMessage() != null &&
-                t.getMessage().contains("protocol violation")) {
-                return true;
-            }
-            t = t.getCause();
-        }
-        return false;
-    }
 
     static String stateName(int s) {
         switch (s) {
