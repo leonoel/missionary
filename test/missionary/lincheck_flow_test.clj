@@ -216,16 +216,6 @@
 (def all-tests
   (into [] cat [operator-tests signal-tests stream-tests chain-tests]))
 
-(defn- root-cause
-  "Walk the cause chain to find the first with a non-nil message."
-  [ex]
-  (loop [ex ex]
-    (if (ex-message ex)
-      ex
-      (if-let [cause (ex-cause ex)]
-        (recur cause)
-        ex))))
-
 (defn run-tests
   "Run a set of lincheck flow stress tests sequentially.
    tests is a seq of [name class] pairs.
@@ -244,7 +234,7 @@
            (printf "PASS  (%.1fs)%n" (/ (- (System/nanoTime) t0) 1e9))
            (catch Throwable e
              (printf "FAIL  (%.1fs)%n" (/ (- (System/nanoTime) t0) 1e9))
-             (println (root-cause e))
+             (println (ex-message e))
              (vswap! failed conj nm))))
        (flush))
      (let [nfail (count @failed)

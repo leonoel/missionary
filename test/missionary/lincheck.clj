@@ -205,9 +205,15 @@
     (.returnValue ga)
     (.mark ga catch-block)
     (.storeLocal ga ex-local)
-    (.loadThis ga)
-    (.push ga true)
-    (.putField ga (Type/getObjectType class-internal) "violationSeen" Type/BOOLEAN_TYPE)
+    ;; first-writer-wins: only store if violationSeen is still null
+    (let [skip-store (.newLabel ga)]
+      (.loadThis ga)
+      (.getField ga (Type/getObjectType class-internal) "violationSeen" object-type)
+      (.ifNonNull ga skip-store)
+      (.loadThis ga)
+      (.loadLocal ga ex-local)
+      (.putField ga (Type/getObjectType class-internal) "violationSeen" object-type)
+      (.mark ga skip-store))
     (.loadLocal ga ex-local)
     (.visitInsn ga Opcodes/ATHROW)
     (.endMethod ga)))
@@ -267,9 +273,10 @@
         (.pop ga)))))
 
 (defn- emit-validate-method
-  "Emit @Validate method that throws AssertionError if violationSeen is true."
+  "Emit @Validate method that throws AssertionError if violationSeen is non-null."
   [^ClassWriter cw ^String class-internal]
   (let [validate-descriptor "Lorg/jetbrains/lincheck/datastructures/Validate;"
+        throwable-type (Type/getType Throwable)
         ga (GeneratorAdapter. Opcodes/ACC_PUBLIC
              (Method. "validate" void-type (into-array Type []))
              nil nil cw)]
@@ -277,16 +284,19 @@
       (.visitEnd av))
     (.visitCode ga)
     (.loadThis ga)
-    (.getField ga (Type/getObjectType class-internal) "violationSeen" Type/BOOLEAN_TYPE)
+    (.getField ga (Type/getObjectType class-internal) "violationSeen" object-type)
     (let [end (.newLabel ga)
           ae-type (Type/getType AssertionError)]
-      (.ifZCmp ga GeneratorAdapter/EQ end)
-      ;; AssertionError(String) is private; use AssertionError(Object)
+      (.ifNull ga end)
+      ;; new AssertionError("Flow protocol violation detected", storedViolation)
       (.newInstance ga ae-type)
       (.dup ga)
       (.push ga "Flow protocol violation detected")
+      (.loadThis ga)
+      (.getField ga (Type/getObjectType class-internal) "violationSeen" object-type)
+      (.checkCast ga throwable-type)
       (.invokeConstructor ga ae-type
-        (Method. "<init>" void-type (into-array Type [object-type])))
+        (Method. "<init>" void-type (into-array Type [string-type throwable-type])))
       (.visitInsn ga Opcodes/ATHROW)
       (.mark ga end))
     (.returnValue ga)
@@ -360,7 +370,7 @@
     (.visitField cw Opcodes/ACC_PUBLIC
       "dummies" (.getDescriptor array-type) nil nil)
     (.visitField cw (bit-or Opcodes/ACC_PUBLIC Opcodes/ACC_VOLATILE)
-      "violationSeen" "Z" nil nil)
+      "violationSeen" (.getDescriptor object-type) nil nil)
     ;; Constructor
     (emit-constructor cw class-internal arity)
     ;; Dummy operations: step/done/crash per flow

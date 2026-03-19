@@ -21,10 +21,10 @@
    (when-not (or (string? nm) (symbol? nm) (keyword? nm))
      #?(:clj (prn :what-flow-is-this (Throwable.)) :cljs (.trace js/console "what flow is this")))
    (fn [step done]
-     (let [!should-step? (atom ::init), !done? (atom false), !crashed? (atom false), !v (atom ::init)
+     (let [!should-step? (atom ::init), !done? (atom false), !crashed? (atom nil), !v (atom ::init)
            step (fn []
                   (when @!done? (violated nm "step after done"))
-                  (when @!crashed? (violated nm "step after crash"))
+                  (some->> @!crashed? (violated nm "step after crash"))
                   (if (first (swap-vals! !should-step? not)) (cannot-throw violated nm "step" step) (violated nm "double step")))
            done (fn []
                   (when (false? @!should-step?) (violated nm "done after step without transfer"))
@@ -35,12 +35,12 @@
        (reify
          IFn (#?(:clj invoke :cljs -invoke) [_] (cannot-throw violated nm "cancel" cancel))
          IDeref (#?(:clj deref :cljs -deref) [_]
-                  (when @!crashed? (violated nm "transfer after crash"))
+                  (some->> @!crashed? (violated nm "transfer after crash"))
                   (if-let [should-step (first (swap-vals! !should-step? not))]
                     (let [[t v] (try [:ok (reset! !v @cancel)] (catch #?(:clj Throwable :cljs :default) e [:ex e]))]
                       (violated nm (if (= ::init should-step) "transfer without initial step" "double transfer!!!"))
                       (if (= :ex t) (throw v) v))
                     (try (reset! !v @cancel)
                          (catch #?(:clj Throwable :cljs :default) e
-                           (reset! !crashed? true)
+                           (reset! !crashed? e)
                            (throw e))))))))))
