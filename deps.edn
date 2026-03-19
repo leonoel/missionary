@@ -54,4 +54,5 @@
                  "--add-opens" "java.base/java.lang.invoke=ALL-UNNAMED"
                  "--add-opens" "java.base/jdk.internal.misc=ALL-UNNAMED"
                  "--add-opens" "java.base/sun.nio.ch=ALL-UNNAMED"
+                 "-Djdk.attach.allowAttachSelf"
                  "-XX:+EnableDynamicAgentLoading"]}}}
