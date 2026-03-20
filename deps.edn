@@ -39,6 +39,14 @@
    :extra-paths ["test" "cljs-test-runner-out/gen"]
    :main-opts   ["-m" "cljs-test-runner.main"]}
 
+  :perf
+  ;; sudo sysctl -w kernel.perf_event_paranoid=1 && sudo sysctl -w kernel.kptr_restrict=0
+  {:extra-deps  {com.clojure-goes-fast/clj-async-profiler {:mvn/version "2.0.0-beta1"}}
+   :extra-paths ["test"]
+   :jvm-opts    ["-Djdk.attach.allowAttachSelf"
+                 "-XX:+UnlockDiagnosticVMOptions"
+                 "-XX:+DebugNonSafepoints"]}
+
   :lincheck
   {:extra-deps  {org.jetbrains.lincheck/lincheck {:mvn/version "3.4"}
                  org.junit.jupiter/junit-jupiter {:mvn/version "6.0.3"}

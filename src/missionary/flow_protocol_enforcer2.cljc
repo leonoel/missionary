@@ -28,8 +28,9 @@
    nm: name for this flow (used in violation messages).
    input-flow: the flow to wrap.
    Returns a flow."
-  ([on-violation nm input-flow] (flow on-violation nm input-flow true))
-  ([on-violation nm input-flow ready-on-init?]
+  ([on-violation nm input-flow] (flow on-violation nm input-flow {}))
+  ([on-violation nm input-flow opts]
+   (let [{:keys [ready-on-init] :or {ready-on-init true}} opts]
    (fn [step done]
      (let [!should-step? (atom ::init)
            !done?        (atom false)
@@ -57,7 +58,7 @@
                      (catch #?(:clj Throwable :cljs :default) e
                        (on-violation (make-violation nm "flow process creation threw" e))
                        (throw e)))]
-       (when (and ready-on-init? (= ::init @!should-step?))
+       (when (and ready-on-init (= ::init @!should-step?))
          (on-violation (make-violation nm "missing initial step")))
        (reify
          IFn (#?(:clj invoke :cljs -invoke) [_]
@@ -76,4 +77,4 @@
                   (try @iter
                        (catch #?(:clj Throwable :cljs :default) e
                          (reset! !crashed? e)
-                         (throw e)))))))))
+                         (throw e))))))))))
