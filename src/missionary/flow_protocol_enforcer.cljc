@@ -1,3 +1,6 @@
+;; NOTE: This enforcer violates the flow protocol itself — it throws from
+;; step (notifier) and done (terminator), which must not throw.
+;; See missionary.flow-protocol-enforcer2 for a correct implementation.
 (ns  missionary.flow-protocol-enforcer
   #?(:clj (:import [clojure.lang IDeref IFn]
                     [missionary ProtocolViolation])))
