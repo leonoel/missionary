@@ -1,6 +1,6 @@
 (ns missionary.conc
   "Concurrency test framework for missionary flows.
-   Generates protocol-valid scenarios by construction via process ownership."
+   Generates protocol-valid scenarios by construction via process borrowing."
   (:import (clojure.lang ExceptionInfo IDeref IFn)
            (java.util.concurrent
             LinkedBlockingQueue SynchronousQueue TimeUnit)
@@ -28,24 +28,28 @@
   [tc]
   (+ (* 2 (quot tc 3)) (if (zero? (mod tc 3)) 0 1)))
 
+(defn- ->dummy-state []
+  (let [s (object-array [false 0 0 nil nil])]
+    [(fn should-throw  ([] (aget s (int 0))) ([x] (aset s (int 0) x)))
+     (fn re-step-count ([] (aget s (int 1))) ([x] (aset s (int 1) x)))
+     (fn xfer-count    ([] (aget s (int 2))) ([x] (aset s (int 2) x)))
+     (fn step-cb       ([] (aget s (int 3))) ([x] (aset s (int 3) x)))
+     (fn done-cb       ([] (aget s (int 4))) ([x] (aset s (int 4) x)))]))
+
 (defn ->dummy-flow
   ([] (->dummy-flow {}))
   ([{:keys [step-on-init weights]
      :or   {step-on-init true
             weights      {:step 40 :done 5 :crash 10 :re-step 10}}}]
    (let [state         (AtomicInteger. 0)
-         should-throw  (volatile! false)
-         re-step-count (volatile! 0)
-         xfer-count    (volatile! 0)
-         step-cb       (volatile! nil)
-         done-cb       (volatile! nil)
+         [should-throw re-step-count xfer-count step-cb done-cb] (->dummy-state)
          do-step       (fn []
                          (loop []
                            (let [old (.get state)]
                              (if (pos? (bit-and old (bit-or DF-STEPPED DF-DONE DF-CRASHED)))
                                nil
                                (if (.compareAndSet state old (bit-or old DF-STEPPED))
-                                 (do (@step-cb) nil)
+                                 (do ((step-cb)) nil)
                                  (recur))))))
          do-done       (fn []
                          (loop []
@@ -53,10 +57,10 @@
                              (cond
                                (pos? (bit-and old DF-DONE))                    nil
                                (pos? (bit-and old DF-STEPPED))                 nil
-                               (.compareAndSet state old (bit-or old DF-DONE)) (do (@done-cb) nil)
+                               (.compareAndSet state old (bit-or old DF-DONE)) (do ((done-cb)) nil)
                                :else                                           (recur)))))
-         do-crash      (fn [] (vreset! should-throw true) nil)
-         do-re-step    (fn [] (vswap! re-step-count inc) nil)]
+         do-crash      (fn [] (should-throw true) nil)
+         do-re-step    (fn [] (-> (re-step-count) inc (re-step-count)) nil)]
      (reify
        ProcessDebug
        (valid-ops [_]
@@ -84,18 +88,18 @@
             :done        (pos? (bit-and s DF-DONE))
             :cancelled   (pos? (bit-and s DF-CANCELLED))
             :crashed     (pos? (bit-and s DF-CRASHED))
-            :throw-armed @should-throw
-            :re-step     @re-step-count}))
+            :throw-armed (should-throw)
+            :re-step     (re-step-count)}))
        IFn
        (invoke [_ step done]
-         (vreset! step-cb step)
-         (vreset! done-cb done)
+         (step-cb step)
+         (done-cb done)
          (when step-on-init
            (loop []
              (let [old (.get state)]
                (when-not (.compareAndSet state old (bit-or old DF-STEPPED))
                  (recur))))
-           (@step-cb))
+           ((step-cb)))
          (reify
            IFn
            (invoke [_]
@@ -106,22 +110,22 @@
              nil)
            IDeref
            (deref [_]
-             (if @should-throw
+             (if (should-throw)
                (do (loop []
                      (let [old (.get state)]
                        (when-not (.compareAndSet state old
                                                  (bit-or (bit-and old (bit-not DF-STEPPED)) DF-CRASHED))
                          (recur))))
                    (throw (ex-info "intended crash" {})))
-               (let [tc    (vswap! xfer-count inc)
+               (let [tc    (-> (xfer-count) inc (xfer-count))
                      value (transfer-value (dec tc))]
                  (loop []
                    (let [old (.get state)]
                      (when-not (.compareAndSet state old (bit-and old (bit-not DF-STEPPED)))
                        (recur))))
                  ;; Re-step: fire step during transfer (consecutive transfer)
-                 (when (pos? @re-step-count)
-                   (vswap! re-step-count dec)
+                 (when (pos? (re-step-count))
+                   (-> (re-step-count) dec (re-step-count))
                    (do-step))
                  value)))))))))
 
@@ -133,11 +137,15 @@
 (def ^:private ^:const RT-SDT 3)        ; SteppedDuringTransfer
 (def ^:private ^:const RT-DONE 4)
 
+(defn- ->root-state []
+  (let [s (object-array [false nil])]
+    [(fn cancelled ([] (aget s (int 0))) ([x] (aset s (int 0) x)))
+     (fn iterator  ([] (aget s (int 1))) ([x] (aset s (int 1) x)))]))
+
 (defn ->root
   [flow]
   (let [state      (AtomicInteger. RT-TRANSFERRED)
-        cancelled  (volatile! false)
-        iterator   (volatile! nil)
+        [cancelled iterator] (->root-state)
         step-fn    (fn []
                      (.getAndUpdate state
                                     (reify java.util.function.IntUnaryOperator
@@ -155,55 +163,53 @@
                                       (applyAsInt [_ s] RT-DONE)))
                      nil)
         iter       (flow step-fn done-fn)]
-    (vreset! iterator iter)
-    (let [transfer-fn
-          (fn []
-            (when-not (.compareAndSet state RT-STEPPED RT-CLAIMED)
-              (throw (AssertionError.
-                      (str "Root transfer in invalid state: " (.get state)))))
-            (let [update-state!
-                  (fn []
-                    (.getAndUpdate state
-                                   (reify java.util.function.IntUnaryOperator
-                                     (applyAsInt [_ post]
-                                       (case post
-                                         2 RT-TRANSFERRED
-                                         3 RT-STEPPED
-                                         4 RT-DONE
-                                         (throw (AssertionError.
-                                                 (str "Root post-transfer state: " post))))))))
-                  ret (try @@iterator
-                           (catch Throwable e
-                             (update-state!)
-                             (throw e)))]
-              (update-state!)
-              ret))
-          cancel-fn
-          (fn []
-            (@iterator)
-            (vreset! cancelled true)
-            nil)]
-      (let [root-dbg (fn [] {:raw (.get state)
-                             :state (case (.get state)
-                                      0 :transferred 1 :stepped 2 :claimed
-                                      3 :sdt 4 :done (.get state))
-                             :cancelled @cancelled})]
-        [(reify ProcessDebug
-           (valid-ops [_]
-             (if (= (.get state) RT-STEPPED)
-               [{:op :transfer :weight 40 :exec transfer-fn}]
-               []))
-           (terminal? [_] (= (.get state) RT-DONE))
-           (dbg-state [_] (root-dbg)))
-         (reify ProcessDebug
-           (valid-ops [_]
-             (if (= (.get state) RT-DONE)
-               []
-               [{:op :cancel
-                 :weight (if @cancelled 50 5)
-                 :exec cancel-fn}]))
-           (terminal? [_] (= (.get state) RT-DONE))
-           (dbg-state [_] (root-dbg)))]))))
+    (iterator iter)
+    (let [transfer-fn (fn []
+                        (when-not (.compareAndSet state RT-STEPPED RT-CLAIMED)
+                          (throw (AssertionError.
+                                  (str "Root transfer in invalid state: " (.get state)))))
+                        (let [update-state!
+                              (fn []
+                                (.getAndUpdate state
+                                               (reify java.util.function.IntUnaryOperator
+                                                 (applyAsInt [_ post]
+                                                   (case post
+                                                     2 RT-TRANSFERRED
+                                                     3 RT-STEPPED
+                                                     4 RT-DONE
+                                                     (throw (AssertionError.
+                                                             (str "Root post-transfer state: " post))))))))
+                              ret (try @(iterator)
+                                       (catch Throwable e
+                                         (update-state!)
+                                         (throw e)))]
+                          (update-state!)
+                          ret))
+          cancel-fn (fn []
+                      ((iterator))
+                      (cancelled true)
+                      nil)
+          root-dbg (fn [] {:raw (.get state)
+                           :state (case (.get state)
+                                    0 :transferred 1 :stepped 2 :claimed
+                                    3 :sdt 4 :done (.get state))
+                           :cancelled (cancelled)})]
+      [(reify ProcessDebug
+         (valid-ops [_]
+           (if (= (.get state) RT-STEPPED)
+             [{:op :transfer :weight 40 :exec transfer-fn}]
+             []))
+         (terminal? [_] (= (.get state) RT-DONE))
+         (dbg-state [_] (root-dbg)))
+       (reify ProcessDebug
+         (valid-ops [_]
+           (if (= (.get state) RT-DONE)
+             []
+             [{:op :cancel
+               :weight (if (cancelled) 50 5)
+               :exec cancel-fn}]))
+         (terminal? [_] (= (.get state) RT-DONE))
+         (dbg-state [_] (root-dbg)))])))
 
 ;; ── Worker Pool ──────────────────────────────────────────────────
 
@@ -274,18 +280,26 @@
           (recur remaining (rest ops)))))))
 
 (defn- collect-ops
-  "Collect all valid ops from non-owned processes, annotated with process name."
-  [named-processes owned-set]
+  "Collect all valid ops from non-borrowed processes, annotated with process name."
+  [named-processes borrowed]
   (into []
         (mapcat (fn [{:keys [name process]}]
-                  (when-not (contains? owned-set name)
-                    (map #(assoc % :process-name name) (valid-ops process)))))
+                  (when-not (contains? borrowed name)
+                    (mapv #(assoc % :process-name name) (valid-ops process)))))
         named-processes))
 
 (defn- dummy-processes
   "Return only the DummyFlow processes (role :dummy)."
   [named-processes]
   (filterv #(= :dummy (:role %)) named-processes))
+
+(defn- ->arbiter-state []
+  (let [s (object-array [[] #{} 0 nil nil])]
+    [(fn history       ([] (aget s (int 0))) ([x] (aset s (int 0) x)))
+     (fn borrowed      ([] (aget s (int 1))) ([x] (aset s (int 1) x)))
+     (fn ops-count     ([] (aget s (int 2))) ([x] (aset s (int 2) x)))
+     (fn failure       ([] (aget s (int 3))) ([x] (aset s (int 3) x)))
+     (fn barrier-state ([] (aget s (int 4))) ([x] (aset s (int 4) x)))]))
 
 (defn run-arbiter
   "Run the arbiter dispatch loop. Returns {:history [...] :failure nil-or-exception}."
@@ -299,21 +313,16 @@
                               (str "threads (" T ") must be <= processes (" (count named-processes) ")"))
         seed          (or (:seed config) (.nextLong (java.util.Random.)))
         rng           (java.util.Random. (long seed))
-        history       (volatile! [])
-        owned         (volatile! #{})
-        ops-count     (volatile! 0)
-        failure       (volatile! nil)
-        ;; Barrier state: {:counter AtomicInteger :remaining int} or nil
-        barrier-state (volatile! nil)
+        [history borrowed ops-count failure barrier-state] (->arbiter-state)
         deadline      (+ (System/currentTimeMillis) timeout-ms)
         timed-out?    (fn [] (> (System/currentTimeMillis) deadline))
 
         dispatch!
         (fn [thread-id op]
-          (vswap! owned conj (:process-name op))
-          (let [bc (when-let [bs @barrier-state]
+          (-> (borrowed) (conj (:process-name op)) (borrowed))
+          (let [bc (when-let [bs (barrier-state)]
                      (when (pos? (:remaining bs))
-                       (vswap! barrier-state update :remaining dec)
+                       (-> (barrier-state) (update :remaining dec) (barrier-state))
                        (:counter bs)))]
             (.put ^SynchronousQueue (nth cmd-queues thread-id)
                   {:exec (:exec op) :barrier-counter bc
@@ -326,16 +335,16 @@
 
     (try
       ;; Initial dispatch — one op per thread
-      (let [pool (collect-ops named-processes @owned)]
+      (let [pool (collect-ops named-processes (borrowed))]
         (doseq [i (range (min T (count pool)))]
           (let [op (weighted-select rng
-                                    (remove #(contains? @owned (:process-name %)) pool))]
+                                    (remove #(contains? (borrowed) (:process-name %)) pool))]
             (dispatch! i op))))
 
       ;; Main loop
       (let [dummies (dummy-processes named-processes)]
         (loop []
-          (when-not (or @failure (timed-out?))
+          (when-not (or (failure) (timed-out?))
             (let [ms-left (- deadline (System/currentTimeMillis))
                   msg     (.poll result-queue ms-left TimeUnit/MILLISECONDS)]
               (when msg
@@ -343,38 +352,38 @@
                       pn   (:process-name msg)
                       op   (:op msg)
                       res  (:result msg)]
-                  ;; Un-own process
-                  (vswap! owned disj pn)
+                  ;; Return borrowed process
+                  (-> (borrowed) (disj pn) (borrowed))
                   ;; Record history
-                  (vswap! history conj {:process-name pn :op op
-                                        :result res :thread-id tid})
+                  (-> (history) (conj {:process-name pn :op op
+                                       :result res :thread-id tid}) (history))
                   ;; Check violations
                   (when (seq @violations)
-                    (vreset! failure (first @violations)))
+                    (failure (first @violations)))
                   ;; Check ProtocolViolation in result
-                  (when (and (not @failure)
+                  (when (and (not (failure))
                              (= :ex (first res))
                              (instance? ProtocolViolation (second res)))
-                    (vreset! failure (second res)))
+                    (failure (second res)))
                   ;; Increment and check limits
-                  (vswap! ops-count inc)
-                  (when-not (or @failure
-                                (>= @ops-count max-ops)
+                  (-> (ops-count) inc (ops-count))
+                  (when-not (or (failure)
+                                (>= (ops-count) max-ops)
                                 (every? #(terminal? (:process %)) dummies))
                     ;; Barrier check — fresh AtomicInteger per round
-                    (when (and (nil? @barrier-state)
-                               (<= (+ @ops-count T) max-ops)
-                               (or (= @ops-count barrier-init)
-                                   (and (> @ops-count barrier-init)
-                                        (zero? (mod (- @ops-count barrier-init) barrier-gap)))))
-                      (vreset! barrier-state
-                               {:counter (AtomicInteger. (int T)) :remaining T}))
+                    (when (and (nil? (barrier-state))
+                               (<= (+ (ops-count) T) max-ops)
+                               (or (= (ops-count) barrier-init)
+                                   (and (> (ops-count) barrier-init)
+                                        (zero? (mod (- (ops-count) barrier-init) barrier-gap)))))
+                      (barrier-state
+                       {:counter (AtomicInteger. (int T)) :remaining T}))
                     ;; Clear exhausted barrier
-                    (when (and @barrier-state
-                               (zero? (:remaining @barrier-state)))
-                      (vreset! barrier-state nil))
+                    (when (and (barrier-state)
+                               (zero? (:remaining (barrier-state))))
+                      (barrier-state nil))
                     ;; Select and dispatch
-                    (let [pool (collect-ops named-processes @owned)]
+                    (let [pool (collect-ops named-processes (borrowed))]
                       (when (seq pool)
                         (dispatch! tid (weighted-select rng pool))))
                     (recur))))))))
@@ -382,20 +391,20 @@
       ;; Signal shutdown — workers check shutting-down in spin loop and exit
       (vreset! shutting-down true)
 
-      ;; Drain in-flight ops
+      ;; Drain borrowed ops
       (loop []
-        (when (seq @owned)
+        (when (seq (borrowed))
           (let [result (.poll result-queue 100 TimeUnit/MILLISECONDS)]
             (when result
-              (vswap! owned disj (:process-name result))
-              (vswap! history conj {:process-name (:process-name result)
-                                    :op (:op result)
-                                    :result (:result result)
-                                    :thread-id (:thread-id result)}))
+              (-> (borrowed) (disj (:process-name result)) (borrowed))
+              (-> (history) (conj {:process-name (:process-name result)
+                                   :op (:op result)
+                                   :result (:result result)
+                                   :thread-id (:thread-id result)}) (history)))
             (recur))))
 
       ;; Active cleanup — cancel root, done DummyFlows, drain to DONE
-      (when-not @failure
+      (when-not (failure)
         (let [root-cancel (first (filter #(= :root-cancel (:role %)) named-processes))
               root-xfer   (first (filter #(= :root-transfer (:role %)) named-processes))
               dummies     (dummy-processes named-processes)]
@@ -421,7 +430,7 @@
           ;; Report failure if root didn't terminate
           (when-not (terminal? (:process root-xfer))
             (if (seq @violations)
-              (vreset! failure (first @violations))
+              (failure (first @violations))
               (when (timed-out?)
                 (let [msg (str "Cleanup timeout: root did not reach DONE"
                                "\n  root: " (pr-str (dbg-state (:process root-xfer)))
@@ -429,16 +438,16 @@
                                (apply str (map (fn [d] (str "\n  " (:name d) ": " (pr-str (dbg-state (:process d)))
                                                             " ops=" (pr-str (mapv :op (valid-ops (:process d))))))
                                                dummies)))]
-                  (vreset! failure (AssertionError. msg))))))))
+                  (failure (AssertionError. msg))))))))
 
       (catch Throwable e
-        (when-not @failure
-          (vreset! failure (or (first @violations) e))))
+        (when-not (failure)
+          (failure (or (first @violations) e))))
 
       (finally
         (vreset! shutting-down true)))
 
-    {:history @history :failure @failure :seed seed}))
+    {:history (history) :failure (failure) :seed seed}))
 
 ;; ── S5: Escalation Runner ─────────────────────────────────────────
 

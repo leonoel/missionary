@@ -13,17 +13,21 @@
   ([on-violation op dummies opts]
    (mapv #(enforcer2/flow on-violation (str op "-in-" %2) %1 opts) dummies (range))))
 
+(defn- arbiter-processes
+  "Build the named-processes vec for run-arbiter from an output flow and its leaf dummies."
+  [out-flow dummies]
+  (let [[rt rc] (conc/->root out-flow)]
+    (into [{:name "root-transfer" :role :root-transfer :process rt}
+           {:name "root-cancel" :role :root-cancel :process rc}]
+      (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) dummies))))
+
 (defn- make
-  "Build test processes: wrap inputs, apply operator, wrap output, create root.
-   out-opts: enforcer2 opts for the output flow (e.g. {:ready-on-init false})."
+  "Build test processes: wrap inputs, apply operator, wrap output, create root."
   ([on-violation op op-fn dummies] (make on-violation op op-fn dummies {}))
   ([on-violation op op-fn dummies out-opts]
    (let [w (wrap on-violation op dummies)
-         out (enforcer2/flow on-violation (str op "-out") (op-fn w) out-opts)
-         [rt rc] (conc/->root out)]
-     (into [{:name "root-transfer" :role :root-transfer :process rt}
-            {:name "root-cancel" :role :root-cancel :process rc}]
-           (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) dummies)))))
+         out (enforcer2/flow on-violation (str op "-out") (op-fn w) out-opts)]
+     (arbiter-processes out dummies))))
 
 (defn- combinator [n] (if (= 1 n) identity vector))
 
@@ -78,44 +82,32 @@
 (defn signal-basic-setup [v]
   (let [d (ds 1)
         e (fn [nm flow] (enforcer2/flow v nm flow))
-        s (m/signal (e "signal-basic-in-0" (first d)))
-        [rt rc] (conc/->root (e "signal-basic-out" s))]
-    (into [{:name "root-transfer" :role :root-transfer :process rt}
-           {:name "root-cancel" :role :root-cancel :process rc}]
-          (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) d))))
+        s (m/signal (e "signal-basic-in-0" (first d)))]
+    (arbiter-processes (e "signal-basic-out" s) d)))
 
 (defn signal-diamond-setup [v]
   (let [d (ds 1)
         e (fn [nm flow] (enforcer2/flow v nm flow))
         s (m/signal (e "signal-diamond-in-0" (first d)))
         [a0 a1] (enforced-arms v "signal-diamond" s 2)
-        out (m/signal (m/latest + a0 a1))
-        [rt rc] (conc/->root (e "signal-diamond-out" out))]
-    (into [{:name "root-transfer" :role :root-transfer :process rt}
-           {:name "root-cancel" :role :root-cancel :process rc}]
-          (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) d))))
+        out (m/signal (m/latest + a0 a1))]
+    (arbiter-processes (e "signal-diamond-out" out) d)))
 
 (defn signal-triple-setup [v]
   (let [d (ds 1)
         e (fn [nm flow] (enforcer2/flow v nm flow))
         s (m/signal (e "signal-triple-in-0" (first d)))
         [a0 a1 a2] (enforced-arms v "signal-triple" s 3)
-        out (m/signal (m/latest + a0 a1 a2))
-        [rt rc] (conc/->root (e "signal-triple-out" out))]
-    (into [{:name "root-transfer" :role :root-transfer :process rt}
-           {:name "root-cancel" :role :root-cancel :process rc}]
-          (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) d))))
+        out (m/signal (m/latest + a0 a1 a2))]
+    (arbiter-processes (e "signal-triple-out" out) d)))
 
 (defn signal-self-sample-setup [v]
   (let [d (ds 1)
         e (fn [nm flow] (enforcer2/flow v nm flow))
         s (m/signal (e "signal-self-sample-in-0" (first d)))
         [a0 a1] (enforced-arms v "signal-self-sample" s 2)
-        out (m/signal (m/sample + a0 a1))
-        [rt rc] (conc/->root (e "signal-self-sample-out" out))]
-    (into [{:name "root-transfer" :role :root-transfer :process rt}
-           {:name "root-cancel" :role :root-cancel :process rc}]
-          (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) d))))
+        out (m/signal (m/sample + a0 a1))]
+    (arbiter-processes (e "signal-self-sample-out" out) d)))
 
 (defn signal-nested-setup [v]
   (let [d (ds 1)
@@ -124,11 +116,8 @@
         [a0 a1] (enforced-arms v "signal-nested-1" s1 2)
         s2 (m/signal (m/latest + a0 a1))
         [b0 b1] (enforced-arms v "signal-nested-2" s2 2)
-        out (m/signal (m/latest + b0 b1))
-        [rt rc] (conc/->root (e "signal-nested-out" out))]
-    (into [{:name "root-transfer" :role :root-transfer :process rt}
-           {:name "root-cancel" :role :root-cancel :process rc}]
-          (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) d))))
+        out (m/signal (m/latest + b0 b1))]
+    (arbiter-processes (e "signal-nested-out" out) d)))
 
 (defn signal-mixed-setup [v]
   (let [d (ds 2)
@@ -137,43 +126,31 @@
         a0 (e "signal-mixed-arm-0" s0)
         a1 (e "signal-mixed-in-1" (second d))
         a2 (e "signal-mixed-arm-2" s0)
-        out (m/signal (m/latest vector a0 a1 a2))
-        [rt rc] (conc/->root (e "signal-mixed-out" out))]
-    (into [{:name "root-transfer" :role :root-transfer :process rt}
-           {:name "root-cancel" :role :root-cancel :process rc}]
-          (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) d))))
+        out (m/signal (m/latest vector a0 a1 a2))]
+    (arbiter-processes (e "signal-mixed-out" out) d)))
 
 (defn signal-semigroup-setup [v]
   (let [d (ds 1)
         e (fn [nm flow] (enforcer2/flow v nm flow))
         s (m/signal conj (e "signal-semigroup-in-0" (first d)))
         [a0 a1] (enforced-arms v "signal-semigroup" s 2)
-        out (m/signal (m/latest vector a0 a1))
-        [rt rc] (conc/->root (e "signal-semigroup-out" out))]
-    (into [{:name "root-transfer" :role :root-transfer :process rt}
-           {:name "root-cancel" :role :root-cancel :process rc}]
-          (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) d))))
+        out (m/signal (m/latest vector a0 a1))]
+    (arbiter-processes (e "signal-semigroup-out" out) d)))
 
 ;; Stream topologies
 (defn stream-basic-setup [v]
   (let [d (ds 1)
         e (fn [nm flow] (enforcer2/flow v nm flow))
-        s (m/stream (e "stream-basic-in-0" (first d)))
-        [rt rc] (conc/->root (e "stream-basic-out" s))]
-    (into [{:name "root-transfer" :role :root-transfer :process rt}
-           {:name "root-cancel" :role :root-cancel :process rc}]
-          (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) d))))
+        s (m/stream (e "stream-basic-in-0" (first d)))]
+    (arbiter-processes (e "stream-basic-out" s) d)))
 
 (defn stream-diamond-setup [v]
   (let [d (ds 1)
         e (fn [nm flow] (enforcer2/flow v nm flow))
         s (m/stream (e "stream-diamond-in-0" (first d)))
         [a0 a1] (enforced-arms v "stream-diamond" s 2)
-        out (m/stream (m/zip vector a0 a1))
-        [rt rc] (conc/->root (e "stream-diamond-out" out))]
-    (into [{:name "root-transfer" :role :root-transfer :process rt}
-           {:name "root-cancel" :role :root-cancel :process rc}]
-          (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) d))))
+        out (m/stream (m/zip vector a0 a1))]
+    (arbiter-processes (e "stream-diamond-out" out) d)))
 
 ;; Chain topologies
 (defn chain-reductions-relieve-setup [v]
@@ -181,33 +158,24 @@
         e (fn [nm flow] (enforcer2/flow v nm flow))
         e0  (e "chain-rr-in-0" (first d))
         mid (e "chain-rr-mid" (m/reductions conj e0))
-        out (m/relieve mid)
-        [rt rc] (conc/->root (e "chain-rr-out" out))]
-    (into [{:name "root-transfer" :role :root-transfer :process rt}
-           {:name "root-cancel" :role :root-cancel :process rc}]
-          (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) d))))
+        out (m/relieve mid)]
+    (arbiter-processes (e "chain-rr-out" out) d)))
 
 (defn chain-filter-reductions-setup [v]
   (let [d (ds 1)
         e (fn [nm flow] (enforcer2/flow v nm flow))
         e0  (e "chain-fr-in-0" (first d))
         mid (enforcer2/flow v "chain-fr-mid" (m/eduction (filter pos?) e0) discrete)
-        out (m/reductions conj mid)
-        [rt rc] (conc/->root (enforcer2/flow v "chain-fr-out" out discrete))]
-    (into [{:name "root-transfer" :role :root-transfer :process rt}
-           {:name "root-cancel" :role :root-cancel :process rc}]
-          (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) d))))
+        out (m/reductions conj mid)]
+    (arbiter-processes (enforcer2/flow v "chain-fr-out" out discrete) d)))
 
 (defn chain-latest-reductions-setup [v]
   (let [d (ds 2)
         e (fn [nm flow] (enforcer2/flow v nm flow))
         w   (wrap v "chain-lr" d)
         mid (e "chain-lr-mid" (apply m/latest vector w))
-        out (m/reductions conj mid)
-        [rt rc] (conc/->root (e "chain-lr-out" out))]
-    (into [{:name "root-transfer" :role :root-transfer :process rt}
-           {:name "root-cancel" :role :root-cancel :process rc}]
-          (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) d))))
+        out (m/reductions conj mid)]
+    (arbiter-processes (e "chain-lr-out" out) d)))
 
 ;; ── Test registry ───────────────────────────────────────────────
 
@@ -324,16 +292,17 @@
         d1  (conc/->dummy-flow {:step-on-init false})
         d   [d0 d1]
         w   (wrap v "buggy" d discrete)
-        out (enforcer2/flow v "buggy-out" (buggy-flow-2 (first w) (second w)) discrete)
-        [rt rc] (conc/->root out)]
-    (into [{:name "root-transfer" :role :root-transfer :process rt}
-           {:name "root-cancel" :role :root-cancel :process rc}]
-          (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) d))))
+        out (enforcer2/flow v "buggy-out" (buggy-flow-2 (first w) (second w)) discrete)]
+    (arbiter-processes out d)))
 
 (def validation-tests
   [["buggy-flow/2" buggy-flow-2-setup]])
 
 (comment
+  (require '[clj-async-profiler.core :as prof])
+  (run-tests)
+  (prof/profile
+      (run-tests all-tests {:total-ops-budget 10000}))
   (run-tests all-tests {:total-ops-budget 1000000})
   (run-tests operator-tests)
   (run-tests signal-tests)
