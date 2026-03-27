@@ -47,6 +47,9 @@
                  "-XX:+UnlockDiagnosticVMOptions"
                  "-XX:+DebugNonSafepoints"]}
 
+  :electric
+  {:extra-deps {com.hyperfiddle/electric {:local/root "../monorepo/electric"}}}
+
   :lincheck
   {:extra-deps  {org.jetbrains.lincheck/lincheck {:mvn/version "3.4"}
                  org.junit.jupiter/junit-jupiter {:mvn/version "6.0.3"}

@@ -1,5 +1,6 @@
 (ns missionary.conc-flow-test
-  (:require [missionary.conc :as conc]
+  (:require [clojure.string :as str]
+            [missionary.conc :as conc]
             [missionary.core :as m]
             [missionary.flow-protocol-enforcer2 :as enforcer2]))
 
@@ -16,10 +17,13 @@
 (defn- arbiter-processes
   "Build the named-processes vec for run-arbiter from an output flow and its leaf dummies."
   [out-flow dummies]
-  (let [[rt rc] (conc/->root out-flow)]
-    (into [{:name "root-transfer" :role :root-transfer :process rt}
-           {:name "root-cancel" :role :root-cancel :process rc}]
-      (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) dummies))))
+  (let [root (conc/->root out-flow)]
+    (into [{:name "root" :role :root :process root}]
+      (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) dummies)))
+  #_(let [[rt rc] (conc/->root out-flow)]
+      (into [{:name "root-transfer" :role :root-transfer :process rt}
+             {:name "root-cancel" :role :root-cancel :process rc}]
+        (map-indexed (fn [i d] {:name (str "df" i) :role :dummy :process d}) dummies))))
 
 (defn- make
   "Build test processes: wrap inputs, apply operator, wrap output, create root."
@@ -52,7 +56,6 @@
 ;; ── Test definitions ────────────────────────────────────────────
 
 ;; Operator tests
-(defn latest-0-setup [v] (make v "latest" latest-op []))
 (defn latest-1-setup [v] (let [d (ds 1)] (make v "latest" latest-op d)))
 (defn latest-2-setup [v] (let [d (ds 2)] (make v "latest" latest-op d)))
 (defn latest-3-setup [v] (let [d (ds 3)] (make v "latest" latest-op d)))
@@ -180,8 +183,7 @@
 ;; ── Test registry ───────────────────────────────────────────────
 
 (def operator-tests
-  [["latest/0" latest-0-setup]
-   ["latest/1" latest-1-setup]
+  [["latest/1" latest-1-setup]
    ["latest/2" latest-2-setup]
    ["latest/3" latest-3-setup]
    ["latest/4" latest-4-setup]
@@ -238,6 +240,9 @@
          (catch Throwable e
            (printf "FAIL (%.1fs)%n" (/ (- (System/nanoTime) t0) 1e9))
            (println (ex-message e))
+           (when-let [d (ex-data e)]
+             (printf "Repro: (run-tests [[\"%s\" %s-setup]] {:max-ops %d :seed %d})%n"
+                     nm (str/replace nm "/" "-") (:max-ops d) (:seed d)))
            (throw e)))
        (flush)))))
 
@@ -302,7 +307,7 @@
   (require '[clj-async-profiler.core :as prof])
   (run-tests)
   (prof/profile
-      (run-tests all-tests {:total-ops-budget 10000}))
+   (run-tests all-tests {:total-ops-budget 10000}))
   (run-tests all-tests {:total-ops-budget 1000000})
   (run-tests operator-tests)
   (run-tests signal-tests)

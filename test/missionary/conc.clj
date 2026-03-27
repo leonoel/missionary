@@ -1,13 +1,21 @@
 (ns missionary.conc
   "Concurrency test framework for missionary flows.
    Generates protocol-valid scenarios by construction via process borrowing."
-  (:import (clojure.lang ExceptionInfo IDeref IFn)
+  (:import (clojure.lang IDeref IFn)
            (java.util.concurrent
             LinkedBlockingQueue SynchronousQueue TimeUnit)
            (java.util.concurrent.atomic AtomicInteger)
            (missionary ProtocolViolation)))
 
 (set! *warn-on-reflection* true)
+
+(defn find-index-by [pred x*]
+  (transduce (keep-indexed (fn [idx x] (when (pred x) idx))) (fn ([v] v) ([_ac nx] (reduced nx))) nil x*))
+
+(defn find-by [pred x*]
+  (transduce (keep (fn [x] (when (pred x) x))) (fn ([v] v) ([_ac nx] (reduced nx))) nil x*))
+
+(defn keep-if [x pred] (when (pred x) x))
 
 ;; ── S1: ProcessDebug Protocol ─────────────────────────────────────
 
@@ -38,9 +46,10 @@
 
 (defn ->dummy-flow
   ([] (->dummy-flow {}))
-  ([{:keys [step-on-init weights]
+  ([{:keys [step-on-init weights value-fn]
      :or   {step-on-init true
-            weights      {:step 40 :done 5 :crash 10 :re-step 10}}}]
+            weights      {:step 40 :done 5 :crash 10 :re-step 10}
+            value-fn     transfer-value}}]
    (let [state         (AtomicInteger. 0)
          [should-throw re-step-count xfer-count step-cb done-cb] (->dummy-state)
          do-step       (fn []
@@ -64,21 +73,23 @@
      (reify
        ProcessDebug
        (valid-ops [_]
-         (let [s        (.get state)
-               stepped? (pos? (bit-and s DF-STEPPED))
-               done?    (pos? (bit-and s DF-DONE))
-               crashed? (pos? (bit-and s DF-CRASHED))]
-           (cond-> []
-             (and (not stepped?) (not done?) (not crashed?))
-             (conj {:op :step :weight (:step weights) :exec do-step})
-             (and (not done?) (not stepped?))
-             (conj {:op :done :weight (:done weights) :exec do-done})
-             (and (not done?) (not crashed?))
-             (conj {:op     :crash
-                    :weight (cond-> (:crash weights) stepped? (* 2))
-                    :exec   do-crash})
-             (and (not done?) (not crashed?))
-             (conj {:op :re-step :weight (:re-step weights) :exec do-re-step}))))
+         (if (nil? (step-cb))
+           [] ;; not spawned yet — flow hasn't been invoked
+           (let [s        (.get state)
+                 stepped? (pos? (bit-and s DF-STEPPED))
+                 done?    (pos? (bit-and s DF-DONE))
+                 crashed? (pos? (bit-and s DF-CRASHED))]
+             (cond-> []
+               (and (not stepped?) (not done?) (not crashed?))
+               (conj {:op :step :weight (:step weights) :exec do-step})
+               (and (not done?) (not stepped?))
+               (conj {:op :done :weight (if (pos? (bit-and s DF-CANCELLED)) 200 (:done weights)) :exec do-done})
+               (and (not done?) (not crashed?))
+               (conj {:op     :crash
+                      :weight (cond-> (:crash weights) stepped? (* 2))
+                      :exec   do-crash})
+               (and (not done?) (not crashed?))
+               (conj {:op :re-step :weight (:re-step weights) :exec do-re-step})))))
        (terminal? [_]
          (pos? (bit-and (.get state) DF-DONE)))
        (dbg-state [_]
@@ -118,7 +129,7 @@
                          (recur))))
                    (throw (ex-info "intended crash" {})))
                (let [tc    (-> (xfer-count) inc (xfer-count))
-                     value (transfer-value (dec tc))]
+                     value (value-fn (dec tc))]
                  (loop []
                    (let [old (.get state)]
                      (when-not (.compareAndSet state old (bit-and old (bit-not DF-STEPPED)))
@@ -138,14 +149,14 @@
 (def ^:private ^:const RT-DONE 4)
 
 (defn- ->root-state []
-  (let [s (object-array [false nil])]
-    [(fn cancelled ([] (aget s (int 0))) ([x] (aset s (int 0) x)))
-     (fn iterator  ([] (aget s (int 1))) ([x] (aset s (int 1) x)))]))
+  (let [s (object-array [0 nil])]
+    [(fn cancel-count ([] (aget s (int 0))) ([x] (aset s (int 0) x)))
+     (fn iterator     ([] (aget s (int 1))) ([x] (aset s (int 1) x)))]))
 
 (defn ->root
   [flow]
   (let [state      (AtomicInteger. RT-TRANSFERRED)
-        [cancelled iterator] (->root-state)
+        [cancel-count iterator] (->root-state)
         step-fn    (fn []
                      (.getAndUpdate state
                                     (reify java.util.function.IntUnaryOperator
@@ -187,29 +198,37 @@
                           ret))
           cancel-fn (fn []
                       ((iterator))
-                      (cancelled true)
+                      (cancel-count (inc (cancel-count)))
                       nil)
           root-dbg (fn [] {:raw (.get state)
                            :state (case (.get state)
                                     0 :transferred 1 :stepped 2 :claimed
                                     3 :sdt 4 :done (.get state))
-                           :cancelled (cancelled)})]
-      [(reify ProcessDebug
-         (valid-ops [_]
-           (if (= (.get state) RT-STEPPED)
-             [{:op :transfer :weight 40 :exec transfer-fn}]
-             []))
-         (terminal? [_] (= (.get state) RT-DONE))
-         (dbg-state [_] (root-dbg)))
-       (reify ProcessDebug
-         (valid-ops [_]
-           (if (= (.get state) RT-DONE)
-             []
-             [{:op :cancel
-               :weight (if (cancelled) 50 5)
-               :exec cancel-fn}]))
-         (terminal? [_] (= (.get state) RT-DONE))
-         (dbg-state [_] (root-dbg)))])))
+                           :cancel-count (cancel-count)})]
+      (reify ProcessDebug
+        (valid-ops [_]
+          (cond-> []
+            (= (.get state) RT-STEPPED) (conj {:op :transfer :weight 40 :exec transfer-fn})
+            (and (not= (.get state) RT-DONE) (< (cancel-count) 3))
+            (conj {:op :cancel :weight (if (pos? (cancel-count)) 50 5) :exec cancel-fn})))
+        (terminal? [_] (= (.get state) RT-DONE))
+        (dbg-state [_] (root-dbg)))
+      #_[(reify ProcessDebug
+           (valid-ops [_]
+             (if (= (.get state) RT-STEPPED)
+               [{:op :transfer :weight 40 :exec transfer-fn}]
+               []))
+           (terminal? [_] (= (.get state) RT-DONE))
+           (dbg-state [_] (root-dbg)))
+         (reify ProcessDebug
+           (valid-ops [_]
+             (if (= (.get state) RT-DONE)
+               []
+               [{:op :cancel
+                 :weight (if (cancelled) 50 5)
+                 :exec cancel-fn}]))
+           (terminal? [_] (= (.get state) RT-DONE))
+           (dbg-state [_] (root-dbg)))])))
 
 ;; ── Worker Pool ──────────────────────────────────────────────────
 
@@ -243,6 +262,7 @@
                                         {:thread-id thread-id
                                          :process-name (:process-name cmd)
                                          :op (:op cmd)
+                                         :round (:round cmd)
                                          :result res}))
                                 (recur))))))
         workers       (mapv (fn [i]
@@ -269,6 +289,7 @@
 (defn- weighted-select
   "Select one entry from ops pool by weighted random."
   [^java.util.Random rng ops]
+  ;; (prn ops (mapv :weight ops))
   (let [total (reduce + 0 (map :weight ops))
         r     (.nextInt rng (int total))]
     (loop [remaining (int r)
@@ -281,25 +302,21 @@
 
 (defn- collect-ops
   "Collect all valid ops from non-borrowed processes, annotated with process name."
-  [named-processes borrowed]
+  [named-processes borrowed-names]
   (into []
         (mapcat (fn [{:keys [name process]}]
-                  (when-not (contains? borrowed name)
+                  (when-not (contains? borrowed-names name)
                     (mapv #(assoc % :process-name name) (valid-ops process)))))
         named-processes))
 
-(defn- dummy-processes
-  "Return only the DummyFlow processes (role :dummy)."
-  [named-processes]
-  (filterv #(= :dummy (:role %)) named-processes))
-
 (defn- ->arbiter-state []
-  (let [s (object-array [[] #{} 0 nil nil])]
+  (let [s (object-array [[] {} 0 nil nil 0])]
     [(fn history       ([] (aget s (int 0))) ([x] (aset s (int 0) x)))
      (fn borrowed      ([] (aget s (int 1))) ([x] (aset s (int 1) x)))
      (fn ops-count     ([] (aget s (int 2))) ([x] (aset s (int 2) x)))
      (fn failure       ([] (aget s (int 3))) ([x] (aset s (int 3) x)))
-     (fn barrier-state ([] (aget s (int 4))) ([x] (aset s (int 4) x)))]))
+     (fn barrier-state ([] (aget s (int 4))) ([x] (aset s (int 4) x)))
+     (fn round         ([] (aget s (int 5))) ([x] (aset s (int 5) x)))]))
 
 (defn run-arbiter
   "Run the arbiter dispatch loop. Returns {:history [...] :failure nil-or-exception}."
@@ -313,20 +330,18 @@
                               (str "threads (" T ") must be <= processes (" (count named-processes) ")"))
         seed          (or (:seed config) (.nextLong (java.util.Random.)))
         rng           (java.util.Random. (long seed))
-        [history borrowed ops-count failure barrier-state] (->arbiter-state)
+        [history borrowed ops-count failure barrier-state round] (->arbiter-state)
         deadline      (+ (System/currentTimeMillis) timeout-ms)
         timed-out?    (fn [] (> (System/currentTimeMillis) deadline))
 
         dispatch!
         (fn [thread-id op]
-          (-> (borrowed) (conj (:process-name op)) (borrowed))
-          (let [bc (when-let [bs (barrier-state)]
-                     (when (pos? (:remaining bs))
-                       (-> (barrier-state) (update :remaining dec) (barrier-state))
-                       (:counter bs)))]
-            (.put ^SynchronousQueue (nth cmd-queues thread-id)
-                  {:exec (:exec op) :barrier-counter bc
-                   :process-name (:process-name op) :op (:op op)})))]
+          (-> (borrowed) (assoc thread-id (:process-name op)) (borrowed))
+          (.put ^SynchronousQueue (nth cmd-queues thread-id)
+                {:exec (:exec op)
+                 :barrier-counter (when-let [bs (barrier-state)] (:counter bs))
+                 :process-name (:process-name op) :op (:op op)
+                 :round (round)}))]
 
     ;; Reset pool state for this run
     (vreset! shutting-down false)
@@ -334,118 +349,96 @@
     (while (.poll result-queue))
 
     (try
-      ;; Initial dispatch — one op per thread
-      (let [pool (collect-ops named-processes (borrowed))]
-        (doseq [i (range (min T (count pool)))]
-          (let [op (weighted-select rng
-                                    (remove #(contains? (borrowed) (:process-name %)) pool))]
-            (dispatch! i op))))
+      (let [all-terminal? (fn [] (every? #(terminal? (:process %)) named-processes))
 
-      ;; Main loop
-      (let [dummies (dummy-processes named-processes)]
-        (loop []
-          (when-not (or (failure) (timed-out?))
-            (let [ms-left (- deadline (System/currentTimeMillis))
-                  msg     (.poll result-queue ms-left TimeUnit/MILLISECONDS)]
-              (when msg
-                (let [tid  (:thread-id msg)
-                      pn   (:process-name msg)
-                      op   (:op msg)
-                      res  (:result msg)]
-                  ;; Return borrowed process
-                  (-> (borrowed) (disj pn) (borrowed))
-                  ;; Record history
-                  (-> (history) (conj {:process-name pn :op op
-                                       :result res :thread-id tid}) (history))
-                  ;; Check violations
-                  (when (seq @violations)
-                    (failure (first @violations)))
-                  ;; Check ProtocolViolation in result
-                  (when (and (not (failure))
-                             (= :ex (first res))
-                             (instance? ProtocolViolation (second res)))
-                    (failure (second res)))
-                  ;; Increment and check limits
-                  (-> (ops-count) inc (ops-count))
-                  (when-not (or (failure)
-                                (>= (ops-count) max-ops)
-                                (every? #(terminal? (:process %)) dummies))
-                    ;; Barrier check — fresh AtomicInteger per round
-                    (when (and (nil? (barrier-state))
-                               (<= (+ (ops-count) T) max-ops)
-                               (or (= (ops-count) barrier-init)
-                                   (and (> (ops-count) barrier-init)
-                                        (zero? (mod (- (ops-count) barrier-init) barrier-gap)))))
-                      (barrier-state
-                       {:counter (AtomicInteger. (int T)) :remaining T}))
-                    ;; Clear exhausted barrier
-                    (when (and (barrier-state)
-                               (zero? (:remaining (barrier-state))))
-                      (barrier-state nil))
-                    ;; Select and dispatch
-                    (let [pool (collect-ops named-processes (borrowed))]
-                      (when (seq pool)
-                        (dispatch! tid (weighted-select rng pool))))
-                    (recur))))))))
+            dispatch-round!
+            (fn []
+              (round (inc (round)))
+              ;; Barrier creation
+              (when (and (nil? (barrier-state))
+                         (<= (+ (ops-count) T) max-ops)
+                         (or (= (ops-count) barrier-init)
+                             (and (> (ops-count) barrier-init)
+                                  (zero? (mod (- (ops-count) barrier-init) barrier-gap)))))
+                (barrier-state {:counter (AtomicInteger. (int T))}))
+              ;; Dispatch to free threads, count dispatched
+              (let [dispatched (loop [i 0 k 0]
+                                 (if (< i T)
+                                   (recur (inc i)
+                                          (if (contains? (borrowed) i)
+                                            k
+                                            (let [pool (collect-ops named-processes (set (vals (borrowed))))]
+                                              (if (seq pool)
+                                                (do (dispatch! i (weighted-select rng pool)) (inc k))
+                                                k))))
+                                   k))]
+                ;; Adjust barrier for actual participant count, then clear (single-use)
+                (when-let [bs (barrier-state)]
+                  (when (pos? dispatched)
+                    (.addAndGet ^AtomicInteger (:counter bs) (- dispatched T)))
+                  (barrier-state nil))))
 
-      ;; Signal shutdown — workers check shutting-down in spin loop and exit
-      (vreset! shutting-down true)
+            dispatch-loop!
+            (fn [dl stop?]
+              (let [expired? (fn [] (> (System/currentTimeMillis) dl))]
+                (loop []
+                  (when-not (or (failure) (expired?))
+                    (dispatch-round!)
+                    (if (empty? (borrowed))
+                      nil ;; nothing in flight — exit
+                      (let [ms-left (- dl (System/currentTimeMillis))
+                            msg     (.poll result-queue (max 1 ms-left) TimeUnit/MILLISECONDS)]
+                        (when msg
+                          (let [tid (:thread-id msg)
+                                pn  (:process-name msg)
+                                op  (:op msg)
+                                res (:result msg)]
+                            ;; Return borrowed thread
+                            (-> (borrowed) (dissoc tid) (borrowed))
+                            ;; Record history
+                            (-> (history) (conj {:process-name pn :op op
+                                                 :result res :thread-id tid
+                                                 :round (:round msg)}) (history))
+                            ;; Check violations
+                            (when (seq @violations)
+                              (failure (first @violations)))
+                            (when (and (not (failure))
+                                       (= :ex (first res))
+                                       (instance? ProtocolViolation (second res)))
+                              (failure (second res)))
+                            (-> (ops-count) inc (ops-count))
+                            (when-not (or (failure) (stop?))
+                              (recur))))))))))]
 
-      ;; Drain borrowed ops
-      (loop []
-        (when (seq (borrowed))
-          (let [result (.poll result-queue 100 TimeUnit/MILLISECONDS)]
-            (when result
-              (-> (borrowed) (disj (:process-name result)) (borrowed))
-              (-> (history) (conj {:process-name (:process-name result)
-                                   :op (:op result)
-                                   :result (:result result)
-                                   :thread-id (:thread-id result)}) (history)))
-            (recur))))
+        ;; Main loop
+        (dispatch-loop! deadline
+                        #(or (>= (+ (ops-count) (count (borrowed))) max-ops)
+                             (all-terminal?)))
 
-      ;; Active cleanup — cancel root, done DummyFlows, drain to DONE
-      (when-not (failure)
-        (let [root-cancel (first (filter #(= :root-cancel (:role %)) named-processes))
-              root-xfer   (first (filter #(= :root-transfer (:role %)) named-processes))
-              dummies     (dummy-processes named-processes)]
-          ;; Cancel root if not done
-          (when (and root-cancel (seq (valid-ops (:process root-cancel))))
-            ((:exec (first (valid-ops (:process root-cancel))))))
-          ;; Drain loop
-          (loop []
-            (when-not (or (terminal? (:process root-xfer)) (timed-out?))
-              ;; Transfer if available — crash-armed DummyFlows and cancelled flows throw expected exceptions
-              (when-let [ops (seq (valid-ops (:process root-xfer)))]
-                (try ((:exec (first ops)))
-                     (catch ExceptionInfo e
-                       (when-not (= "intended crash" (ex-message e)) (throw e)))
-                     (catch missionary.Cancelled _)))
-              ;; Done each DummyFlow if available
-              (doseq [d dummies]
-                (when-let [done-op (first (filter #(= :done (:op %))
-                                                  (valid-ops (:process d))))]
-                  ((:exec done-op))))
-              (Thread/yield)
-              (recur)))
-          ;; Report failure if root didn't terminate
-          (when-not (terminal? (:process root-xfer))
-            (if (seq @violations)
-              (failure (first @violations))
-              (when (timed-out?)
-                (let [msg (str "Cleanup timeout: root did not reach DONE"
-                               "\n  root: " (pr-str (dbg-state (:process root-xfer)))
-                               " ops=" (pr-str (mapv :op (valid-ops (:process root-xfer))))
-                               (apply str (map (fn [d] (str "\n  " (:name d) ": " (pr-str (dbg-state (:process d)))
-                                                            " ops=" (pr-str (mapv :op (valid-ops (:process d))))))
-                                               dummies)))]
-                  (failure (AssertionError. msg))))))))
+        ;; Cancel root, then cleanup loop
+        (when-not (or (failure) (all-terminal?))
+          (let [root-proc (:process (find-by #(= :root (:role %)) named-processes))]
+            (when-some [cancel-op (find-by #(= :cancel (:op %)) (valid-ops root-proc))]
+              (let [res (try [:ok ((:exec cancel-op)) 0] (catch Throwable e [:ex e 0]))]
+                (-> (history) (conj {:thread-id "c" :process-name "root" :op :cancel :result res :round (round)}) (history)))))
+          (dispatch-loop! (+ (System/currentTimeMillis) 100) all-terminal?))
+
+        ;; Failure if cleanup didn't finish
+        (when (and (not (failure)) (not (all-terminal?)))
+          (let [msg (str "Cleanup timeout: not all processes reached DONE"
+                         (apply str (map (fn [{:keys [name process]}]
+                                           (str "\n  " name ": " (pr-str (dbg-state process))
+                                                " ops=" (pr-str (mapv :op (valid-ops process)))))
+                                         named-processes)))]
+            (failure (AssertionError. msg)))))
 
       (catch Throwable e
         (when-not (failure)
           (failure (or (first @violations) e))))
 
       (finally
-        (vreset! shutting-down true)))
+        ;; (vreset! shutting-down true)
+        ))
 
     {:history (history) :failure (failure) :seed seed}))
 
@@ -454,7 +447,7 @@
 (defn run-conc-test
   "Run escalating concurrency test. setup-fn: (fn [on-violation] -> named-processes)."
   [setup-fn config]
-  (let [{:keys [total-ops-budget max-ops timeout-ms threads]
+  (let [{:keys [total-ops-budget max-ops timeout-ms threads seed]
          :or {total-ops-budget 1000 max-ops 50 timeout-ms 500 threads 2}} config
         t-all (System/nanoTime)
         pool  (->worker-pool threads)]
@@ -474,10 +467,11 @@
                       on-violation  (fn [e] (swap! violations conj e))
                       processes     (setup-fn on-violation)
                       result        (run-arbiter processes violations
-                                                 {:max-ops ops
-                                                  :timeout-ms timeout-ms
-                                                  :barrier-init barrier-init
-                                                  :barrier-gap barrier-gap}
+                                                 (cond-> {:max-ops ops
+                                                          :timeout-ms timeout-ms
+                                                          :barrier-init barrier-init
+                                                          :barrier-gap barrier-gap}
+                                                   seed (assoc :seed seed))
                                                  pool)]
                   (when-let [f (:failure result)]
                     (println)
@@ -485,11 +479,12 @@
                             ops run threads (:seed result))
                     (println "History:")
                     (doseq [entry (:history result)]
-                      (printf "  [t%d] %-15s %-10s %s%n"
-                              (:thread-id entry) (:process-name entry)
+                      (printf "  [t%s r%s] %-15s %-18s %s%n"
+                              (:thread-id entry) (:round entry) (:process-name entry)
                               (name (:op entry)) (pr-str (:result entry))))
-                    (throw (if (instance? Throwable f) f
-                               (AssertionError. (str f)))))
+                    (throw (ex-info (if (instance? Throwable f) (ex-message f) (str f))
+                                    {:max-ops ops :seed (:seed result)}
+                                    (when (instance? Throwable f) f))))
                   (recur (inc run)))))
             (recur (long (inc ops)) (long (+ total-runs runs)) (long (+ total-ops (* runs ops)))))))
       (finally (shutdown-pool! pool)))))

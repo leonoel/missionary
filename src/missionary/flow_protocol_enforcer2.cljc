@@ -35,7 +35,7 @@
    input-flow: the flow to wrap.
    Returns a flow."
   ([on-violation nm input-flow] (flow on-violation nm input-flow {}))
-  ([on-violation nm input-flow {:keys [ready-on-init] :or {ready-on-init true}}]
+  ([on-violation nm input-flow {:keys [ready-on-init transfer-check] :or {ready-on-init true}}]
    (fn [step done]
      (let [[stepped? done? crashed?] (->process-state)
            step (fn []
@@ -72,7 +72,12 @@
                       (crashed?) (on-violation (make-violation nm "transfer after crash"))
                       (not s)    (on-violation (make-violation nm (if (nil? s) "transfer without initial step" "double transfer")))
                       :else      (stepped? false)))
-                  (try @iter
-                       (catch #?(:clj Throwable :cljs :default) e
-                         (crashed? e)
-                         (throw e)))))))))
+                  (let [v (try @iter
+                               (catch #?(:clj Throwable :cljs :default) e
+                                 (crashed? e)
+                                 (throw e)))]
+                    (when transfer-check
+                      (try (transfer-check v)
+                           (catch #?(:clj Throwable :cljs :default) e
+                             (on-violation (make-violation nm "transfer-check failed" e)))))
+                    v)))))))
