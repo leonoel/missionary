@@ -135,7 +135,7 @@
 (defn signal-semigroup-setup [v]
   (let [d (ds 1)
         e (fn [nm flow] (enforcer2/flow v nm flow))
-        s (m/signal conj (e "signal-semigroup-in-0" (first d)))
+        s (m/signal + (e "signal-semigroup-in-0" (first d)))
         [a0 a1] (enforced-arms v "signal-semigroup" s 2)
         out (m/signal (m/latest vector a0 a1))]
     (arbiter-processes (e "signal-semigroup-out" out) d)))

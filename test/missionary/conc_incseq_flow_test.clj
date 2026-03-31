@@ -148,5 +148,6 @@
   (run-tests latest-product-tests)
   (run-tests items-tests)
   (run-tests diff-by-tests)
+  (run-tests [["latest-product/2" latest-product-2-setup]] {:max-ops 2 :seed -4174119008899195252, :linearize true})
   (run-tests [["items/1" items-1-setup]])
   (run-tests [["fixed/2" fixed-2-setup]]))

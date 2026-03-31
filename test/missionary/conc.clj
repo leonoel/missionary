@@ -6,7 +6,7 @@
            (java.util.concurrent
             LinkedBlockingQueue SynchronousQueue TimeUnit)
            (java.util.concurrent.atomic AtomicInteger)
-           (missionary ProtocolViolation)))
+           (missionary Cancelled ProtocolViolation)))
 
 (set! *warn-on-reflection* true)
 
@@ -319,6 +319,10 @@
      (fn barrier-state ([] (aget s (int 4))) ([x] (aset s (int 4) x)))
      (fn round         ([] (aget s (int 5))) ([x] (aset s (int 5) x)))]))
 
+(defn expected-exception? [ex]
+  (or (instance? missionary.Cancelled ex)
+    (= "intended crash" (ex-message ex))))
+
 (defn run-arbiter
   "Run the arbiter dispatch loop. Returns {:history [...] :failure nil-or-exception}."
   [named-processes violations config pool]
@@ -392,8 +396,8 @@
                 (when (seq @violations)
                   (failure (first @violations)))
                 (when (and (not (failure))
-                           (= :ex (first res))
-                           (instance? ProtocolViolation (second res)))
+                        (= :ex (first res))
+                        (not (expected-exception? (second res))))
                   (failure (second res)))
                 (-> (ops-count) inc (ops-count))))
 
@@ -522,12 +526,114 @@
       (when (pos? unseen) (printf "  (%d unseen)" unseen))
       (println))))
 
+;; ── Linearizability Checking ──────────────────────────────────────
+
+(defn- lcat
+  "Lazy concat-map — truly element-wise lazy, no chunking."
+  [f coll]
+  (lazy-seq
+   (when-let [s (seq coll)]
+     (concat (f (first s))
+             (lcat f (rest s))))))
+
+(defn- permutations [v]
+  (if (<= (count v) 1)
+    [v]
+    (mapcat (fn [i]
+              (map #(into [(v i)] %)
+                   (permutations (into (subvec v 0 i) (subvec v (inc i))))))
+            (range (count v)))))
+
+(defn- candidate-orderings
+  "Lazy seq of all valid total orderings of history ops.
+   Concurrent ops (same round) are permuted; cross-round order is preserved.
+   Cleanup entries (thread-id \"c\") are never grouped with dispatched entries."
+  [history]
+  (let [groups (->> history
+                    (group-by (fn [{:keys [round thread-id]}]
+                                [round (if (= "c" thread-id) 1 0)]))
+                    (sort-by key)
+                    (mapv val))]
+    ((fn go [groups]
+       (if (empty? groups)
+         [[]]
+         (let [[group & rest] groups
+               alts (if (= 1 (count group))
+                      [group]
+                      (permutations (vec group)))]
+           (lcat (fn [alt]
+                   (map #(into (vec alt) %) (go rest)))
+                 alts))))
+     groups)))
+
+(defn- result-eq
+  "Compare two [tag val] transfer results.
+   :ok — value equality. :ex — class + message equality."
+  [[tag-a val-a] [tag-b val-b]]
+  (and (= tag-a tag-b)
+       (case tag-a
+         :ok (= val-a val-b)
+         :ex (and (= (class val-a) (class val-b))
+                  (= (ex-message val-a) (ex-message val-b)))
+         false)))
+
+(defn- replay-candidate
+  "Replay a candidate ordering single-threaded on a fresh process set.
+   Returns root transfer results as [[tag val] ...], or nil if ordering is invalid.
+   Ops not offered by valid-ops are skipped — the concurrent run dispatches based on
+   a valid-ops snapshot that may be stale by execution time (ops self-guard to no-op)."
+  [setup-fn candidate]
+  (let [processes (setup-fn (fn [_]))
+        proc-map  (into {} (map (juxt :name :process)) processes)]
+    (loop [ops (seq candidate)
+           transfers []]
+      (if ops
+        (let [{:keys [process-name op]} (first ops)
+              proc    (proc-map process-name)
+              exec-fn (some-> (find-by #(= op (:op %)) (valid-ops proc)) :exec)]
+          (if (nil? exec-fn)
+            (recur (next ops) transfers)
+            (let [result (try [:ok (exec-fn)]
+                              (catch Throwable e [:ex e]))]
+              (if (and (= :ex (first result))
+                       (not (instance? Cancelled (second result)))
+                       (not= "intended crash" (ex-message (second result))))
+                nil
+                (recur (next ops)
+                       (if (and (= "root" process-name) (= :transfer op))
+                         (conj transfers result)
+                         transfers))))))
+        transfers))))
+
+(defn check-linearizability
+  "Check that the concurrent history is linearizable by replaying all valid
+   total orderings single-threaded and comparing root transfer sequences.
+   Precondition: history has no protocol violations.
+   Returns true if linearizable, throws ex-info if not."
+  [setup-fn history]
+  (let [expected (into []
+                       (comp (filter #(and (= "root" (:process-name %))
+                                           (= :transfer (:op %))))
+                             (map (fn [{[tag val _nanos] :result}] [tag val])))
+                       history)]
+    (or (some (fn [candidate]
+                (when-let [actual (replay-candidate setup-fn candidate)]
+                  (and (= (count expected) (count actual))
+                       (every? true? (map result-eq expected actual)))))
+              (candidate-orderings history))
+        (throw (ex-info "Linearizability failure"
+                        {:expected (mapv (fn [[tag val]]
+                                           [tag (if (= :ex tag)
+                                                  [(class val) (ex-message val)]
+                                                  val)])
+                                         expected)})))))
+
 ;; ── S5: Escalation Runner ─────────────────────────────────────────
 
 (defn run-conc-test
   "Run escalating concurrency test. setup-fn: (fn [on-violation] -> named-processes)."
   [setup-fn config]
-  (let [{:keys [total-ops-budget max-ops timeout-ms threads seed coverage]
+  (let [{:keys [total-ops-budget max-ops timeout-ms threads seed coverage linearize]
          :or {total-ops-budget 1000 max-ops 50 timeout-ms 500 threads 2}} config
         t-all (System/nanoTime)
         pool  (->worker-pool threads)]
@@ -564,6 +670,20 @@
                           (throw (ex-info (if (instance? Throwable f) (ex-message f) (str f))
                                           {:max-ops ops :seed (:seed result)}
                                           (when (instance? Throwable f) f))))
+                        (when linearize
+                          (try
+                            (check-linearizability setup-fn h)
+                            (catch clojure.lang.ExceptionInfo e
+                              (println)
+                              (printf "LINEARIZABILITY FAILURE at ops=%d run=%d threads=%d seed=%d%n"
+                                      ops run threads (:seed result))
+                              (println "History:")
+                              (render-history h)
+                              (println "Expected:" (:expected (ex-data e)))
+                              (throw (ex-info (ex-message e)
+                                              (merge (ex-data e)
+                                                     {:max-ops ops :seed (:seed result)})
+                                              e)))))
                         (recur (inc run)
                                (if coverage
                                  (reduce (fn [m e] (update m [(:process-name e) (:op e)] (fnil inc 0))) freq h)
