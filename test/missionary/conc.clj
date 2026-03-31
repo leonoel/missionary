@@ -1,6 +1,7 @@
 (ns missionary.conc
   "Concurrency test framework for missionary flows.
    Generates protocol-valid scenarios by construction via process borrowing."
+  (:require [clojure.string :as str])
   (:import (clojure.lang IDeref IFn)
            (java.util.concurrent
             LinkedBlockingQueue SynchronousQueue TimeUnit)
@@ -378,37 +379,44 @@
                     (.addAndGet ^AtomicInteger (:counter bs) (- dispatched T)))
                   (barrier-state nil))))
 
+            record-result!
+            (fn [msg]
+              (let [tid (:thread-id msg)
+                    pn  (:process-name msg)
+                    op  (:op msg)
+                    res (:result msg)]
+                (-> (borrowed) (dissoc tid) (borrowed))
+                (-> (history) (conj {:process-name pn :op op
+                                     :result res :thread-id tid
+                                     :round (:round msg)}) (history))
+                (when (seq @violations)
+                  (failure (first @violations)))
+                (when (and (not (failure))
+                           (= :ex (first res))
+                           (instance? ProtocolViolation (second res)))
+                  (failure (second res)))
+                (-> (ops-count) inc (ops-count))))
+
+            collect-round!
+            (fn [dl]
+              (loop []
+                (when (and (seq (borrowed)) (not (failure)))
+                  (let [ms-left (- dl (System/currentTimeMillis))
+                        msg     (.poll result-queue (max 1 ms-left) TimeUnit/MILLISECONDS)]
+                    (when msg
+                      (record-result! msg)
+                      (recur))))))
+
             dispatch-loop!
             (fn [dl stop?]
               (let [expired? (fn [] (> (System/currentTimeMillis) dl))]
                 (loop []
                   (when-not (or (failure) (expired?))
                     (dispatch-round!)
-                    (if (empty? (borrowed))
-                      nil ;; nothing in flight — exit
-                      (let [ms-left (- dl (System/currentTimeMillis))
-                            msg     (.poll result-queue (max 1 ms-left) TimeUnit/MILLISECONDS)]
-                        (when msg
-                          (let [tid (:thread-id msg)
-                                pn  (:process-name msg)
-                                op  (:op msg)
-                                res (:result msg)]
-                            ;; Return borrowed thread
-                            (-> (borrowed) (dissoc tid) (borrowed))
-                            ;; Record history
-                            (-> (history) (conj {:process-name pn :op op
-                                                 :result res :thread-id tid
-                                                 :round (:round msg)}) (history))
-                            ;; Check violations
-                            (when (seq @violations)
-                              (failure (first @violations)))
-                            (when (and (not (failure))
-                                       (= :ex (first res))
-                                       (instance? ProtocolViolation (second res)))
-                              (failure (second res)))
-                            (-> (ops-count) inc (ops-count))
-                            (when-not (or (failure) (stop?))
-                              (recur))))))))))]
+                    (when (seq (borrowed))
+                      (collect-round! dl)
+                      (when-not (or (failure) (expired?) (stop?))
+                        (recur)))))))]
 
         ;; Main loop
         (dispatch-loop! deadline
@@ -442,12 +450,84 @@
 
     {:history (history) :failure (failure) :seed seed}))
 
+;; ── History Rendering ────────────────────────────────────────────
+
+(defn- format-entry [{:keys [process-name op result]}]
+  (let [base (str process-name ":" (name op))]
+    (cond
+      (and (= :transfer op) (= :ok (first result)))
+      (str base " → " (pr-str (second result)))
+      (= :ex (first result))
+      (str base " → ex:" (ex-message (second result)))
+      :else base)))
+
+(defn render-history
+  "Print history with bracket grouping for concurrent rounds.
+   Precondition: history from strict-round arbiter (no cross-round overlap)."
+  [history]
+  (let [{cleanup true rounds false}
+        (group-by #(= "c" (:thread-id %)) history)
+        round-groups (->> (or rounds [])
+                          (group-by :round)
+                          (sort-by key))]
+    (doseq [[_ entries] round-groups]
+      (let [n (count entries)]
+        (if (= 1 n)
+          (printf "  %s%n" (format-entry (first entries)))
+          (doseq [[i entry] (map-indexed vector entries)]
+            (printf " %s %s%n"
+                    (cond (zero? i) "╭" (= i (dec n)) "╰" :else "│")
+                    (format-entry entry))))))
+    (doseq [entry cleanup]
+      (printf " + %s%n" (format-entry entry)))))
+
+;; ── Coverage Stats ──────────────────────────────────────────────
+
+(defn- concurrent-pairs
+  "Extract concurrent pairs from strict-round history.
+   Returns seq of #{[process-name op] [process-name op]} sets."
+  [history]
+  (->> history
+       (remove #(= "c" (:thread-id %)))
+       (group-by :round)
+       vals
+       (mapcat (fn [entries]
+                 (let [tokens (mapv #(vector (:process-name %) (:op %)) entries)]
+                   (for [i (range (count tokens))
+                         j (range (inc i) (count tokens))]
+                     #{(nth tokens i) (nth tokens j)}))))))
+
+(defn- print-coverage [freq pairs]
+  (let [by-process (->> freq (group-by (comp first key)) (sort-by key))]
+    (doseq [[pn ops] by-process]
+      (printf "    %s[%s]%n" pn
+              (str/join " " (map (fn [[[_ op] cnt]] (str (name op) ":" cnt))
+                                 (sort-by (comp - val) ops))))))
+  (let [sorted-pairs (sort-by (comp - val) pairs)
+        shown        (take 10 sorted-pairs)
+        rest-count   (max 0 (- (count sorted-pairs) 10))
+        n-tokens     (count freq)
+        possible     (quot (* n-tokens (dec n-tokens)) 2)
+        unseen       (- possible (count pairs))]
+    (when (seq shown)
+      (printf "    pairs: %s"
+              (str/join "  "
+                        (map (fn [[pair cnt]]
+                               (let [[a b] (sort-by first (vec pair))]
+                                 (str (first a) ":" (name (second a))
+                                      "∥" (first b) ":" (name (second b))
+                                      ":" cnt)))
+                             shown)))
+      (when (pos? rest-count) (printf "  (+%d more)" rest-count))
+      (when (pos? unseen) (printf "  (%d unseen)" unseen))
+      (println))))
+
 ;; ── S5: Escalation Runner ─────────────────────────────────────────
 
 (defn run-conc-test
   "Run escalating concurrency test. setup-fn: (fn [on-violation] -> named-processes)."
   [setup-fn config]
-  (let [{:keys [total-ops-budget max-ops timeout-ms threads seed]
+  (let [{:keys [total-ops-budget max-ops timeout-ms threads seed coverage]
          :or {total-ops-budget 1000 max-ops 50 timeout-ms 500 threads 2}} config
         t-all (System/nanoTime)
         pool  (->worker-pool threads)]
@@ -461,30 +541,39 @@
           (let [runs          (max 1 (quot total-ops-budget ops))
                 barrier-init  (min 10 (max 0 (- (quot ops 3) 1)))
                 barrier-gap   (max 2 (int (Math/floor (* 2 (Math/log ops)))))]
-            (loop [run 0]
-              (when (< run runs)
-                (let [violations    (atom [])
-                      on-violation  (fn [e] (swap! violations conj e))
-                      processes     (setup-fn on-violation)
-                      result        (run-arbiter processes violations
-                                                 (cond-> {:max-ops ops
-                                                          :timeout-ms timeout-ms
-                                                          :barrier-init barrier-init
-                                                          :barrier-gap barrier-gap}
-                                                   seed (assoc :seed seed))
-                                                 pool)]
-                  (when-let [f (:failure result)]
-                    (println)
-                    (printf "FAILURE at ops=%d run=%d threads=%d seed=%d%n"
-                            ops run threads (:seed result))
-                    (println "History:")
-                    (doseq [entry (:history result)]
-                      (printf "  [t%s r%s] %-15s %-18s %s%n"
-                              (:thread-id entry) (:round entry) (:process-name entry)
-                              (name (:op entry)) (pr-str (:result entry))))
-                    (throw (ex-info (if (instance? Throwable f) (ex-message f) (str f))
-                                    {:max-ops ops :seed (:seed result)}
-                                    (when (instance? Throwable f) f))))
-                  (recur (inc run)))))
+            (let [[freq pairs]
+                  (loop [run 0 freq {} pairs {}]
+                    (if (< run runs)
+                      (let [violations    (atom [])
+                            on-violation  (fn [e] (swap! violations conj e))
+                            processes     (setup-fn on-violation)
+                            result        (run-arbiter processes violations
+                                                       (cond-> {:max-ops ops
+                                                                :timeout-ms timeout-ms
+                                                                :barrier-init barrier-init
+                                                                :barrier-gap barrier-gap}
+                                                         seed (assoc :seed seed))
+                                                       pool)
+                            h             (:history result)]
+                        (when-let [f (:failure result)]
+                          (println)
+                          (printf "FAILURE at ops=%d run=%d threads=%d seed=%d%n"
+                                  ops run threads (:seed result))
+                          (println "History:")
+                          (render-history h)
+                          (throw (ex-info (if (instance? Throwable f) (ex-message f) (str f))
+                                          {:max-ops ops :seed (:seed result)}
+                                          (when (instance? Throwable f) f))))
+                        (recur (inc run)
+                               (if coverage
+                                 (reduce (fn [m e] (update m [(:process-name e) (:op e)] (fnil inc 0))) freq h)
+                                 freq)
+                               (if coverage
+                                 (reduce (fn [m p] (update m p (fnil inc 0))) pairs (concurrent-pairs h))
+                                 pairs)))
+                      [freq pairs]))]
+              (when (and coverage (seq freq))
+                (printf "%n    ops=%d (%d runs)%n" ops runs)
+                (print-coverage freq pairs)))
             (recur (long (inc ops)) (long (+ total-runs runs)) (long (+ total-ops (* runs ops)))))))
       (finally (shutdown-pool! pool)))))
