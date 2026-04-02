@@ -17,7 +17,7 @@
       0 {:grow 1 :degree (+ k 1) :shrink 0
          :change {k tc} :permutation {} :freeze #{}}
       1 {:grow 1 :degree (+ k 2) :shrink 0
-         :change {(+ k 1) tc} :permutation {k (+ k 1), (+ k 1) k} :freeze #{}}
+         :change {k tc} :permutation {k (+ k 1), (+ k 1) k} :freeze #{}}
       2 {:grow 0 :degree (+ k 2) :shrink 1
          :change {} :permutation {k (+ k 1), (+ k 1) k} :freeze #{}})))
 

@@ -454,6 +454,31 @@
 
     {:history (history) :failure (failure) :seed seed}))
 
+(declare check-linearizability)
+
+(defn run-once
+  "Run a single concurrent scenario. setup-fn: (fn [on-violation] -> named-processes).
+   Returns {:history [...] :failure nil-or-ex :seed long}, plus :linearizable? when :linearize is set."
+  [setup-fn config]
+  (let [{:keys [max-ops timeout-ms threads linearize seed]
+         :or {max-ops 10 timeout-ms 500 threads 2}} config
+        barrier-init (min 10 (max 0 (- (quot max-ops 3) 1)))
+        barrier-gap  (max 2 (int (Math/floor (* 2 (Math/log max-ops)))))
+        violations   (atom [])
+        processes    (setup-fn (fn [e] (swap! violations conj e)))
+        pool         (->worker-pool threads)]
+    (try
+      (let [result (run-arbiter processes violations
+                     (cond-> {:max-ops max-ops :timeout-ms timeout-ms
+                              :barrier-init barrier-init :barrier-gap barrier-gap}
+                       seed (assoc :seed seed))
+                     pool)]
+        (if (and linearize (nil? (:failure result)))
+          (let [ok? (try (check-linearizability setup-fn (:history result)) (catch Exception _ false))]
+            (assoc result :linearizable? ok?))
+          result))
+      (finally (shutdown-pool! pool)))))
+
 ;; ── History Rendering ────────────────────────────────────────────
 
 (defn- format-entry [{:keys [process-name op result]}]
@@ -544,7 +569,7 @@
                    (permutations (into (subvec v 0 i) (subvec v (inc i))))))
             (range (count v)))))
 
-(defn- candidate-orderings
+(defn candidate-orderings
   "Lazy seq of all valid total orderings of history ops.
    Concurrent ops (same round) are permuted; cross-round order is preserved.
    Cleanup entries (thread-id \"c\") are never grouped with dispatched entries."

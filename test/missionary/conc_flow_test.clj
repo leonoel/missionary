@@ -306,6 +306,7 @@
 (comment
   (require '[clj-async-profiler.core :as prof])
   (run-tests)
+  (run! prn (mapv (partial mapv (fn [{:keys [process-name op round]}] [round process-name op])) (conc/candidate-orderings (:history (conc/run-once latest-2-setup {:max-ops 3})))))
   (prof/profile
    (run-tests all-tests {:total-ops-budget 10000}))
   (run-tests all-tests {:total-ops-budget 1000000})
