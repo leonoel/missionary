@@ -553,7 +553,7 @@ Returns a discrete flow producing values from given `collection`. Cancelling bef
   ([form] form)
   ([form & forms]
    (let [n (inc (count forms))]
-     `(case (?> (seed (range ~n)))
+     `(case (int (?> (seed (range ~n))))
         ~@(interleave (range) (cons form forms))))))
 
 
@@ -564,7 +564,7 @@ Returns a discrete flow producing values from given `collection`. Cancelling bef
   ([form] form)
   ([form & forms]
    (let [n (inc (count forms))]
-     `(case (?> ~n (seed (range ~n)))
+     `(case (int (?> ~n (seed (range ~n))))
         ~@(interleave (range) (cons form forms))))))
 
 
