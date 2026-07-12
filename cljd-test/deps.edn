@@ -1,0 +1,6 @@
+{:paths ["src" "../src"] ; include both test src and main missionary src
+ :deps {org.clojure/clojure {:mvn/version "1.11.1"}
+        tensegritics/clojuredart {:local/root "/home/z/dev/p/external/ClojureDart"}}
+ :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
+ :cljd/opts {:main missionary.test-primitives
+             :kind :dart}} ; pure dart, no flutter needed for basic tests

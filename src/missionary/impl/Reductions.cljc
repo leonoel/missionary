@@ -1,10 +1,10 @@
 (ns ^:no-doc missionary.impl.Reductions)
 
 (declare transfer)
-(deftype Process [reducer notifier terminator result input ^boolean busy ^boolean done]
-  IFn
+(deftype Process [^:mutable reducer ^:mutable notifier terminator ^:mutable result ^:mutable input ^:mutable busy ^:mutable done]
+  #?(:cljs IFn :cljd cljd.core/IFn)
   (-invoke [_] (input))
-  IDeref
+  #?(:cljs IDeref :cljd cljd.core/IDeref)
   (-deref [p] (transfer p)))
 
 (defn ready [^Process p]
@@ -13,7 +13,7 @@
       (if (.-done p)
         (.-terminator p)
         (if (nil? (.-reducer p))
-          (do (try @(.-input p) (catch :default _))
+          (do (try @(.-input p) (catch #?(:cljs :default :cljd Exception) _))
               (recur cb)) (.-notifier p))) cb)))
 
 (defn transfer [^Process ps]
@@ -27,7 +27,7 @@
           (do ((.-input ps))
               (set! (.-reducer ps) nil)
               @r) r)))
-    (catch :default e
+    (catch #?(:cljs :default :cljd Exception) e
       ((.-input ps))
       (set! (.-notifier ps) nil)
       (set! (.-reducer ps) nil)

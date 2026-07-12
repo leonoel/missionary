@@ -1,14 +1,15 @@
 (ns ^:no-doc missionary.impl.Watch
-  (:import missionary.Cancelled))
+  #?(:cljs (:import missionary.Cancelled)
+     :cljd (:require [missionary.Cancelled :refer [Cancelled]])))
 
 (declare kill transfer)
-(deftype Process [notifier terminator reference value]
-  IFn
+(deftype Process [^:mutable notifier terminator reference ^:mutable value]
+  #?(:cljs IFn :cljd cljd.core/IFn)
   (-invoke [this] (kill this) nil)
-  IDeref
+  #?(:cljs IDeref :cljd cljd.core/IDeref)
   (-deref [this] (transfer this)))
 
-(defn watch [^Process ps _ _ curr]
+(defn watch [ps _ _ curr]
   (when-some [cb (.-notifier ps)]
     (let [x (.-value ps)]
       (set! (.-value ps) curr)

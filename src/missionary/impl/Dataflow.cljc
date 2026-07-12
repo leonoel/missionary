@@ -1,27 +1,33 @@
 (ns missionary.impl.Dataflow
-  (:import missionary.Cancelled))
+  #?(:cljs (:import missionary.Cancelled)
+     :cljd (:require [missionary.Cancelled :refer [Cancelled]])))
 
 (defn nop [])
 (defn send-rf [x !] (! x) x)
 
+(declare cancel-watch)
+
 (deftype Port [^:mutable bound
                ^:mutable value
                ^:mutable watch]
-  IFn
+  #?(:cljs IFn :cljd cljd.core/IFn)
   (-invoke [_ t]
     (when-not bound
       (set! bound true)
       (set! value t)
       (reduce send-rf t (persistent! watch))
       (set! watch nil)) value)
-  (-invoke [_ s! f!]
+  (-invoke [this s! f!]
     (if bound
       (do (s! value) nop)
       (let [! #(s! %)]
         (set! watch (conj! watch !))
-        #(when-not bound
-           (when (contains? watch !)
-             (set! watch (disj! watch !))
-             (f! (Cancelled. "Dataflow variable dereference cancelled."))))))))
+        #(cancel-watch this ! f!)))))
+
+(defn cancel-watch [^Port p ! f!]
+  (when-not (.-bound p)
+    (when (contains? (.-watch p) !)
+      (set! (.-watch p) (disj! (.-watch p) !))
+      (f! (Cancelled. "Dataflow variable dereference cancelled.")))))
 
 (defn make [] (->Port false nil (transient #{})))

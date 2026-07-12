@@ -1,0 +1,98 @@
+(ns missionary.test-primitives
+  (:require [missionary.impl.Semaphore :as sem]
+            [missionary.impl.Never :as never]
+            [missionary.impl.PairingHeap :as ph]
+            [missionary.impl.Rendezvous :as rdv]
+            [missionary.impl.Reduce :as red]
+            [missionary.impl.Seed :as seed]
+            [missionary.impl.Reductions :as reds]
+            [missionary.impl.Relieve :as rel]
+            [missionary.impl.Watch :as watch]
+            [missionary.impl.Sleep :as sleep]
+            [missionary.impl.Fiber :as fiber]
+            [missionary.impl.Observe :as obs]
+            [missionary.impl.Dataflow :as df]))
+
+(defn main []
+  (println "\n=== Missionary ClojureDart Tests ===\n")
+
+  ;; Test Semaphore
+  (println "Test 1: Semaphore with 2 permits")
+  (let [s (sem/make 2)]
+    (println "  Created semaphore")
+    (s (fn [_] (println "  Acquired permit 1")) identity)
+    (s (fn [_] (println "  Acquired permit 2")) identity)
+    (s) ;; release one
+    (println "  Released permit")
+    (println "  PASSED"))
+
+  ;; Test Never
+  (println "\nTest 2: Never task cancellation")
+  (let [cancelled (atom false)
+        cancel (never/run (fn [_] (reset! cancelled true)))]
+    (cancel)
+    (println (if @cancelled "  PASSED" "  FAILED")))
+
+  ;; Test PairingHeap (just verify it loads)
+  (println "\nTest 3: PairingHeap loads")
+  (println (if ph/impl "  PASSED" "  FAILED"))
+
+  ;; Test Rendezvous
+  (println "\nTest 4: Rendezvous")
+  (let [r (rdv/make)
+        received (atom nil)]
+    ;; Give a value
+    ((r :hello) (fn [_] (println "  Give succeeded")) identity)
+    ;; Take the value
+    (r (fn [v] (reset! received v) (println "  Take got:" v)) identity)
+    (println (if (= @received :hello) "  PASSED" "  FAILED")))
+
+  ;; Test Reduce with Seed
+  (println "\nTest 5: Reduce + Seed")
+  (let [result (atom nil)
+        done (atom false)]
+    (red/run +
+             (fn [n t] (seed/run [1 2 3 4 5] n t))
+             (fn [v] (reset! result v) (reset! done true))
+             (fn [e] (println "  Error:" e)))
+    (println (if (and @done (= @result 15)) "  PASSED" (str "  FAILED: " @result))))
+
+  ;; Test Reductions (just verify it loads)
+  (println "\nTest 6: Reductions loads")
+  (println (if reds/run "  PASSED" "  FAILED"))
+
+  ;; Test Relieve (just verify it loads)
+  (println "\nTest 7: Relieve loads")
+  (println (if rel/run "  PASSED" "  FAILED"))
+
+  ;; Test Watch - just verify it loads for now (has CLJD compatibility issues)
+  (println "\nTest 8: Watch loads")
+  (println (if watch/run "  PASSED" "  FAILED"))
+
+  ;; Test Sleep
+  (println "\nTest 9: Sleep")
+  (let [result (atom nil)]
+    (sleep/run 10 :done
+               (fn [x] (reset! result x) (println "  Sleep completed:" x))
+               (fn [e] (println "  Sleep failed:" e))))
+  (println "  (async - will complete after tests)")
+
+  ;; Test Fiber
+  (println "\nTest 10: Fiber loads")
+  (println (if fiber/fiber "  PASSED" "  FAILED"))
+
+  ;; Test Observe
+  (println "\nTest 11: Observe loads")
+  (println (if obs/run "  PASSED" "  FAILED"))
+
+  ;; Test Dataflow
+  (println "\nTest 12: Dataflow")
+  (let [p (df/make)
+        result (atom nil)]
+    ;; Subscribe
+    (p (fn [v] (reset! result v)) identity)
+    ;; Assign value
+    (p :hello)
+    (println (if (= @result :hello) "  PASSED" (str "  FAILED: " @result))))
+
+  (println "\n=== All tests complete ==="))

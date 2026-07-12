@@ -1,0 +1,8 @@
+name: missionary_cljd_test
+description: Test project for Missionary ClojureDart port
+version: 0.1.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:

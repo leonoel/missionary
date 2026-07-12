@@ -1,0 +1,10 @@
+(ns test-semaphore
+  (:require [missionary.impl.Semaphore :as sem]))
+
+(defn main []
+  (let [s (sem/make 2)]
+    (println "Created semaphore with 2 permits")
+    (println "Acquire 1:" (s (fn [_] (println "got 1")) identity))
+    (println "Acquire 2:" (s (fn [_] (println "got 2")) identity))
+    (println "Release:" (s))
+    (println "Done")))

@@ -1,10 +1,10 @@
 (ns ^:no-doc missionary.impl.Reduce)
 
 (deftype Process
-  [reducer status failure result input
-   ^boolean busy
-   ^boolean done]
-  IFn
+  [^:mutable reducer ^:mutable status failure ^:mutable result ^:mutable input
+   ^:mutable busy
+   ^:mutable done]
+  #?(:cljs IFn :cljd cljd.core/IFn)
   (-invoke [_] (input)))
 
 (defn transfer [^Process p]
@@ -16,7 +16,7 @@
                 (f) (f r @(.-input p)))]
         (if (reduced? r)
           (do ((.-input p)) (set! (.-reducer p) nil) @r) r))
-      (catch :default e
+      (catch #?(:cljs :default :cljd Exception) e
         ((.-input p)) (set! (.-reducer p) nil)
         (set! (.-status p) (.-failure p)) e))))
 
@@ -26,7 +26,7 @@
       (if (.-done p)
         ((.-status p) (.-result p))
         (do (if (nil? (.-reducer p))
-              (try @(.-input p) (catch :default _))
+              (try @(.-input p) (catch #?(:cljs :default :cljd Exception) _))
               (transfer p)) (recur))))))
 
 (defn run [rf flow success failure]

@@ -1,12 +1,13 @@
 (ns ^:no-doc missionary.impl.Observe
-  (:import missionary.Cancelled))
+  #?(:cljs (:import missionary.Cancelled)
+     :cljd (:require [missionary.Cancelled :refer [Cancelled]])))
 
-(declare kill transfer)
+(declare kill transfer event-cb)
 
-(deftype Process [notifier terminator unsub value]
-  IFn
+(deftype Process [^:mutable notifier terminator ^:mutable unsub ^:mutable value]
+  #?(:cljs IFn :cljd cljd.core/IFn)
   (-invoke [this] (kill this) nil)
-  IDeref
+  #?(:cljs IDeref :cljd cljd.core/IDeref)
   (-deref [this] (transfer this)))
 
 (defn kill [^Process ps]
@@ -14,7 +15,7 @@
     (set! (.-notifier ps) nil)
     (try ((.-unsub ps))
          (set! (.-unsub ps) (Cancelled. "Observe cancelled."))
-         (catch :default e
+         (catch #?(:cljs :default :cljd Exception) e
            (set! (.-unsub ps) e)))
     (let [x (.-value ps)]
       (set! (.-value ps) nil)
@@ -27,16 +28,18 @@
     (let [x (.-value ps)]
       (set! (.-value ps) ps) x)))
 
+(defn event-cb [^Process ps x]
+  (when-some [cb (.-notifier ps)]
+    (if (identical? ps (.-value ps))
+      (do (set! (.-value ps) x) (cb))
+      (throw (#?(:cljs js/Error. :cljd Exception.) "Can't process event - consumer is not ready.")))))
+
 (defn run [s n t]
   (let [ps (->Process n t nil nil)]
     (set! (.-value ps) ps)
     (try (set! (.-unsub ps)
-           (s (fn [x]
-                (when-some [cb (.-notifier ps)]
-                  (if (identical? ps (.-value ps))
-                    (do (set! (.-value ps) x) (cb))
-                    (throw (js/Error. "Can't process event - consumer is not ready.")))))))
-         (catch :default e
+           (s (fn [x] (event-cb ps x))))
+         (catch #?(:cljs :default :cljd Exception) e
            (set! (.-unsub ps) e)
            (set! (.-notifier ps) nil)
            (if (identical? ps (.-value ps))
