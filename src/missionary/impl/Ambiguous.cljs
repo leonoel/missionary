@@ -301,8 +301,8 @@
                             (let [pr (.-next pr)]
                               (when-not (identical? pr curr)
                                 (move pivot (.-child pr)))))
-                          (set! (.-prev pr) pr)
-                          (set! (.-next pr) pr) nil)))))))
+                          (set! (.-prev curr) curr)
+                          (set! (.-next curr) curr) nil)))))))
             (if (pos? par)
               (do (set! (.-busy c) false) (branch c))
               (if (neg? par)
