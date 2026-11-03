@@ -294,15 +294,15 @@
                     (if (nil? curr)
                       (ack p)
                       (when (instance? Processor curr)
-                        (let [pivot (.-child pr)]
+                        (let [pivot (.-child curr)]
                           (set! (.-current b) pivot)
                           (set! (.-parent pivot) b)
                           (loop [pr ^Processor curr]
                             (let [pr (.-next pr)]
                               (when-not (identical? pr curr)
                                 (move pivot (.-child pr)))))
-                          (set! (.-prev pr) pr)
-                          (set! (.-next pr) pr) nil)))))))
+                          (set! (.-prev curr) curr)
+                          (set! (.-next curr) curr) nil)))))))
             (if (pos? par)
               (do (set! (.-busy c) false) (branch c))
               (if (neg? par)
