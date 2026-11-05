@@ -1,0 +1,11 @@
+.clj-kondo
+.cpcache
+.idea
+.lein-failures
+.lsp
+.nrepl-port
+classes
+cljs-test-runner-out
+dev
+*.iml
+target
