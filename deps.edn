@@ -18,7 +18,7 @@
   {:extra-deps {slipset/deps-deploy {:mvn/version "0.2.5"}}
    :exec-fn deps-deploy.deps-deploy/deploy
    :exec-args {:installer :remote
-               :artifact "target/missionary-b.47.jar"}}
+               :artifact "target/missionary-b.48.jar"}}
 
   :clj-test
   {:extra-deps  {com.cognitect/test-runner
