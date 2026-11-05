@@ -15,7 +15,7 @@
                :codox {:writer codox.writer.html/write-docs}}}
 
   :deploy
-  {:extra-deps {slipset/deps-deploy {:mvn/version "0.2.2"}}
+  {:extra-deps {slipset/deps-deploy {:mvn/version "0.2.5"}}
    :exec-fn deps-deploy.deps-deploy/deploy
    :exec-args {:installer :remote
                :artifact "target/missionary-b.47.jar"}}
